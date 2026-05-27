@@ -1,250 +1,207 @@
-# Local AI Proxy Plan
+# Local AI Proxy - Full Build Plan
 
-## Project Name
+# Project summary
 
-**Local AI Proxy**
+Build a local AI proxy that lets AI clients talk to many model providers through one local endpoint.
 
-A local server that can translate between OpenAI-compatible and Anthropic-compatible API formats, allowing tools like Claude Code, OpenAI SDK apps, custom agents, and local model clients to use different providers through one switchable proxy.
+Main use case:
 
----
-
-## 1. Main Goal
-
-Build a local server that supports both major AI API formats:
-
-- OpenAI-compatible API
-- Anthropic-compatible API
-
-The proxy should let a client send a request in one format and route it to a provider that may use the same or a different format.
-
-Example:
-
-```txt
+```
 Claude Code
-  -> Anthropic-style request to local proxy
-  -> Proxy converts request to OpenAI-style
-  -> Gemini/OpenAI/OpenRouter receives it
-  -> Proxy converts response back to Anthropic-style
-  -> Claude Code receives a normal response
+  ↓ ANTHROPIC_BASE_URL=http://localhost:8000
+Local AI Proxy
+  ↓ automatic API translation + routing
+Gemini / GPT / Claude / OpenRouter / Ollama / LM Studio
 ```
 
-The main target is making it easy to use models like Gemini, GPT, OpenRouter models, Ollama, LM Studio, or Anthropic through one local endpoint.
+The proxy should support both Anthropic-compatible and OpenAI-compatible APIs, expose a unified model list, route requests by model alias/provider, use real provider API keys internally, and track usage/cost/logs in a clean dashboard.
 
----
+# Final architecture decision
 
-## 2. Main Use Cases
+Use this split:
 
-### Use Case 1: Use Gemini or GPT in Claude Code
-
-Claude Code expects Anthropic-compatible requests.
-
-The proxy should expose:
-
-```txt
-POST /v1/messages
+```
+FastAPI backend = proxy engine, auth, routing, translation, provider calls, usage tracking, logs
+Next.js dashboard = visual UI for overview, requests, logs, models, providers, costs, settings
+SQLite = local-first database for request records, logs, provider health, aliases, settings metadata
+.env = v1 provider key storage
+config.yaml = providers, aliases, routing, pricing, defaults
 ```
 
-Claude Code sends an Anthropic-style request, then the proxy translates it to an OpenAI-compatible backend such as Gemini, OpenAI, or OpenRouter.
+Why this split:
 
-### Use Case 2: Use Claude through OpenAI-style apps
+- FastAPI is better for a long-running local proxy, streaming responses, request validation, and provider integrations.
+- Next.js is better for the dashboard UI.
+- SQLite is enough for local-first usage and easy to migrate later.
 
-Some tools only support OpenAI-compatible APIs.
+# Core flow
 
-The proxy should expose:
-
-```txt
-POST /v1/chat/completions
+```
+Client
+  ↓
+Local proxy token auth
+  ↓
+Input API detector
+  ↓
+Request normalizer
+  ↓
+Model alias resolver
+  ↓
+Provider router
+  ↓
+Request translator
+  ↓
+Provider client
+  ↓
+Response translator
+  ↓
+Usage tracker + logs
+  ↓
+Client response
 ```
 
-Then it can translate OpenAI-style requests to Anthropic-compatible requests.
+Runtime:
 
-### Use Case 3: Switch providers easily
+```
+Proxy API:      http://localhost:8000
+Dashboard UI:  http://localhost:3000
+SQLite DB:     ./data/proxy.db
+Config file:   ./config.yaml
+Env file:      ./.env
+```
 
-The user should be able to switch providers through:
+# Claude Code setup
 
-1. The request body model name
-2. An environment variable
-3. The config file default
-
-Example:
+Claude Code should only receive the local endpoint and local proxy token.
 
 ```bash
-export PROXY_MODEL=gemini
+export ANTHROPIC_BASE_URL=http://localhost:8000
+export ANTHROPIC_AUTH_TOKEN=dev-local-proxy-token
 ```
 
-or:
+Claude Code never receives the real OpenAI, Gemini, Anthropic, OpenRouter, Groq, or other provider keys.
 
-```json
-{
-  "model": "gpt",
-  "messages": []
-}
+# API compatibility targets
+
+## Anthropic-compatible endpoints
+
+Required first:
+
 ```
-
----
-
-## 3. Recommended Tech Stack
-
-### Backend
-
-Use:
-
-```txt
-Python + FastAPI + httpx + pydantic
-```
-
-FastAPI is better than Django or Next.js for this project because:
-
-- It is lightweight.
-- Streaming responses are easier to handle.
-- Python has strong SDK support for AI providers.
-- It is simple to run locally.
-- The code structure stays clean for request/response translation.
-
-### Main Packages
-
-```txt
-fastapi
-uvicorn
-httpx
-pydantic
-python-dotenv
-pyyaml
-sse-starlette
-```
-
-Optional later:
-
-```txt
-rich
-pytest
-pytest-asyncio
-ruff
-mypy
-```
-
----
-
-## 4. High-Level Architecture
-
-```txt
-Client
-  -> Local Proxy Server
-  -> Endpoint Handler
-  -> Request Format Detector
-  -> Model Alias Resolver
-  -> Provider Router
-  -> Request Translator
-  -> Provider Client
-  -> Response Translator
-  -> Client
-```
-
-Example flow:
-
-```txt
-Claude Code
-  -> POST /v1/messages
-  -> Anthropic request detected
-  -> model alias resolved: claude-sonnet -> gemini-2.5-pro
-  -> provider selected: Gemini OpenAI-compatible endpoint
-  -> Anthropic request translated to OpenAI request
-  -> Gemini responds
-  -> OpenAI response translated to Anthropic response
-  -> Claude Code receives response
-```
-
----
-
-## 5. Compatibility Types
-
-The proxy should support these backend provider types first:
-
-```txt
-openai_compatible
-anthropic_compatible
-```
-
-Later it can support:
-
-```txt
-gemini_native
-ollama_native
-custom
-```
-
-The first version should avoid native Gemini because Gemini already supports OpenAI compatibility. That makes the first version much easier.
-
----
-
-## 6. Supported Providers
-
-### OpenAI-Compatible Providers
-
-These providers should be supported through the same adapter:
-
-- OpenAI
-- Gemini OpenAI-compatible endpoint
-- OpenRouter
-- Groq
-- Together AI
-- Fireworks AI
-- DeepInfra
-- Mistral
-- Perplexity
-- Ollama OpenAI-compatible endpoint
-- LM Studio OpenAI-compatible endpoint
-- vLLM OpenAI-compatible server
-
-### Anthropic-Compatible Providers
-
-These should be supported through an Anthropic adapter:
-
-- Anthropic Claude API
-- Ollama Anthropic-compatible endpoint
-- Poe Anthropic-compatible API
-- MiniMax Anthropic-compatible API
-- Any local or cloud gateway exposing `/v1/messages`
-
----
-
-## 7. Endpoints to Implement
-
-### Phase 1 Endpoints
-
-These are required for the first useful version:
-
-```txt
 POST /v1/messages
 GET  /v1/models
-GET  /health
 ```
 
-### Phase 2 Endpoints
+Later:
 
-Add OpenAI compatibility:
+```
+POST /v1/messages/count_tokens
+```
 
-```txt
+## OpenAI-compatible endpoints
+
+Required first:
+
+```
 POST /v1/chat/completions
 GET  /v1/models
 ```
 
-### Phase 3 Endpoints
+Later:
 
-Optional later:
-
-```txt
+```
 POST /v1/responses
 POST /v1/embeddings
 ```
 
----
+# Provider support
 
-## 8. Config File Design
+Start with provider types:
 
-Use a `config.yaml` file.
+```
+openai_compatible
+anthropic_compatible
+local_openai_compatible
+```
+
+Early providers:
+
+```
+OpenAI
+Anthropic
+Gemini through OpenAI compatibility
+OpenRouter
+Ollama through OpenAI compatibility or native API later
+LM Studio through OpenAI-compatible local endpoint
+Groq
+Together AI
+Fireworks AI
+```
+
+Do not start with native Gemini. Use Gemini's OpenAI-compatible endpoint first because it keeps the translation layer simpler.
+
+# API key storage
+
+## v1: .env keys only
+
+```
+LOCAL_PROXY_TOKEN=dev-local-proxy-token
+
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AIza...
+OPENROUTER_API_KEY=sk-or-...
+GROQ_API_KEY=gsk_...
+TOGETHER_API_KEY=...
+```
+
+The dashboard should only show configured/missing status and masked hints.
 
 Example:
+
+```
+OpenAI       Configured     sk-••••••••••AB12
+Anthropic    Configured     sk-ant-••••••9XZ4
+Gemini       Configured     AIza••••••••PQ8
+OpenRouter   Missing        Not configured
+```
+
+The frontend should never fetch or display raw keys.
+
+## v2: encrypted key storage
+
+Later, allow adding/updating keys from the dashboard. The dashboard sends the key once to FastAPI, FastAPI encrypts it, and SQLite stores only encrypted values.
+
+```sql
+CREATE TABLE provider_credentials (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL UNIQUE,
+  encrypted_api_key TEXT NOT NULL,
+  key_hint TEXT,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
+```
+
+One encryption secret stays in `.env`:
+
+```
+PROXY_ENCRYPTION_KEY=long-random-secret
+```
+
+## v3: optional keychain support
+
+Future options:
+
+```
+macOS Keychain
+1Password CLI
+Doppler
+Vault
+Bitwarden Secrets Manager
+```
+
+# config.yaml
 
 ```yaml
 server:
@@ -252,260 +209,213 @@ server:
   port: 8000
 
 security:
-  require_auth: false
-  local_auth_token_env: "LOCAL_PROXY_AUTH_TOKEN"
+  local_proxy_token_env: "LOCAL_PROXY_TOKEN"
+
+database:
+  url: "sqlite:///./data/proxy.db"
 
 defaults:
   input_format: "anthropic"
   provider: "openrouter"
-  model: "openai/gpt-4.1"
-  stream: true
+  model: "claude-sonnet"
 
 providers:
   openai:
     type: "openai_compatible"
+    display_name: "OpenAI"
     base_url: "https://api.openai.com/v1"
     api_key_env: "OPENAI_API_KEY"
 
+  anthropic:
+    type: "anthropic_compatible"
+    display_name: "Anthropic"
+    base_url: "https://api.anthropic.com"
+    api_key_env: "ANTHROPIC_API_KEY"
+
   gemini:
     type: "openai_compatible"
+    display_name: "Gemini"
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
     api_key_env: "GEMINI_API_KEY"
 
   openrouter:
     type: "openai_compatible"
+    display_name: "OpenRouter"
     base_url: "https://openrouter.ai/api/v1"
     api_key_env: "OPENROUTER_API_KEY"
-    extra_headers:
-      HTTP-Referer: "http://localhost:8000"
-      X-Title: "Local AI Proxy"
 
-  anthropic:
-    type: "anthropic_compatible"
-    base_url: "https://api.anthropic.com"
-    api_key_env: "ANTHROPIC_API_KEY"
+  ollama:
+    type: "openai_compatible"
+    display_name: "Ollama"
+    base_url: "http://localhost:11434/v1"
+    api_key_env: null
 
 model_aliases:
   claude-sonnet:
-    provider: "openrouter"
-    model: "anthropic/claude-sonnet-4"
+    provider: "anthropic"
+    model: "claude-3-5-sonnet-latest"
+    description: "Default high-intelligence Claude model"
 
   gpt:
     provider: "openai"
     model: "gpt-4.1"
+    description: "Default GPT model"
 
   gemini:
     provider: "gemini"
     model: "gemini-2.5-pro"
+    description: "Default Gemini reasoning model"
+
+  fast:
+    provider: "openai"
+    model: "gpt-4o-mini"
+    description: "Low-latency, cost-efficient model"
 
   local:
     provider: "ollama"
-    model: "llama3.1"
+    model: "qwen2.5-coder"
+    description: "Local coding model through Ollama"
 ```
 
----
+# Model switching behavior
 
-## 9. Environment Variables
+Resolve model choice in this order:
 
-Example `.env` file:
-
-```bash
-OPENAI_API_KEY="your-openai-key"
-GEMINI_API_KEY="your-gemini-key"
-OPENROUTER_API_KEY="your-openrouter-key"
-ANTHROPIC_API_KEY="your-anthropic-key"
-LOCAL_PROXY_AUTH_TOKEN="local-token"
-PROXY_MODEL="gemini"
+```
+1. Request body model field
+2. Header override, for example x-proxy-model
+3. Environment variable PROXY_MODEL
+4. config.yaml default model
 ```
 
-Model switching priority:
-
-```txt
-1. Request body model
-2. PROXY_MODEL environment variable
-3. config.yaml defaults.model
-```
-
-Provider switching priority:
-
-```txt
-1. Model alias provider
-2. Request provider override, if allowed
-3. PROXY_PROVIDER environment variable
-4. config.yaml defaults.provider
-```
-
----
-
-## 10. Folder Structure
-
-```txt
-local-ai-proxy/
-├── app/
-│   ├── main.py
-│   ├── config.py
-│   ├── settings.py
-│   ├── router.py
-│   ├── auth.py
-│   ├── providers/
-│   │   ├── __init__.py
-│   │   ├── base.py
-│   │   ├── openai_compatible.py
-│   │   └── anthropic_compatible.py
-│   ├── translators/
-│   │   ├── __init__.py
-│   │   ├── anthropic_to_openai.py
-│   │   ├── openai_to_anthropic.py
-│   │   ├── anthropic_stream_to_openai.py
-│   │   └── openai_stream_to_anthropic.py
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   ├── anthropic.py
-│   │   └── openai.py
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   ├── errors.py
-│   │   ├── logging.py
-│   │   └── ids.py
-│   └── tests/
-│       ├── test_anthropic_to_openai.py
-│       ├── test_openai_to_anthropic.py
-│       └── test_model_aliases.py
-├── config.yaml
-├── .env.example
-├── requirements.txt
-├── README.md
-└── PLAN.md
-```
-
----
-
-## 11. Request Translation
-
-### Anthropic Request Example
+Example request:
 
 ```json
 {
   "model": "gemini",
+  "messages": []
+}
+```
+
+Proxy resolves:
+
+```
+alias: gemini
+provider: gemini
+real model: gemini-2.5-pro
+provider format: OpenAI-compatible
+base URL: Gemini OpenAI-compatible endpoint
+key: GEMINI_API_KEY
+```
+
+# Model exposure
+
+Expose configured models through:
+
+```
+GET /v1/models
+```
+
+Return both local aliases and real provider models.
+
+Example local model aliases:
+
+```
+claude-sonnet
+claude-haiku
+gpt
+gpt-4.1
+gemini
+fast
+cheap
+local
+```
+
+v1 can expose static config models only. Later versions can fetch live provider model lists and merge them into a normalized registry.
+
+# Translation layer
+
+Core translators:
+
+```
+Anthropic request → OpenAI request
+OpenAI response → Anthropic response
+OpenAI request → Anthropic request
+Anthropic response → OpenAI response
+```
+
+First required path:
+
+```
+Anthropic /v1/messages → OpenAI-compatible /v1/chat/completions
+```
+
+This is needed for Claude Code using Gemini, GPT, OpenRouter, Ollama, or LM Studio.
+
+# Anthropic to OpenAI mapping
+
+Anthropic input:
+
+```json
+{
+  "model": "claude-sonnet",
   "max_tokens": 4096,
-  "system": "You are a helpful coding assistant.",
+  "system": "You are helpful.",
   "messages": [
     {
       "role": "user",
-      "content": "Write a Python function that adds two numbers."
+      "content": "Hello"
     }
   ]
 }
 ```
 
-### Translated OpenAI Request
+OpenAI-compatible output:
 
 ```json
 {
-  "model": "gemini-2.5-pro",
+  "model": "gpt-4.1",
   "max_tokens": 4096,
   "messages": [
     {
       "role": "system",
-      "content": "You are a helpful coding assistant."
+      "content": "You are helpful."
     },
     {
       "role": "user",
-      "content": "Write a Python function that adds two numbers."
+      "content": "Hello"
     }
   ]
 }
 ```
 
-### Anthropic to OpenAI Field Mapping
+# Content block handling
 
-| Anthropic Field | OpenAI Field | Notes |
-|---|---|---|
-| `model` | `model` | Resolve through aliases first |
-| `system` | `messages[0].role = system` | OpenAI puts system in messages |
-| `messages` | `messages` | Convert content blocks to strings or arrays |
-| `max_tokens` | `max_tokens` | Usually direct mapping |
-| `temperature` | `temperature` | Direct mapping |
-| `top_p` | `top_p` | Direct mapping |
-| `stop_sequences` | `stop` | Rename field |
-| `stream` | `stream` | Direct mapping, but stream events must be translated |
-| `tools` | `tools` | Needs schema conversion |
-| `tool_choice` | `tool_choice` | Needs conversion |
+Anthropic content can be simple strings or structured blocks.
 
----
+MVP supports:
 
-## 12. Response Translation
-
-### OpenAI Response Example
-
-```json
-{
-  "id": "chatcmpl_123",
-  "object": "chat.completion",
-  "created": 1234567890,
-  "model": "gemini-2.5-pro",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "Here is the function..."
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 10,
-    "completion_tokens": 20,
-    "total_tokens": 30
-  }
-}
+```
+text blocks
 ```
 
-### Translated Anthropic Response
+Later:
 
-```json
-{
-  "id": "msg_123",
-  "type": "message",
-  "role": "assistant",
-  "model": "gemini",
-  "content": [
-    {
-      "type": "text",
-      "text": "Here is the function..."
-    }
-  ],
-  "stop_reason": "end_turn",
-  "stop_sequence": null,
-  "usage": {
-    "input_tokens": 10,
-    "output_tokens": 20
-  }
-}
+```
+image blocks
+tool_use blocks
+tool_result blocks
 ```
 
-### OpenAI to Anthropic Finish Reason Mapping
+Unsupported content should return a clear compatibility error instead of silently mangling the request.
 
-| OpenAI Finish Reason | Anthropic Stop Reason |
-|---|---|
-| `stop` | `end_turn` |
-| `length` | `max_tokens` |
-| `tool_calls` | `tool_use` |
-| `content_filter` | `stop_sequence` or error |
-| `null` | `null` |
+# Streaming
 
----
+Streaming is important for Claude Code. MVP can start without it, but streaming should come soon after basic requests work.
 
-## 13. Streaming Plan
+Target Anthropic-style event flow:
 
-Streaming is required for a smooth Claude Code experience.
-
-### Anthropic Streaming Events
-
-Anthropic streams events like:
-
-```txt
+```
 message_start
 content_block_start
 content_block_delta
@@ -514,646 +424,743 @@ message_delta
 message_stop
 ```
 
-### OpenAI Streaming Events
+Implementation concept:
 
-OpenAI-compatible APIs stream chunks like:
-
-```txt
-chat.completion.chunk
+```
+Provider stream chunk
+  ↓
+Normalize chunk
+  ↓
+Convert to client-compatible event
+  ↓
+Yield SSE frame
 ```
 
-### Needed Translation
+# Tool calls
 
-The proxy should convert OpenAI streaming chunks into Anthropic SSE events when the client hits `/v1/messages`.
+Tool calls matter for Claude Code compatibility.
 
-Example flow:
+Translation goals:
 
-```txt
-OpenAI chunk with delta.content
-  -> Anthropic content_block_delta event
+```
+Anthropic tool_use → OpenAI tool_calls
+Anthropic tool_result → OpenAI tool messages
+OpenAI tool_calls → Anthropic tool_use
+OpenAI tool message → Anthropic tool_result
 ```
 
-Basic stream output order:
+For the MVP, reject unsupported tools with a clear error or pass through only when the selected provider supports them.
 
-```txt
-message_start
-content_block_start
-content_block_delta
-content_block_delta
-content_block_delta
-content_block_stop
-message_delta
-message_stop
+# Routing and failover
+
+The router should support:
+
 ```
-
-Start by supporting text streaming only. Add tool streaming later.
-
----
-
-## 14. Tool Call Plan
-
-Tool calls are one of the hardest parts, especially for Claude Code.
-
-### Anthropic Tool Format
-
-Anthropic uses content blocks like:
-
-```json
-{
-  "type": "tool_use",
-  "id": "toolu_123",
-  "name": "read_file",
-  "input": {
-    "path": "main.py"
-  }
-}
+model alias routing
+provider priority routing
+fallback provider routing
+health-based routing
+manual override routing
 ```
-
-### OpenAI Tool Format
-
-OpenAI uses tool calls like:
-
-```json
-{
-  "tool_calls": [
-    {
-      "id": "call_123",
-      "type": "function",
-      "function": {
-        "name": "read_file",
-        "arguments": "{\"path\": \"main.py\"}"
-      }
-    }
-  ]
-}
-```
-
-### Translation Rules
-
-Anthropic to OpenAI:
-
-```txt
-Anthropic tool_use block
-  -> OpenAI assistant message with tool_calls
-```
-
-OpenAI to Anthropic:
-
-```txt
-OpenAI tool_calls
-  -> Anthropic content block with type tool_use
-```
-
-Tool results:
-
-```txt
-Anthropic tool_result
-  -> OpenAI tool role message
-```
-
-```txt
-OpenAI tool role message
-  -> Anthropic user message containing tool_result block
-```
-
-### First Tool Support Target
-
-Support basic tool calls with:
-
-- Tool name
-- Tool input schema
-- Tool call id
-- Tool result content
-
-Do not start with advanced streamed tool call deltas.
-
----
-
-## 15. Auth Plan
-
-Since this is a local server, auth can be optional.
-
-### Local Development Mode
-
-```yaml
-security:
-  require_auth: false
-```
-
-### Protected Local Mode
-
-```yaml
-security:
-  require_auth: true
-  local_auth_token_env: "LOCAL_PROXY_AUTH_TOKEN"
-```
-
-Accept headers like:
-
-```txt
-Authorization: Bearer local-token
-x-api-key: local-token
-anthropic-api-key: local-token
-```
-
-This makes it work with different clients.
-
----
-
-## 16. Claude Code Setup
-
-Claude Code can point to the local proxy through environment variables.
 
 Example:
 
-```bash
-export ANTHROPIC_BASE_URL="http://127.0.0.1:8000"
-export ANTHROPIC_AUTH_TOKEN="local-token"
-export PROXY_MODEL="gemini"
-claude
+```yaml
+routing_rules:
+  - match: "claude-*"
+    primary_provider: "anthropic"
+    fallback_providers:
+      - "openrouter"
+      - "gemini"
+
+  - match: "gemini-*"
+    primary_provider: "gemini"
+    fallback_providers:
+      - "openrouter"
+
+  - match: "local-*"
+    primary_provider: "ollama"
+    fallback_providers:
+      - "openrouter"
 ```
 
-The proxy receives Claude Code requests at:
-
-```txt
-POST /v1/messages
-```
-
-Then routes them to the selected backend provider.
-
----
-
-## 17. OpenAI SDK Setup
-
-OpenAI-compatible clients should point to:
-
-```bash
-export OPENAI_BASE_URL="http://127.0.0.1:8000/v1"
-export OPENAI_API_KEY="local-token"
-```
-
-Then use:
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://127.0.0.1:8000/v1",
-    api_key="local-token",
-)
-
-response = client.chat.completions.create(
-    model="claude-sonnet",
-    messages=[
-        {"role": "user", "content": "Hello"}
-    ],
-)
-```
-
-The proxy can route `claude-sonnet` to Anthropic, OpenRouter, or another backend.
-
----
-
-## 18. Error Handling
-
-The proxy should normalize provider errors.
+# Provider health checks
 
 Examples:
 
-```txt
-Missing API key
-Invalid model alias
-Provider timeout
-Provider returned invalid response
-Unsupported tool call format
-Streaming translation failed
+```
+OpenAI: GET /v1/models
+Anthropic: GET /v1/models or lightweight request if needed
+Gemini OpenAI-compatible: GET /v1/models
+Ollama: GET /api/tags or /v1/models
+OpenRouter: GET /api/v1/models
 ```
 
-For Anthropic endpoints, return Anthropic-style errors.
+Track:
 
-For OpenAI endpoints, return OpenAI-style errors.
-
-### Error Response Strategy
-
-If the request came through:
-
-```txt
-/v1/messages
+```
+healthy / degraded / offline
+average latency
+success rate
+last checked time
+last error
+available model count
 ```
 
-Return an Anthropic-style error.
+# Usage tracking
 
-If the request came through:
+Track each request:
 
-```txt
-/v1/chat/completions
+```
+input tokens
+output tokens
+total tokens
+estimated cost
+provider
+resolved model
+requested model
+client name
+endpoint
+request duration
+streaming yes/no
+status code
+error message
+retry count
+fallback used yes/no
 ```
 
-Return an OpenAI-style error.
+Token source values:
 
----
-
-## 19. Logging Plan
-
-Log enough to debug issues, but never log API keys.
-
-Good things to log:
-
-```txt
-request_id
-input_format
-output_provider
-model_alias
-resolved_model
-stream_enabled
-status_code
-latency_ms
-error_type
+```
+provider
+estimated
+manual_count
+unknown
 ```
 
-Do not log by default:
+Use provider-reported usage when available. If missing, estimate with character count divided by 4 and mark as estimated.
 
-```txt
-full prompts
-full completions
-API keys
-auth headers
-file contents
-```
+# Cost tracking
 
-Add a debug option later:
+Pricing config:
 
 ```yaml
-logging:
-  log_prompts: false
-  log_responses: false
+pricing:
+  openai:
+    gpt-4.1:
+      input_per_1m: 2.00
+      output_per_1m: 8.00
+
+  gemini:
+    gemini-2.5-pro:
+      input_per_1m: 1.25
+      output_per_1m: 10.00
+
+  anthropic:
+    claude-3-5-sonnet-latest:
+      input_per_1m: 3.00
+      output_per_1m: 15.00
 ```
 
----
+Formula:
 
-## 20. Testing Plan
-
-### Unit Tests
-
-Test translators:
-
-```txt
-Anthropic simple text -> OpenAI simple text
-OpenAI simple text -> Anthropic simple text
-Anthropic system prompt -> OpenAI system message
-OpenAI finish_reason -> Anthropic stop_reason
-Tool use conversion
-Tool result conversion
-Model alias resolution
+```
+cost = input_tokens / 1,000,000 * input_price
+     + output_tokens / 1,000,000 * output_price
 ```
 
-### Integration Tests
+If pricing is missing, store cost as null or unavailable.
 
-Test real endpoints with mock provider responses:
+# Database schema
 
-```txt
-POST /v1/messages
-POST /v1/chat/completions
-stream=false
-stream=true
-invalid model
-missing API key
+## api_requests
+
+```sql
+CREATE TABLE api_requests (
+  id TEXT PRIMARY KEY,
+  created_at DATETIME NOT NULL,
+  input_format TEXT NOT NULL,
+  output_format TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  client_name TEXT,
+  requested_model TEXT,
+  resolved_model TEXT,
+  provider TEXT,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  total_tokens INTEGER DEFAULT 0,
+  token_source TEXT,
+  estimated_cost_usd REAL,
+  pricing_source TEXT,
+  duration_ms INTEGER,
+  ttfb_ms INTEGER,
+  status_code INTEGER,
+  error_message TEXT,
+  streamed BOOLEAN DEFAULT 0,
+  retry_count INTEGER DEFAULT 0,
+  fallback_used BOOLEAN DEFAULT 0,
+  request_id TEXT,
+  trace_id TEXT
+);
 ```
 
-### Manual Tests
+## proxy_logs
 
-Use curl:
+```sql
+CREATE TABLE proxy_logs (
+  id TEXT PRIMARY KEY,
+  created_at DATETIME NOT NULL,
+  level TEXT NOT NULL,
+  message TEXT NOT NULL,
+  request_id TEXT,
+  trace_id TEXT,
+  provider TEXT,
+  model TEXT,
+  client_name TEXT,
+  metadata_json TEXT
+);
+```
+
+## provider_status
+
+```sql
+CREATE TABLE provider_status (
+  provider TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  average_latency_ms INTEGER,
+  success_rate REAL,
+  available_models INTEGER,
+  last_checked_at DATETIME,
+  last_error TEXT
+);
+```
+
+## model_aliases
+
+```sql
+CREATE TABLE model_aliases (
+  alias TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  description TEXT,
+  is_default BOOLEAN DEFAULT 0,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
+```
+
+# Dashboard design system
+
+Keep the UI neutral, clean, and not crowded.
+
+```
+off-white background
+warm light gray surfaces
+charcoal text
+muted slate chart colors
+small green status accents
+rounded cards
+thin borders
+light shadows
+generous spacing
+Lucide-style outline icons
+```
+
+# Dashboard pages
+
+## Overview
+
+Purpose: quick health and usage overview.
+
+Sections:
+
+```
+total tokens today
+estimated cost today
+top model
+average latency
+token usage over time chart
+top models/providers list
+recent requests table
+```
+
+## Requests
+
+Purpose: inspect proxy activity.
+
+Sections:
+
+```
+search bar
+client filter
+provider filter
+model filter
+status filter
+time range filter
+requests table
+selected request detail panel
+export button
+pagination
+```
+
+Columns:
+
+```
+Time
+Client
+Provider
+Model
+Tokens
+Duration
+Cost
+Status
+```
+
+## Logs
+
+Purpose: CLI-style real-time debugging view.
+
+Sections:
+
+```
+search logs
+source/client filter
+level filter
+provider filter
+time range filter
+live tail toggle
+pause button
+export button
+terminal-style log viewer
+log summary panel
+active streams panel
+recent anomalies panel
+selected log details panel
+```
+
+Terminal-style log viewer should use a dark charcoal card inside the light UI.
+
+Example log lines:
+
+```
+4461 May 22 10:24:31.124 INFO  [req:01JWE...] Incoming POST /v1/messages client=Claude Code
+4462 May 22 10:24:31.126 INFO  [req:01JWE...] Model alias resolved alias=claude-sonnet → Claude 3.5 Sonnet
+4463 May 22 10:24:31.127 INFO  [req:01JWE...] Routing to provider provider=Anthropic region=us-east-1
+4464 May 22 10:24:32.813 INFO  [req:01JWE...] Tokens counted input=122134 output=31758 total=153892
+4465 May 22 10:24:32.815 INFO  [req:01JWE...] Cost calculated cost=$0.0542 currency=USD
+4466 May 22 10:24:36.112 WARN  [req:01JWE...] Upstream timeout retrying attempt=1/2
+4467 May 22 10:24:38.552 ERROR [req:01JWE...] Upstream 503 provider=Gemini model=Gemini 2.5 Pro
+```
+
+Level colors:
+
+```
+INFO = green
+WARN = amber
+ERROR = red
+DEBUG = blue/cyan
+```
+
+## Models
+
+Purpose: manage model aliases, defaults, and usage.
+
+Sections:
+
+```
+active models
+total tokens this week
+most used model
+average latency
+models table
+model aliases / routing rules table
+add alias button
+```
+
+Columns:
+
+```
+Model
+Provider
+Alias
+Default
+Usage share
+Context window
+Usage 7D
+Actions
+```
+
+## Providers
+
+Purpose: monitor provider health and routing.
+
+Sections:
+
+```
+active providers
+average uptime
+failover events
+average response time
+provider health cards
+routing and failover rules table
+```
+
+Provider card fields:
+
+```
+provider name
+health status
+models available
+average latency
+success rate
+usage trend
+```
+
+## Costs
+
+Purpose: track spending across providers and models.
+
+Sections:
+
+```
+spend today
+spend this week
+projected monthly cost
+average cost per request
+spending over time chart
+cost breakdown by provider/model
+recent high-cost requests table
+```
+
+## Settings
+
+Purpose: configure providers, defaults, API key status, aliases, logging, and dashboard preferences.
+
+Sections:
+
+```
+default routing
+API keys
+model aliases
+logging and tracking
+appearance and preferences
+```
+
+Important rule:
+
+```
+The settings page can show configured/missing and masked key hints, but it should never expose raw provider keys.
+```
+
+# Admin API endpoints
+
+```
+GET  /admin/stats/overview
+GET  /admin/requests
+GET  /admin/requests/{id}
+GET  /admin/logs
+GET  /admin/logs/stream
+GET  /admin/models
+GET  /admin/providers
+GET  /admin/costs
+GET  /admin/settings
+POST /admin/settings/default-routing
+POST /admin/model-aliases
+PATCH /admin/model-aliases/{alias}
+DELETE /admin/model-aliases/{alias}
+POST /admin/providers/{provider}/test
+```
+
+Later encrypted key management:
+
+```
+POST   /admin/provider-keys/{provider}
+DELETE /admin/provider-keys/{provider}
+```
+
+# Folder structure
+
+```
+local-ai-proxy/
+├── backend/
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── security.py
+│   │   ├── api/
+│   │   │   ├── anthropic.py
+│   │   │   ├── openai.py
+│   │   │   └── admin.py
+│   │   ├── providers/
+│   │   │   ├── base.py
+│   │   │   ├── openai_compatible.py
+│   │   │   ├── anthropic_compatible.py
+│   │   │   └── ollama.py
+│   │   ├── translators/
+│   │   │   ├── anthropic_to_openai.py
+│   │   │   ├── openai_to_anthropic.py
+│   │   │   ├── streaming.py
+│   │   │   └── tools.py
+│   │   ├── routing/
+│   │   │   ├── model_registry.py
+│   │   │   ├── alias_resolver.py
+│   │   │   └── provider_router.py
+│   │   ├── tracking/
+│   │   │   ├── usage_service.py
+│   │   │   ├── cost_service.py
+│   │   │   ├── pricing.py
+│   │   │   └── log_service.py
+│   │   ├── schemas/
+│   │   │   ├── anthropic.py
+│   │   │   ├── openai.py
+│   │   │   └── admin.py
+│   │   └── utils/
+│   │       ├── errors.py
+│   │       └── time.py
+│   ├── requirements.txt
+│   └── alembic/
+├── dashboard/
+│   ├── app/
+│   │   ├── overview/
+│   │   ├── requests/
+│   │   ├── logs/
+│   │   ├── models/
+│   │   ├── providers/
+│   │   ├── costs/
+│   │   └── settings/
+│   ├── components/
+│   │   ├── sidebar.tsx
+│   │   ├── metric-card.tsx
+│   │   ├── data-table.tsx
+│   │   ├── terminal-log-viewer.tsx
+│   │   └── provider-icon.tsx
+│   └── lib/
+│       ├── api.ts
+│       └── format.ts
+├── data/
+│   └── proxy.db
+├── config.yaml
+├── .env.example
+├── docker-compose.yml
+└── README.md
+```
+
+# MVP build phases
+
+## Phase 1: Core proxy
+
+```
+FastAPI app
+config loader
+local proxy token auth
+provider config loading
+model alias resolver
+OpenAI-compatible provider client
+Anthropic /v1/messages endpoint
+Anthropic → OpenAI request translator
+OpenAI → Anthropic response translator
+basic non-streaming response
+```
+
+Test:
 
 ```bash
-curl http://127.0.0.1:8000/v1/messages \
+curl http://localhost:8000/v1/messages \
+  -H "Authorization: Bearer dev-local-proxy-token" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer local-token" \
   -d '{
-    "model": "gemini",
-    "max_tokens": 500,
-    "messages": [
-      {"role": "user", "content": "Say hello"}
-    ]
+    "model": "gpt",
+    "max_tokens": 512,
+    "messages": [{"role":"user","content":"hello"}]
   }'
 ```
 
----
+## Phase 2: Claude Code compatibility
 
-## 21. Build Milestones
-
-### Milestone 1: Basic Server
-
-Features:
-
-- FastAPI app
-- `/health`
-- Config loader
-- `.env` loader
-- Basic logging
-
-Done when:
-
-```txt
-GET /health returns ok
-config.yaml loads successfully
+```
+/v1/messages behavior compatible enough for Claude Code
+model aliases that map Claude-style names to providers
+basic error translation
+request logging
 ```
 
----
-
-### Milestone 2: Provider Config and Model Aliases
-
-Features:
-
-- Load providers from config
-- Load model aliases
-- Resolve model names
-- Choose provider from alias/default/env
-
-Done when:
-
-```txt
-model "gemini" resolves to provider "gemini" and model "gemini-2.5-pro"
-```
-
----
-
-### Milestone 3: Anthropic to OpenAI Non-Streaming
-
-Features:
-
-- Implement `/v1/messages`
-- Translate Anthropic request to OpenAI request
-- Send to OpenAI-compatible provider
-- Translate OpenAI response to Anthropic response
-
-Done when:
-
-```txt
-Claude-style curl request returns Anthropic-style response from Gemini/OpenAI/OpenRouter
-```
-
----
-
-### Milestone 4: Claude Code Basic Support
-
-Features:
-
-- Support Claude Code headers
-- Support model remapping
-- Handle common Claude Code request fields
-- Return responses Claude Code accepts
-
-Done when:
-
-```txt
-Claude Code can make a basic request through the local proxy
-```
-
----
-
-### Milestone 5: Streaming Text Responses
-
-Features:
-
-- Support `stream: true`
-- Translate OpenAI chunks to Anthropic SSE events
-- Support text-only streaming
-
-Done when:
-
-```txt
-Claude Code receives streamed text from Gemini/OpenAI/OpenRouter
-```
-
----
-
-### Milestone 6: Basic Tool Calls
-
-Features:
-
-- Convert Anthropic tools to OpenAI tools
-- Convert OpenAI tool calls to Anthropic tool_use blocks
-- Convert tool results both directions
-
-Done when:
-
-```txt
-Claude Code can perform a basic tool call loop without breaking
-```
-
----
-
-### Milestone 7: OpenAI Endpoint Support
-
-Features:
-
-- Add `/v1/chat/completions`
-- Translate OpenAI requests to Anthropic requests when needed
-- Support OpenAI-style clients
-
-Done when:
-
-```txt
-OpenAI SDK can use the proxy and route requests to Anthropic/OpenRouter/Gemini
-```
-
----
-
-### Milestone 8: Polish and DX
-
-Features:
-
-- Better README
-- Better errors
-- Better logs
-- Tests
-- Example configs
-- Dockerfile
-- CLI helper
-
-Done when:
-
-```txt
-A new user can clone the repo, add keys, run the server, and connect Claude Code
-```
-
----
-
-## 22. First Version Scope
-
-The first version should include:
-
-```txt
-Included:
-- FastAPI server
-- config.yaml
-- .env support
-- /health
-- /v1/messages
-- Anthropic to OpenAI-compatible translation
-- OpenAI-compatible provider client
-- model aliases
-- OpenAI/Gemini/OpenRouter support
-- non-streaming responses
-
-Not included yet:
-- streaming
-- tool calls
-- /v1/chat/completions
-- native Gemini
-- embeddings
-- image input
-- audio input
-```
-
-This first version is enough to prove the core idea.
-
----
-
-## 23. Risks and Problems to Expect
-
-### Claude Code May Require More Anthropic Features
-
-Claude Code may use fields that basic examples do not cover. The proxy should log unknown fields so support can be added later.
-
-### Streaming Is Format-Sensitive
-
-Even if normal responses work, streaming may break if the event format is slightly wrong. Build streaming carefully after non-streaming works.
-
-### Tool Calls Are Not Identical
-
-Anthropic and OpenAI tool formats are similar but not the same. Tool use and tool result messages need careful translation.
-
-### Provider Differences
-
-Some OpenAI-compatible providers do not support every OpenAI feature. The proxy should handle missing features gracefully.
-
-Examples:
-
-```txt
-Provider does not support tools
-Provider does not support system messages
-Provider does not support JSON schema
-Provider has different model token limits
-```
-
----
-
-## 24. Future Features
-
-Possible future improvements:
-
-```txt
-- Web dashboard for switching models
-- CLI command to switch model aliases
-- Per-client routing rules
-- Request history viewer
-- Cost tracking
-- Token usage tracking
-- Automatic fallback provider
-- Load balancing across providers
-- Local-only mode with Ollama/LM Studio
-- Native Gemini adapter
-- Anthropic-compatible server for OpenAI-only tools
-- OpenAI Responses API support
-- MCP-aware routing
-```
-
----
-
-## 25. Example CLI Ideas
-
-Later, add a small CLI:
+Manual test:
 
 ```bash
-proxy models
-proxy use gemini
-proxy use gpt
-proxy use claude-sonnet
-proxy start
-proxy test
+export ANTHROPIC_BASE_URL=http://localhost:8000
+export ANTHROPIC_AUTH_TOKEN=dev-local-proxy-token
+claude
 ```
 
-Example output:
+## Phase 3: Usage and cost tracking
 
-```txt
-Current model: gemini
-Provider: gemini
-Resolved model: gemini-2.5-pro
-Base URL: https://generativelanguage.googleapis.com/v1beta/openai
+```
+SQLite database
+api_requests table
+usage extraction from provider responses
+fallback token estimation
+pricing config
+cost calculation
+admin stats endpoints
 ```
 
----
+## Phase 4: Dashboard shell
 
-## 26. Minimum Viable Product Checklist
-
-```txt
-[ ] Create FastAPI project
-[ ] Add config.yaml
-[ ] Add .env support
-[ ] Add provider config loader
-[ ] Add model alias resolver
-[ ] Add OpenAI-compatible provider client
-[ ] Add Anthropic request schema
-[ ] Add OpenAI request schema
-[ ] Add Anthropic -> OpenAI translator
-[ ] Add OpenAI -> Anthropic translator
-[ ] Add POST /v1/messages
-[ ] Add GET /v1/models
-[ ] Add /health
-[ ] Test with curl
-[ ] Test with Gemini OpenAI-compatible endpoint
-[ ] Test with OpenAI
-[ ] Test with OpenRouter
-[ ] Add Claude Code setup instructions
+```
+Next.js dashboard
+sidebar
+top header
+overview page
+requests page
+settings page shell
 ```
 
----
+## Phase 5: Logs page
 
-## 27. Recommended Build Order
-
-Build in this exact order:
-
-```txt
-1. FastAPI app with /health
-2. Config loader
-3. Model alias resolver
-4. OpenAI-compatible provider client
-5. Anthropic -> OpenAI request translator
-6. OpenAI -> Anthropic response translator
-7. POST /v1/messages non-streaming
-8. Test with curl
-9. Test with Claude Code
-10. Add streaming
-11. Add tool calls
-12. Add /v1/chat/completions
-13. Add OpenAI -> Anthropic routing
-14. Add tests and polish
+```
+structured log service
+proxy_logs table
+/admin/logs endpoint
+/admin/logs/stream endpoint
+CLI-style terminal log viewer
+log filters
+selected log details panel
 ```
 
----
+## Phase 6: Streaming
 
-## 28. Final Target Architecture
+```
+OpenAI-compatible stream reader
+Anthropic stream writer
+SSE translator
+stream usage tracking
+stream logs
+```
 
-```txt
+## Phase 7: Tools
+
+```
+Anthropic tool_use → OpenAI tool_calls
+OpenAI tool_calls → Anthropic tool_use
+tool_result handling
+compatibility tests with Claude Code
+```
+
+## Phase 8: Provider health and failover
+
+```
+provider health checks
+provider_status table
+routing rules
+fallback behavior
+provider page dashboard
+anomaly logging
+```
+
+# Testing plan
+
+## Unit tests
+
+```
+model alias resolution
+Anthropic → OpenAI translation
+OpenAI → Anthropic translation
+usage normalization
+cost calculation
+provider config loading
+local proxy auth
+```
+
+## Integration tests
+
+```
+POST /v1/messages → OpenAI
+POST /v1/messages → Gemini OpenAI-compatible
+POST /v1/messages → OpenRouter
+POST /v1/chat/completions → Anthropic
+GET /v1/models
+admin stats endpoints
+logging endpoints
+```
+
+## Manual tests
+
+```
 Claude Code
-OpenAI SDK apps
-Anthropic SDK apps
-Custom agents
-Cursor-like tools
-Local scripts
-        |
-        v
-Local AI Proxy
-        |
-        +--> OpenAI
-        +--> Gemini OpenAI-compatible API
-        +--> OpenRouter
-        +--> Anthropic
-        +--> Ollama
-        +--> LM Studio
-        +--> vLLM
+OpenAI Python SDK
+OpenAI JavaScript SDK
+curl
+Ollama local server
+LM Studio local server
 ```
 
-The final product should feel like a local universal AI adapter.
+# Security principles
 
+```
+Never expose provider API keys to the frontend.
+Never log raw provider keys.
+Never include raw request bodies in logs by default.
+Mask secrets in errors and logs.
+Use a local proxy token even on localhost.
+Store raw keys in .env for v1.
+Use encrypted database storage only in v2.
+Allow disabling request body logging.
+```
+
+# Do not do in v1
+
+```
+Do not start with native Gemini integration.
+Do not build encrypted key management immediately.
+Do not build every provider first.
+Do not build the dashboard before the proxy works.
+Do not overcomplicate routing before basic alias routing works.
+Do not silently accept unsupported tools or content blocks.
+```
+
+# First polished MVP target
+
+```
+FastAPI local proxy
+Claude Code-compatible /v1/messages
+OpenAI-compatible backend providers
+OpenAI, Gemini, OpenRouter, Ollama, LM Studio
+model aliases
+.env provider keys
+local proxy auth token
+SQLite request tracking
+estimated cost tracking
+Next.js dashboard
+Overview page
+Requests page
+Logs page
+Models page
+Providers page
+Costs page
+Settings page
+```
+
+Streaming and tool calls can be added immediately after the basic MVP if Claude Code requires deeper compatibility.
+
+# Final product vision
+
+```
+Local AI Proxy
+├── Anthropic-compatible API
+├── OpenAI-compatible API
+├── provider switching
+├── model aliases
+├── request translation
+├── streaming translation
+├── tool-call translation
+├── provider API key management
+├── usage tracking
+├── cost tracking
+├── provider health monitoring
+├── failover routing
+├── CLI-style live logs
+└── clean dashboard
+```
+
+The long-term goal is to make it feel like a clean local version of LiteLLM/OpenRouter, but focused on Claude Code compatibility, local-first control, polished usage tracking, and a dashboard that is useful without being crowded.
