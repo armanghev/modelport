@@ -1,0 +1,71 @@
+server:
+  host: "127.0.0.1"
+  port: 13243
+
+security:
+  modelport_token: "MODELPORT_TOKEN"
+
+database:
+  url: "sqlite:///./data/modelport.db"
+
+defaults:
+  input_format: "anthropic"
+  provider: "openrouter"
+  model: "claude-sonnet"
+
+providers:
+  openai:
+    type: "openai_compatible"
+    display_name: "OpenAI"
+    base_url: "https://api.openai.com/v1"
+    api_key_env: "OPENAI_API_KEY"
+
+  anthropic:
+    type: "anthropic_compatible"
+    display_name: "Anthropic"
+    base_url: "https://api.anthropic.com"
+    api_key_env: "ANTHROPIC_API_KEY"
+
+  gemini:
+    type: "openai_compatible"
+    display_name: "Gemini"
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key_env: "GEMINI_API_KEY"
+
+  openrouter:
+    type: "openai_compatible"
+    display_name: "OpenRouter"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "OPENROUTER_API_KEY"
+
+  ollama:
+    type: "openai_compatible"
+    display_name: "Ollama"
+    base_url: "http://localhost:11434/v1"
+    api_key_env: null
+
+model_aliases:
+  claude-sonnet:
+    provider: "anthropic"
+    model: "claude-3-5-sonnet-latest"
+    description: "Default high-intelligence Claude model"
+
+  gpt:
+    provider: "openai"
+    model: "gpt-4.1"
+    description: "Default GPT model"
+
+  gemini:
+    provider: "gemini"
+    model: "gemini-2.5-pro"
+    description: "Default Gemini reasoning model"
+
+  fast:
+    provider: "openai"
+    model: "gpt-4o-mini"
+    description: "Low-latency, cost-efficient model"
+
+  local:
+    provider: "ollama"
+    model: "qwen2.5-coder"
+    description: "Local coding model through Ollama"
