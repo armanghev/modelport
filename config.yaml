@@ -45,27 +45,57 @@ providers:
     api_key_env: null
 
 model_aliases:
-  claude-sonnet:
-    provider: "anthropic"
-    model: "claude-3-5-sonnet-latest"
-    description: "Default high-intelligence Claude model"
-
+  # OpenAI
   gpt:
     provider: "openai"
-    model: "gpt-4.1"
-    description: "Default GPT model"
+    model: "gpt-5.5"
+    description: "Default flagship OpenAI model"
 
+  gpt-fast:
+    provider: "openai"
+    model: "gpt-5.4-mini"
+    description: "Fast lower-cost OpenAI model"
+
+  gpt-balanced:
+    provider: "openai"
+    model: "gpt-5.4"
+    description: "Balanced OpenAI model for coding and reasoning"
+
+  # Anthropic
+  claude:
+    provider: "anthropic"
+    model: "claude-sonnet-4-6"
+    description: "Default Anthropic model"
+
+  claude-sonnet:
+    provider: "anthropic"
+    model: "claude-sonnet-4-6"
+    description: "Best speed/intelligence balance from Anthropic"
+
+  claude-opus:
+    provider: "anthropic"
+    model: "claude-opus-4-7"
+    description: "Most capable Anthropic model"
+
+  claude-fast:
+    provider: "anthropic"
+    model: "claude-haiku-4-5"
+    description: "Fastest Anthropic model"
+
+  # Gemini
   gemini:
     provider: "gemini"
-    model: "gemini-2.5-pro"
-    description: "Default Gemini reasoning model"
+    model: "gemini-3.5-flash"
+    description: "Default Gemini OpenAI-compatible model"
 
-  fast:
-    provider: "openai"
-    model: "gpt-4o-mini"
-    description: "Low-latency, cost-efficient model"
+  gemini-flash:
+    provider: "gemini"
+    model: "gemini-3.5-flash"
+    description: "Fast Gemini model via OpenAI compatibility"
 
+  # Local / fallback
   local:
     provider: "ollama"
     model: "qwen2.5-coder"
     description: "Local coding model through Ollama"
+    
