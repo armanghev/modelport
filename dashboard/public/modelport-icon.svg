@@ -1,0 +1,8 @@
+<svg width="40" height="40" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Modelport Icon</title>
+  <path d="M64 16L105.6 40V88L64 112L22.4 88V40L64 16Z" stroke="#010101" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M64 16V61.5M64 61.5V112" stroke="#010101" stroke-width="5" stroke-linecap="round"/>
+  <path d="M22.4 40L64 61.5L105.6 40" stroke="#010101" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M22.4 88L64 61.5L105.6 88" stroke="#010101" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="64" cy="61.5" r="7" fill="#010101"/>
+</svg>
