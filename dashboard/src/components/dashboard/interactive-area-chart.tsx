@@ -20,7 +20,8 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-export type DateRangeValue = "90d" | "30d" | "7d";
+export type DateRangeValue = "30d" | "7d" | "1d" | "6h" | "1h";
+export type DateRangeSeriesMap = Partial<Record<DateRangeValue, InteractiveAreaChartPoint[]>>;
 
 export interface InteractiveAreaChartPoint {
   date: string;
@@ -32,6 +33,7 @@ export interface InteractiveAreaChartPoint {
 
 export interface InteractiveAreaChartProps {
   data: InteractiveAreaChartPoint[];
+  dataByRange?: DateRangeSeriesMap;
   title: string;
   description: string;
   primaryLabel?: string;
@@ -51,16 +53,25 @@ function filterDataByRange(
   }
 
   const referenceDate = new Date(data[data.length - 1].date);
-  const daysToSubtract = range === "30d" ? 30 : range === "7d" ? 7 : 90;
+  let msToSubtract = 30 * 24 * 60 * 60 * 1000;
+  if (range === "7d") {
+    msToSubtract = 7 * 24 * 60 * 60 * 1000;
+  } else if (range === "1d") {
+    msToSubtract = 24 * 60 * 60 * 1000;
+  } else if (range === "6h") {
+    msToSubtract = 6 * 60 * 60 * 1000;
+  } else if (range === "1h") {
+    msToSubtract = 60 * 60 * 1000;
+  }
 
-  const startDate = new Date(referenceDate);
-  startDate.setDate(startDate.getDate() - daysToSubtract);
+  const startDate = new Date(referenceDate.getTime() - msToSubtract);
 
   return data.filter((item) => new Date(item.date) >= startDate);
 }
 
 export function InteractiveAreaChart({
   data,
+  dataByRange,
   title,
   description,
   primaryLabel = "Primary",
@@ -73,15 +84,21 @@ export function InteractiveAreaChart({
   const [timeRange, setTimeRange] = React.useState<DateRangeValue>(defaultRange);
   const chartId = React.useId().replace(/:/g, "");
   const rangeOptions: { value: DateRangeValue; label: string }[] = [
-    { value: "90d", label: "Last 3 months" },
-    { value: "30d", label: "Last 30 days" },
-    { value: "7d", label: "Last 7 days" },
+    { value: "30d", label: "30d" },
+    { value: "7d", label: "7d" },
+    { value: "1d", label: "1d" },
+    { value: "6h", label: "6h" },
+    { value: "1h", label: "1h" },
   ];
 
-  const filteredData = React.useMemo(
-    () => filterDataByRange(data, timeRange),
-    [data, timeRange],
-  );
+  const filteredData = React.useMemo(() => {
+    const explicitRangeData = dataByRange?.[timeRange];
+    if (explicitRangeData && explicitRangeData.length > 0) {
+      return explicitRangeData;
+    }
+
+    return filterDataByRange(data, timeRange);
+  }, [data, dataByRange, timeRange]);
   const hasCacheRead = filteredData.some((point) => typeof point.cacheRead === "number");
   const hasCacheWrite = filteredData.some((point) => typeof point.cacheWrite === "number");
 
@@ -143,9 +160,16 @@ export function InteractiveAreaChart({
               tick={{ fill: "var(--color-text-muted)", fontSize: 12 }}
               tickFormatter={(value) => {
                 const date = new Date(value);
-                return date.toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
+                if (timeRange === "30d" || timeRange === "7d") {
+                  return date.toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  });
+                }
+
+                return date.toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
                 });
               }}
             />
@@ -159,9 +183,19 @@ export function InteractiveAreaChart({
                 color: "var(--color-text-primary)",
               }}
               labelFormatter={(value) => {
-                return new Date(value as string).toLocaleDateString("en-US", {
+                const date = new Date(value as string);
+                if (timeRange === "30d" || timeRange === "7d") {
+                  return date.toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  });
+                }
+
+                return date.toLocaleString("en-US", {
                   month: "short",
                   day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
                 });
               }}
             />
