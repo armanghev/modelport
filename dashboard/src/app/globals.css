@@ -35,6 +35,10 @@
   --accent-amber-bg: #fff7e8;
   --accent-beige: #e9e1d4;
 
+  /* Brand icon */
+  --icon-mark: #525252;
+  --icon-tile: #e9e1d4;
+
   /* Terminal */
   --terminal-bg: #171a20;
   --terminal-surface: #1f2430;
@@ -132,6 +136,9 @@
   --color-accent-amber: var(--accent-amber);
   --color-accent-amber-bg: var(--accent-amber-bg);
   --color-accent-beige: var(--accent-beige);
+
+  --color-icon-mark: var(--icon-mark);
+  --color-icon-tile: var(--icon-tile);
 
   --color-terminal-bg: var(--terminal-bg);
   --color-terminal-surface: var(--terminal-surface);
@@ -300,6 +307,9 @@ textarea {
   --accent-amber: #fbbf24;
   --accent-amber-bg: rgba(251, 191, 36, 0.12);
   --accent-beige: #2a2f38;
+
+  --icon-mark: #e9e1d4;
+  --icon-tile: #525252;
 
   --terminal-bg: #0f1115;
   --terminal-surface: #171a20;

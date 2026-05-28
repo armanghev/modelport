@@ -8,10 +8,10 @@ import {
   Globe,
   House,
 } from "@phosphor-icons/react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { ModelportWordmark } from "@/components/brand/modelport-icon";
 import {
   Sidebar,
   SidebarContent,
@@ -39,13 +39,8 @@ export function DashboardSidebar() {
       collapsible="none"
       className="shrink-0 border-r border-border-default bg-bg-sidebar text-text-primary lg:sticky lg:top-0 lg:h-screen lg:self-start lg:overflow-hidden"
     >
-      <SidebarHeader className="gap-0 border-b border-border-default px-4 py-6">
-        <div className="flex items-center gap-1">
-          <Image src="/modelport-icon.svg" alt="Local AI Proxy" width={40} height={40} />
-          <span className="text-2xl font-semibold tracking-[-0.02em] text-text-primary">
-            ModelPort
-          </span>
-        </div>
+      <SidebarHeader className="gap-0 border-b border-border-default">
+        <ModelportWordmark height={60} />
       </SidebarHeader>
 
       <SidebarContent className="px-2 py-4">
