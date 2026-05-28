@@ -1,12 +1,12 @@
 "use client";
 
 import {
-  ClockCounterClockwise,
-  Cube,
-  Coins,
-  GearSix,
-  Globe,
-  House,
+  ClockCounterClockwiseIcon,
+  CubeIcon,
+  CoinsIcon,
+  GearSixIcon,
+  GlobeIcon,
+  HouseIcon,
 } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -23,12 +23,12 @@ import {
 } from "@/components/ui/sidebar";
 
 const navItems = [
-  { title: "Overview", href: "/overview", icon: House },
-  { title: "Requests", href: "/requests", icon: ClockCounterClockwise },
-  { title: "Models", href: "/models", icon: Cube },
-  { title: "Providers", href: "/providers", icon: Globe },
-  { title: "Costs", href: "/costs", icon: Coins },
-  { title: "Settings", href: "/settings", icon: GearSix },
+  { title: "Overview", href: "/overview", icon: HouseIcon },
+  { title: "Requests", href: "/requests", icon: ClockCounterClockwiseIcon },
+  { title: "Models", href: "/models", icon: CubeIcon },
+  { title: "Providers", href: "/providers", icon: GlobeIcon },
+  { title: "Costs", href: "/costs", icon: CoinsIcon },
+  { title: "Settings", href: "/settings", icon: GearSixIcon },
 ];
 
 export function DashboardSidebar() {
