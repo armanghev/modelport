@@ -1,17 +1,29 @@
+"use client";
+
+import { usePathname } from "next/navigation";
 import { SunIcon } from "@phosphor-icons/react/dist/ssr";
 
-export function PageHeader({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
+const pages = {
+  overview: { title: "Overview", description: "Usage and routing overview" },
+  requests: { title: "Requests", description: "Search and inspect proxy activity" },
+  models: { title: "Models", description: "Manage model aliases, defaults, and usage" },
+  providers: { title: "Providers", description: "Monitor provider health and routing" },
+  costs: { title: "Costs", description: "Track spending across providers and models" },
+  settings: { title: "Settings", description: "Configure clients, defaults, and more" },
+} as const;
+
+const DEFAULT_PAGE = pages.overview;
+
+export function PageHeader() {
+  const pathname = usePathname();
+  const currentPage = pathname.split("/").filter(Boolean).pop() as keyof typeof pages | undefined;
+  const currentPageData = (currentPage && pages[currentPage]) || DEFAULT_PAGE;
+
   return (
     <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
       <div className="space-y-1">
-        <h1>{title}</h1>
-        <p className="text-base text-text-secondary">{description}</p>
+        <h1>{currentPageData.title}</h1>
+        <p className="text-base text-text-secondary">{currentPageData.description}</p>
       </div>
 
       <div className="flex items-center gap-3 text-sm text-text-secondary">
