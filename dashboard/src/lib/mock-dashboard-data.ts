@@ -1,6 +1,6 @@
 export type TrendDirection = "up" | "down" | "neutral";
 export type ProviderStatus = "operational" | "degraded" | "offline";
-export type RequestStatus = "success" | "completed" | "error" | "cancelled";
+export type RequestStatus = "success" | "error" | "cancelled";
 export type UsageRange = "1h" | "6h" | "24h" | "7d" | "30d";
 export type ProviderType =
   | "openai_compatible"
@@ -268,7 +268,7 @@ const requests: RequestRow[] = [
     costUsd: 0.0063,
     latencyMs: 623,
     streaming: false,
-    status: "completed",
+    status: "success",
   },
   {
     id: "req_06",
@@ -587,7 +587,7 @@ export const dashboardMockData: DashboardMockData = {
         "qwen2.5-coder",
       ],
       clients: ["Claude Code", "OpenAI SDK", "Gemini CLI", "Custom App", "Codex"],
-      statuses: ["success", "completed", "error", "cancelled"],
+      statuses: ["success", "error", "cancelled"],
       endpoints: ["/v1/messages", "/v1/chat/completions"],
     },
     rows: requests,
