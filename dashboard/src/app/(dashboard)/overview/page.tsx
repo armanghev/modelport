@@ -15,7 +15,6 @@ import {
   type UsagePoint,
 } from "@/lib/mock-dashboard-data";
 import { InteractiveAreaChart } from "@/components/dashboard/interactive-area-chart";
-import { PageHeader } from "@/components/dashboard/page-header";
 
 type MetricIcon = typeof LightningIcon;
 
@@ -135,7 +134,6 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Overview" description="Key metrics and usage overview" />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {overview.metrics.map((metric) => {
