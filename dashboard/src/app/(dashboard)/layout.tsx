@@ -10,12 +10,12 @@ export default function DashboardLayout({
 }) {
   return (
     <SidebarProvider>
-      <div className="min-h-screen bg-bg-app text-text-primary">
-        <div className="mx-auto flex min-h-screen max-w-[1680px] flex-col lg:flex-row">
+      <div className="min-h-screen w-full overflow-x-clip bg-bg-app text-text-primary">
+        <div className="flex min-h-screen w-full flex-col lg:flex-row">
           <DashboardSidebar />
           <SidebarInset className="bg-transparent">
-            <main className="flex-1 px-4 py-6 lg:px-10 lg:py-8">
-              <div className="mx-auto w-full max-w-(--content-max-width)">{children}</div>
+            <main className="w-full flex-1 px-4 py-6 lg:px-10 lg:py-8">
+              <div className="w-full">{children}</div>
             </main>
           </SidebarInset>
         </div>
