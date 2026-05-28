@@ -44,7 +44,7 @@ export function DashboardSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-2 py-4">
-        <SidebarMenu>
+        <SidebarMenu className="gap-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
@@ -69,12 +69,14 @@ export function DashboardSidebar() {
 
       <SidebarFooter className="mt-auto p-4">
         <div className="card-surface rounded-(--radius-card) p-4">
-          <p className="text-[12px] text-text-muted">Proxy status</p>
-          <p className="mt-1 flex items-center gap-2 text-[14px] font-semibold text-accent-green">
+          <p className="mb-1 text-xs text-text-muted">Proxy status</p>
+          <div className="flex items-center justify-between gap-2">
+          <p className="flex items-center gap-2 text-sm font-semibold text-accent-green">
             <span className="status-dot bg-accent-green" />
             Running
           </p>
-          <p className="mt-2 text-[12px] text-text-muted">v1.2.0</p>
+          <p className="text-xs text-text-muted">v1.2.0</p>
+          </div>
         </div>
       </SidebarFooter>
     </Sidebar>
