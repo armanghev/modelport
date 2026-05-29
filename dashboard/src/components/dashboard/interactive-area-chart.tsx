@@ -9,6 +9,7 @@ import {
   ResponsiveContainer,
   Tooltip,
   XAxis,
+  YAxis,
 } from "recharts";
 
 import {
@@ -42,6 +43,20 @@ export interface InteractiveAreaChartProps {
   cacheWriteLabel?: string;
   defaultRange?: DateRangeValue;
   className?: string;
+  showHeader?: boolean;
+  showRangeSelector?: boolean;
+  showLegend?: boolean;
+  showSecondary?: boolean;
+  surface?: boolean;
+  chartHeightClassName?: string;
+  showYAxis?: boolean;
+  yAxisTickFormatter?: (value: number) => string;
+  tooltipIncludeTime?: boolean;
+  showVerticalGrid?: boolean;
+}
+
+function formatTooltipNumber(value: number): string {
+  return value.toLocaleString("en-US");
 }
 
 function filterDataByRange(
@@ -80,6 +95,16 @@ export function InteractiveAreaChart({
   cacheWriteLabel = "Cache write",
   defaultRange = "30d",
   className,
+  showHeader = true,
+  showRangeSelector = true,
+  showLegend = true,
+  showSecondary = true,
+  surface = true,
+  chartHeightClassName = "h-64",
+  showYAxis = false,
+  yAxisTickFormatter,
+  tooltipIncludeTime = false,
+  showVerticalGrid = false,
 }: InteractiveAreaChartProps) {
   const [timeRange, setTimeRange] = React.useState<DateRangeValue>(defaultRange);
   const chartId = React.useId().replace(/:/g, "");
@@ -103,31 +128,43 @@ export function InteractiveAreaChart({
   const hasCacheWrite = filteredData.some((point) => typeof point.cacheWrite === "number");
 
   return (
-    <article className={cn("card-surface p-0", className)}>
-      <header className="flex flex-col gap-3 border-b border-border-subtle px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <h2 className="text-xl">{title}</h2>
-          <p className="text-sm text-text-secondary">{description}</p>
-        </div>
+    <article className={cn(surface ? "card-surface p-0" : "p-0", className)}>
+      {showHeader ? (
+        <header className="flex flex-col gap-3 border-b border-border-subtle px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <h2 className="text-xl">{title}</h2>
+            <p className="text-sm text-text-secondary">{description}</p>
+          </div>
 
-        <Select
-          value={timeRange}
-          onValueChange={(value) => setTimeRange(value as DateRangeValue)}
-        >
-          <SelectTrigger className="w-40 rounded-lg bg-bg-card-muted text-sm text-text-primary">
-            <SelectValue placeholder="Select range" />
-          </SelectTrigger>
-          <SelectContent className="rounded-lg p-1">
-            {rangeOptions.map((option) => (
-              <SelectItem key={option.value} value={option.value} className="rounded-md text-sm">
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </header>
+          {showRangeSelector ? (
+            <Select
+              value={timeRange}
+              onValueChange={(value) => setTimeRange(value as DateRangeValue)}
+            >
+              <SelectTrigger className="w-40 rounded-lg bg-bg-card-muted text-sm text-text-primary">
+                <SelectValue placeholder="Select range" />
+              </SelectTrigger>
+              <SelectContent className="rounded-lg p-1">
+                {rangeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value} className="rounded-md text-sm">
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+        </header>
+      ) : null}
 
-      <div className="h-64 px-4 pt-4 pb-3 sm:px-6 sm:pt-5">
+      <div
+        className={cn(
+          chartHeightClassName,
+          "px-4 pt-4 pb-3 sm:px-6 sm:pt-5",
+          "[&_.recharts-surface:focus]:outline-none",
+          "[&_.recharts-wrapper:focus]:outline-none",
+          "[&_.recharts-wrapper:focus-visible]:outline-none",
+        )}
+      >
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={filteredData}>
             <defs>
@@ -149,7 +186,11 @@ export function InteractiveAreaChart({
               </linearGradient>
             </defs>
 
-            <CartesianGrid strokeDasharray="4 4" stroke="var(--color-chart-grid)" vertical={false} />
+            <CartesianGrid
+              strokeDasharray="4 4"
+              stroke="var(--color-chart-grid)"
+              vertical={showVerticalGrid}
+            />
 
             <XAxis
               dataKey="date"
@@ -173,6 +214,18 @@ export function InteractiveAreaChart({
                 });
               }}
             />
+            {showYAxis ? (
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width={46}
+                tickMargin={10}
+                tick={{ fill: "var(--color-text-muted)", fontSize: 12 }}
+                tickFormatter={(value) =>
+                  yAxisTickFormatter ? yAxisTickFormatter(value as number) : `${value}`
+                }
+              />
+            ) : null}
 
             <Tooltip
               cursor={false}
@@ -182,8 +235,24 @@ export function InteractiveAreaChart({
                 backgroundColor: "var(--color-bg-card)",
                 color: "var(--color-text-primary)",
               }}
+              formatter={(value, name) => {
+                if (typeof value === "number") {
+                  return [formatTooltipNumber(value), name];
+                }
+
+                return [value, name];
+              }}
               labelFormatter={(value) => {
                 const date = new Date(value as string);
+                if (tooltipIncludeTime) {
+                  return date.toLocaleString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  });
+                }
+
                 if (timeRange === "30d" || timeRange === "7d") {
                   return date.toLocaleDateString("en-US", {
                     month: "short",
@@ -200,16 +269,18 @@ export function InteractiveAreaChart({
               }}
             />
 
-            <Area
-              dataKey="secondary"
-              name={secondaryLabel}
-              type="natural"
-              fill={`url(#fillSecondary-${chartId})`}
-              stroke="var(--color-accent-blue)"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 3 }}
-            />
+            {showSecondary ? (
+              <Area
+                dataKey="secondary"
+                name={secondaryLabel}
+                type="natural"
+                fill={`url(#fillSecondary-${chartId})`}
+                stroke="var(--color-accent-blue)"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 3 }}
+              />
+            ) : null}
             <Area
               dataKey="primary"
               name={primaryLabel}
@@ -245,16 +316,18 @@ export function InteractiveAreaChart({
               />
             ) : null}
 
-            <Legend
-              verticalAlign="bottom"
-              align="right"
-              iconType="circle"
-              wrapperStyle={{
-                color: "var(--color-text-secondary)",
-                fontSize: "12px",
-                paddingTop: "8px",
-              }}
-            />
+            {showLegend ? (
+              <Legend
+                verticalAlign="bottom"
+                align="right"
+                iconType="circle"
+                wrapperStyle={{
+                  color: "var(--color-text-secondary)",
+                  fontSize: "12px",
+                  paddingTop: "8px",
+                }}
+              />
+            ) : null}
           </AreaChart>
         </ResponsiveContainer>
       </div>
