@@ -8,6 +8,7 @@ import {
   InteractiveAreaChart,
   type InteractiveAreaChartPoint,
 } from "@/components/dashboard/interactive-area-chart";
+import { buildDailyUsageValues, buildHourlyUsageValues } from "@/lib/model-usage";
 
 export interface ModelDetailsModalModel {
   displayName: string;
@@ -47,54 +48,6 @@ function formatInteger(value: number): string {
 
 function formatCost(value: number): string {
   return `$${value.toFixed(2)}`;
-}
-
-function buildModalDailyUsageValues(
-  usageBars: number[],
-  tokenTotal: number,
-): number[] {
-  const values = usageBars.slice(-7);
-  const sum = values.reduce((acc, value) => acc + value, 0);
-
-  if (sum === 0) {
-    return values.map(() => 0);
-  }
-
-  return values.map((value) => Math.round((tokenTotal * value) / sum));
-}
-
-function buildHourlyUsageValues(dailyValues: number[], seed: number): number[] {
-  const hourlyValues: number[] = [];
-  let state = (seed % 997) + 97;
-
-  dailyValues.forEach((dailyTotal, dayIndex) => {
-    const weights: number[] = [];
-    let weightSum = 0;
-
-    for (let hour = 0; hour < 24; hour += 1) {
-      state = (state * 37 + 19 + dayIndex * 13 + hour * 11) % 1009;
-      const noise = (state % 100) / 100;
-      const diurnal = 0.55 + 0.45 * Math.sin(((hour - 6) / 24) * Math.PI * 2);
-      const weight = Math.max(0.12, diurnal + noise * 0.28);
-      weights.push(weight);
-      weightSum += weight;
-    }
-
-    const dayHourly = weights.map((weight) =>
-      Math.max(0, Math.round((dailyTotal * weight) / weightSum)),
-    );
-
-    const allocated = dayHourly.reduce((sum, value) => sum + value, 0);
-    const remainder = dailyTotal - allocated;
-    if (remainder !== 0) {
-      const peakIndex = dayHourly.indexOf(Math.max(...dayHourly));
-      dayHourly[peakIndex] = Math.max(0, dayHourly[peakIndex] + remainder);
-    }
-
-    hourlyValues.push(...dayHourly);
-  });
-
-  return hourlyValues;
 }
 
 function buildChartPoints(
@@ -193,7 +146,7 @@ export function ModelDetailsModal({
   const modalDailyUsageValues = useMemo(
     () =>
       model
-        ? buildModalDailyUsageValues(model.usageBars, model.tokenTotal)
+        ? buildDailyUsageValues(model.usageBars, model.tokenTotal)
         : [],
     [model],
   );

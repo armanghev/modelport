@@ -15,6 +15,12 @@ import {
 import { Anthropic, Gemini, OpenAI } from "@lobehub/icons";
 
 import { ModelDetailsModal } from "@/components/dashboard/models/model-details-modal";
+import {
+  buildDailyUsageValues,
+  buildHourlyUsageValues,
+  buildUsageBars,
+  downsampleSeries,
+} from "@/lib/model-usage";
 import { dashboardMockData } from "@/lib/mock-dashboard-data";
 
 interface ModelTableRow {
@@ -24,6 +30,7 @@ interface ModelTableRow {
   usageShare: number;
   contextWindow: string;
   usageBars: number[];
+  sparklineValues: number[];
   modelId: string;
   requestCount: number;
   tokenTotal: number;
@@ -111,18 +118,6 @@ function getContextWindow(model: string): string {
   return "200K";
 }
 
-function buildUsageBars(seed: number): number[] {
-  const bars: number[] = [];
-  let state = (seed % 97) + 11;
-
-  for (let index = 0; index < 20; index += 1) {
-    state = (state * 17 + 31 + index * 7) % 89;
-    bars.push((state % 9) + 1);
-  }
-
-  return bars;
-}
-
 function buildSparklinePoints(values: number[], width = 128, height = 24): string {
   if (values.length === 0) {
     return "";
@@ -173,20 +168,30 @@ export default function ModelsPage() {
   const modelRows: ModelTableRow[] = useMemo(() => {
     return [...rawModels]
       .sort((left, right) => right.tokenTotal - left.tokenTotal)
-      .map((model) => ({
-        id: model.id,
-        displayName: model.displayName ?? formatModelLabel(model.model),
-        provider: model.provider,
-        usageShare: Math.max(1, Math.round((model.tokenTotal / totalTokens) * 100)),
-        contextWindow: getContextWindow(model.model),
-        usageBars: buildUsageBars(model.tokenTotal + model.requestCount),
-        modelId: model.model,
-        requestCount: model.requestCount,
-        tokenTotal: model.tokenTotal,
-        costUsd: model.costUsd,
-        avgLatencyMs: model.avgLatencyMs,
-        errorRate: model.errorRate,
-      }));
+      .map((model) => {
+        const usageBars = buildUsageBars(model.tokenTotal + model.requestCount);
+        const dailyUsageValues = buildDailyUsageValues(usageBars, model.tokenTotal);
+        const hourlyUsageValues = buildHourlyUsageValues(
+          dailyUsageValues,
+          model.tokenTotal + model.requestCount,
+        );
+
+        return {
+          id: model.id,
+          displayName: model.displayName ?? formatModelLabel(model.model),
+          provider: model.provider,
+          usageShare: Math.max(1, Math.round((model.tokenTotal / totalTokens) * 100)),
+          contextWindow: getContextWindow(model.model),
+          usageBars,
+          sparklineValues: downsampleSeries(hourlyUsageValues, 20),
+          modelId: model.model,
+          requestCount: model.requestCount,
+          tokenTotal: model.tokenTotal,
+          costUsd: model.costUsd,
+          avgLatencyMs: model.avgLatencyMs,
+          errorRate: model.errorRate,
+        };
+      });
   }, [rawModels, totalTokens]);
 
   const topModel = modelRows[0];
@@ -377,7 +382,7 @@ export default function ModelsPage() {
                         strokeWidth="2"
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        points={buildSparklinePoints(model.usageBars)}
+                        points={buildSparklinePoints(model.sparklineValues)}
                       />
                     </svg>
                   </td>
