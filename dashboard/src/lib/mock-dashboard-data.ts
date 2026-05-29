@@ -58,7 +58,6 @@ export interface RequestRow {
 
 export interface ModelUsageSummary {
   id: string;
-  alias: string;
   provider: string;
   model: string;
   requestCount: number;
@@ -66,13 +65,6 @@ export interface ModelUsageSummary {
   costUsd: number;
   avgLatencyMs: number;
   errorRate: number;
-}
-
-export interface AliasMapping {
-  alias: string;
-  provider: string;
-  model: string;
-  description: string;
 }
 
 export interface ProviderHealth {
@@ -155,7 +147,6 @@ export interface DashboardMockData {
       errorRate: number;
     };
     models: ModelUsageSummary[];
-    aliases: AliasMapping[];
   };
   providers: {
     cards: ProviderHealth[];
@@ -177,7 +168,6 @@ export interface DashboardMockData {
       inputFormat: "anthropic" | "openai";
       provider: string;
     };
-    modelAliases: AliasMapping[];
     apiKeys: ApiKeyStatus[];
     pricingTable: PricingEntry[];
     logging: {
@@ -601,7 +591,6 @@ export const dashboardMockData: DashboardMockData = {
     models: [
       {
         id: "mod_01",
-        alias: "claude-sonnet",
         provider: "Anthropic",
         model: "claude-3-5-sonnet-latest",
         requestCount: 611,
@@ -612,7 +601,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_02",
-        alias: "gpt-4.1",
         provider: "OpenAI",
         model: "gpt-4.1",
         requestCount: 418,
@@ -623,7 +611,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_03",
-        alias: "gemini",
         provider: "Gemini",
         model: "gemini-2.5-pro",
         requestCount: 276,
@@ -634,7 +621,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_04",
-        alias: "gpt-4o-mini",
         provider: "OpenAI",
         model: "gpt-4o-mini",
         requestCount: 229,
@@ -645,7 +631,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_05",
-        alias: "claude-haiku",
         provider: "Anthropic",
         model: "claude-3-haiku-20240307",
         requestCount: 313,
@@ -656,7 +641,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_06",
-        alias: "o1",
         provider: "OpenAI",
         model: "o1",
         requestCount: 192,
@@ -667,7 +651,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_07",
-        alias: "o3",
         provider: "OpenAI",
         model: "o3",
         requestCount: 157,
@@ -678,7 +661,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_08",
-        alias: "claude-opus",
         provider: "Anthropic",
         model: "claude-3-opus-20240229",
         requestCount: 144,
@@ -689,7 +671,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_09",
-        alias: "gpt-4o",
         provider: "OpenAI",
         model: "gpt-4o",
         requestCount: 139,
@@ -700,7 +681,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_10",
-        alias: "gemini-flash",
         provider: "Gemini",
         model: "gemini-2.5-flash",
         requestCount: 178,
@@ -711,7 +691,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_11",
-        alias: "gpt-4.1-mini",
         provider: "OpenAI",
         model: "gpt-4.1-mini",
         requestCount: 166,
@@ -722,7 +701,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_12",
-        alias: "gpt-4.1-nano",
         provider: "OpenAI",
         model: "gpt-4.1-nano",
         requestCount: 129,
@@ -733,7 +711,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_13",
-        alias: "claude-3-sonnet",
         provider: "Anthropic",
         model: "claude-3-sonnet-20240229",
         requestCount: 117,
@@ -744,7 +721,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_14",
-        alias: "claude-instant",
         provider: "Anthropic",
         model: "claude-instant-1.2",
         requestCount: 98,
@@ -755,7 +731,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_15",
-        alias: "gemini-flash-lite",
         provider: "Gemini",
         model: "gemini-1.5-flash",
         requestCount: 102,
@@ -766,7 +741,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_16",
-        alias: "gemini-pro-1.5",
         provider: "Gemini",
         model: "gemini-1.5-pro",
         requestCount: 88,
@@ -777,7 +751,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_17",
-        alias: "claude-2.1",
         provider: "Anthropic",
         model: "claude-2.1",
         requestCount: 79,
@@ -788,7 +761,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_18",
-        alias: "gpt-3.5-turbo",
         provider: "OpenAI",
         model: "gpt-3.5-turbo",
         requestCount: 131,
@@ -799,7 +771,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_19",
-        alias: "gpt-4-turbo",
         provider: "OpenAI",
         model: "gpt-4-turbo",
         requestCount: 67,
@@ -810,7 +781,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_20",
-        alias: "claude-3-opus-lite",
         provider: "Anthropic",
         model: "claude-3-opus-lite",
         requestCount: 52,
@@ -821,7 +791,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_21",
-        alias: "gemini-2.0-flash",
         provider: "Gemini",
         model: "gemini-2.0-flash",
         requestCount: 75,
@@ -832,7 +801,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_22",
-        alias: "gemini-2.0-pro",
         provider: "Gemini",
         model: "gemini-2.0-pro",
         requestCount: 46,
@@ -843,7 +811,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_23",
-        alias: "openai-realtime",
         provider: "OpenAI",
         model: "gpt-4o-realtime-preview",
         requestCount: 42,
@@ -854,7 +821,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_24",
-        alias: "claude-3.7-sonnet",
         provider: "Anthropic",
         model: "claude-3-7-sonnet-latest",
         requestCount: 39,
@@ -865,7 +831,6 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "mod_25",
-        alias: "gpt-4o-audio",
         provider: "OpenAI",
         model: "gpt-4o-mini-audio-preview",
         requestCount: 33,
@@ -873,38 +838,6 @@ export const dashboardMockData: DashboardMockData = {
         costUsd: 0.06,
         avgLatencyMs: 341,
         errorRate: 2.9,
-      },
-    ],
-    aliases: [
-      {
-        alias: "claude-sonnet",
-        provider: "anthropic",
-        model: "claude-3-5-sonnet-latest",
-        description: "High-intelligence Claude model",
-      },
-      {
-        alias: "gpt",
-        provider: "openai",
-        model: "gpt-4.1",
-        description: "General-purpose GPT model",
-      },
-      {
-        alias: "gemini",
-        provider: "gemini",
-        model: "gemini-2.5-pro",
-        description: "Gemini reasoning model",
-      },
-      {
-        alias: "fast",
-        provider: "openai",
-        model: "gpt-4o-mini",
-        description: "Low-latency, cost-efficient model",
-      },
-      {
-        alias: "local",
-        provider: "ollama",
-        model: "qwen2.5-coder",
-        description: "Local coding model through Ollama",
       },
     ],
   },
@@ -1050,38 +983,6 @@ export const dashboardMockData: DashboardMockData = {
       inputFormat: "anthropic",
       provider: "openrouter",
     },
-    modelAliases: [
-      {
-        alias: "claude-sonnet",
-        provider: "anthropic",
-        model: "claude-3-5-sonnet-latest",
-        description: "High-intelligence Claude model",
-      },
-      {
-        alias: "gpt",
-        provider: "openai",
-        model: "gpt-4.1",
-        description: "General-purpose GPT model",
-      },
-      {
-        alias: "gemini",
-        provider: "gemini",
-        model: "gemini-2.5-pro",
-        description: "Gemini reasoning model",
-      },
-      {
-        alias: "fast",
-        provider: "openai",
-        model: "gpt-4o-mini",
-        description: "Low-latency, cost-efficient model",
-      },
-      {
-        alias: "local",
-        provider: "ollama",
-        model: "qwen2.5-coder",
-        description: "Local coding model through Ollama",
-      },
-    ],
     apiKeys: [
       {
         provider: "OpenAI",
