@@ -674,11 +674,10 @@ export default function RequestsPage() {
 
                 <article className="card-surface-soft p-4">
                   <p className="text-xs text-text-secondary">Status</p>
-                  <p className="mt-2 text-xl leading-none font-semibold text-accent-green">
+                  <p className={`mt-2 text-xl leading-none font-semibold ${requestOutcomeStyles[selectedOutcome]} bg-transparent!`}>
                     {selectedOutcome.charAt(0).toUpperCase() + selectedOutcome.slice(1)}
                   </p>
                   <div className="mt-3 space-y-1 text-sm text-text-secondary">
-                    <p>Completed</p>
                     <p>{formatTimestamp(selectedRow.timestamp)}</p>
                   </div>
                 </article>
