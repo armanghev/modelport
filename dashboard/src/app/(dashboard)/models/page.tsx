@@ -281,13 +281,13 @@ export default function ModelsPage() {
 
         <article className="card-surface p-5">
           <div className="flex items-start justify-between gap-3">
-            <div className="flex flex-col">
+            <div className="min-w-0 flex-1 flex flex-col">
               <p className="text-sm font-medium text-text-secondary">Most used model</p>
               <p className="mt-1 truncate text-lg font-semibold text-text-primary">
                 {topModel?.displayName}
               </p>
             </div>
-            <span className="card-surface-soft inline-flex h-10 w-10 items-center justify-center rounded-xl text-text-secondary">
+            <span className="card-surface-soft inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-text-secondary">
               {renderProviderIcon(topModel?.provider) ?? <RobotIcon size={20} />}
             </span>
           </div>
