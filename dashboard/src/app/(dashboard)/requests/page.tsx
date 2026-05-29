@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   CaretDownIcon,
@@ -10,7 +10,6 @@ import {
   CopyIcon,
   DownloadSimpleIcon,
   MagnifyingGlassIcon,
-  ArrowSquareOutIcon,
 } from "@phosphor-icons/react";
 import { Anthropic, Gemini, OpenAI, ClaudeCode, GeminiCLI, Codex, Cursor, OpenRouter, Ollama } from "@lobehub/icons";
 
@@ -28,6 +27,7 @@ import { dashboardMockData, type RequestRow, type RequestStatus } from "@/lib/mo
 type RequestOutcome = RequestStatus;
 type SortDirection = "asc" | "desc";
 type SortKey = "timestamp" | "client" | "provider" | "model" | "totalTokens" | "latencyMs" | "costUsd" | "status";
+type RequestTimeRange = "1h" | "6h" | "24h" | "7d";
 
 interface SortConfig {
   key: SortKey;
@@ -49,6 +49,13 @@ const requestOutcomeStyles: Record<RequestOutcome, string> = {
   success: "bg-accent-green-bg text-accent-green",
   error: "bg-accent-red-bg text-accent-red",
   cancelled: "bg-bg-card-muted text-text-muted",
+};
+
+const TIME_RANGE_IN_MS: Record<RequestTimeRange, number> = {
+  "1h": 60 * 60 * 1000,
+  "6h": 6 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
 };
 
 function formatTimestamp(value: string): string {
@@ -123,17 +130,19 @@ function renderClientIcon(client: RequestRow["client"]) {
 function FilterSelect({
   id,
   label,
-  defaultValue,
+  value,
+  onValueChange,
   options,
 }: {
   id: string;
   label: string;
-  defaultValue: string;
+  value: string;
+  onValueChange: (value: string) => void;
   options: { label: string; value: string }[];
 }) {
   return (
     <div className="min-w-0 space-y-1">
-      <Select defaultValue={defaultValue}>
+      <Select value={value} onValueChange={onValueChange}>
         <SelectTrigger id={id} aria-label={label} className="h-11 w-full rounded-lg text-xs text-text-primary">
           <SelectValue />
         </SelectTrigger>
@@ -157,11 +166,56 @@ export default function RequestsPage() {
     direction: "desc",
   });
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedRow, setSelectedRow] = useState<RequestRow>(allRows[0] ?? null);
-  const [selectedOutcome, setSelectedOutcome] = useState<RequestOutcome>(getOutcome(selectedRow));
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(allRows[0]?.id ?? null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [clientFilter, setClientFilter] = useState<RequestRow["client"] | "all">("all");
+  const [providerFilter, setProviderFilter] = useState<string>("all");
+  const [modelFilter, setModelFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("all");
+  const [timeRangeFilter, setTimeRangeFilter] = useState<RequestTimeRange>("24h");
+  const [referenceNow] = useState(() => Date.now());
+
+  const filteredRows = useMemo(() => {
+    const cutoffTimestamp = referenceNow - TIME_RANGE_IN_MS[timeRangeFilter];
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+
+    return allRows.filter((row) => {
+      if (clientFilter !== "all" && row.client !== clientFilter) {
+        return false;
+      }
+      if (providerFilter !== "all" && row.provider !== providerFilter) {
+        return false;
+      }
+      if (modelFilter !== "all" && row.model !== modelFilter) {
+        return false;
+      }
+      if (statusFilter !== "all" && row.status !== statusFilter) {
+        return false;
+      }
+      if (new Date(row.timestamp).getTime() < cutoffTimestamp) {
+        return false;
+      }
+      if (!normalizedSearch) {
+        return true;
+      }
+
+      const searchableText = [
+        row.id,
+        row.client,
+        row.provider,
+        row.model,
+        row.endpoint,
+        row.status,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(normalizedSearch);
+    });
+  }, [allRows, clientFilter, modelFilter, providerFilter, referenceNow, searchQuery, statusFilter, timeRangeFilter]);
 
   const sortedRows = useMemo(() => {
-    const rowsToSort = [...allRows];
+    const rowsToSort = [...filteredRows];
     const directionMultiplier = sortConfig.direction === "asc" ? 1 : -1;
 
     rowsToSort.sort((left, right) => {
@@ -188,7 +242,7 @@ export default function RequestsPage() {
     });
 
     return rowsToSort;
-  }, [allRows, sortConfig]);
+  }, [filteredRows, sortConfig]);
 
   const totalRows = sortedRows.length;
   const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage));
@@ -197,6 +251,18 @@ export default function RequestsPage() {
     const startIndex = (currentPage - 1) * rowsPerPage;
     return sortedRows.slice(startIndex, startIndex + rowsPerPage);
   }, [currentPage, sortedRows]);
+
+  const selectedRow = useMemo(() => {
+    if (sortedRows.length === 0) {
+      return null;
+    }
+    if (!selectedRowId) {
+      return sortedRows[0];
+    }
+
+    return sortedRows.find((row) => row.id === selectedRowId) ?? sortedRows[0];
+  }, [selectedRowId, sortedRows]);
+  const selectedOutcome: RequestOutcome = selectedRow ? getOutcome(selectedRow) : "success";
 
   const startRow = totalRows === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1;
   const endRow = totalRows === 0 ? 0 : Math.min(currentPage * rowsPerPage, totalRows);
@@ -210,10 +276,6 @@ export default function RequestsPage() {
       .filter((page) => page >= 1 && page <= totalPages)
       .sort((a, b) => a - b);
   }, [currentPage, totalPages]);
-
-  useEffect(() => {
-    setSelectedOutcome(getOutcome(selectedRow));
-  }, [selectedRow]);
 
   const onSort = (key: SortKey) => {
     setSortConfig((currentSort) => {
@@ -269,7 +331,6 @@ export default function RequestsPage() {
 
   return (
     <div className="space-y-5">
-
       <section className="grid items-end gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.9fr)_repeat(4,minmax(0,1fr))_minmax(0,1.1fr)_auto]">
         <div className="relative min-w-0 xl:col-span-1">
           <MagnifyingGlassIcon
@@ -279,6 +340,11 @@ export default function RequestsPage() {
           <Input
             type="search"
             placeholder="Search requests"
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setCurrentPage(1);
+            }}
             className="h-11 w-full rounded-lg border-border-default pr-3 pl-9 text-sm"
           />
         </div>
@@ -286,29 +352,51 @@ export default function RequestsPage() {
         <FilterSelect
           id="client-filter"
           label="Client"
-          defaultValue="all"
+          value={clientFilter}
+          onValueChange={(value) => {
+            setClientFilter(value as RequestRow["client"] | "all");
+            setCurrentPage(1);
+          }}
           options={filterOptions.client}
         />
         <FilterSelect
           id="provider-filter"
           label="Provider"
-          defaultValue="all"
+          value={providerFilter}
+          onValueChange={(value) => {
+            setProviderFilter(value);
+            setCurrentPage(1);
+          }}
           options={filterOptions.provider}
         />
         <FilterSelect
           id="model-filter"
           label="Model"
-          defaultValue="all"
+          value={modelFilter}
+          onValueChange={(value) => {
+            setModelFilter(value);
+            setCurrentPage(1);
+          }}
           options={filterOptions.model}
         />
         <FilterSelect
           id="status-filter"
           label="Status"
-          defaultValue="all"
+          value={statusFilter}
+          onValueChange={(value) => {
+            setStatusFilter(value as RequestStatus | "all");
+            setCurrentPage(1);
+          }}
           options={filterOptions.status}
         />
         <div className="min-w-0 space-y-1">
-          <Select defaultValue="24h">
+          <Select
+            value={timeRangeFilter}
+            onValueChange={(value) => {
+              setTimeRangeFilter(value as RequestTimeRange);
+              setCurrentPage(1);
+            }}
+          >
             <SelectTrigger id="time-range-filter" className="h-11 w-full rounded-lg text-sm text-text-primary">
               <SelectValue />
             </SelectTrigger>
@@ -344,7 +432,7 @@ export default function RequestsPage() {
               <col style={{ width: "14%" }} />
               <col style={{ width: "9%" }} />
               <col style={{ width: "8%" }} />
-              <col style={{ width: "8%" }} />
+              <col style={{ width: "12%" }} />
             </colgroup>
           <thead>
             <tr className="border-b borer-border-subtle bg-bg-card-muted text-sm text-text-secondary">
@@ -378,7 +466,7 @@ export default function RequestsPage() {
               return (
                 <tr
                   key={row.id}
-                  onClick={() => setSelectedRow(row)}
+                  onClick={() => setSelectedRowId(row.id)}
                   className="border-b border-border-subtle hover:bg-bg-card-muted text-sm text-text-secondary last:border-b-0"
                 >
                   <td className="px-5 py-3.5 whitespace-nowrap">{formatTimestamp(row.timestamp)}</td>
@@ -475,127 +563,133 @@ export default function RequestsPage() {
       </section>
 
       <section className="card-surface overflow-hidden">
-        <div className="grid lg:grid-cols-[1fr_2fr]">
-          <div className="p-5 lg:border-r lg:border-border-subtle">
-            <div className="mb-4 flex items-center gap-3">
-              <h3>Request details</h3>
-              <span
-                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${requestOutcomeStyles[selectedOutcome]}`}
-              >
-                <span className="status-dot bg-current" />
-                {selectedOutcome.charAt(0).toUpperCase() + selectedOutcome.slice(1)}
-              </span>
-            </div>
-
-            <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-sm">
-              <dt className="text-text-secondary">Request ID</dt>
-              <dd className="flex items-center gap-2 font-medium text-text-primary">
-                {selectedRow.id}
-                <button
-                  type="button"
-                  aria-label="Copy request ID"
-                  className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-text-muted hover:bg-bg-card-muted"
+        {selectedRow ? (
+          <div className="grid lg:grid-cols-[1fr_2fr]">
+            <div className="p-5 lg:border-r lg:border-border-subtle">
+              <div className="mb-4 flex items-center gap-3">
+                <h3>Request details</h3>
+                <span
+                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${requestOutcomeStyles[selectedOutcome]}`}
                 >
-                  <CopyIcon size={13} />
-                </button>
-              </dd>
-
-              <dt className="text-text-secondary">Endpoint</dt>
-              <dd className="font-medium text-text-primary">{selectedRow.endpoint}</dd>
-
-              <dt className="text-text-secondary">Client</dt>
-              <dd className="font-medium text-text-primary">{selectedRow.client}</dd>
-
-              <dt className="text-text-secondary">Provider</dt>
-              <dd className="font-medium text-text-primary">{selectedRow.provider}</dd>
-
-              <dt className="text-text-secondary">Model</dt>
-              <dd className="font-medium text-text-primary">{selectedRow.model}</dd>
-            </dl>
-          </div>
-
-          <div className="p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h3>Metrics</h3>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <article className="card-surface-soft p-4">
-                <p className="text-xs text-text-secondary">Tokens</p>
-                <p className="mt-2 text-xl leading-none font-semibold text-text-primary">
-                  {formatInteger(selectedRow.totalTokens)}
-                </p>
-                <div className="mt-3 space-y-1 text-sm text-text-secondary">
-                  <p>
-                    <span className="font-medium text-sm text-text-primary">
-                      {formatInteger(selectedRow.inputTokens)}
-                    </span>{" "}
-                    Input
-                  </p>
-                  <p>
-                    <span className="font-medium text-sm text-text-primary">
-                      {formatInteger(selectedRow.outputTokens)}
-                    </span>{" "}
-                    Output
-                  </p>
-                </div>
-              </article>
-
-              <article className="card-surface-soft p-4">
-                <p className="text-xs text-text-secondary">Latency</p>
-                <p className="mt-2 text-xl leading-none font-semibold text-text-primary">
-                  {formatDuration(selectedRow.latencyMs)}
-                </p>
-                <div className="mt-3 space-y-1 text-sm text-text-secondary">
-                  <p>
-                    <span className="font-medium text-sm text-text-primary">
-                      {Math.round(selectedRow.latencyMs * 0.42)} ms
-                    </span>{" "}
-                    TTFB
-                  </p>
-                  <p>
-                    <span className="font-medium text-sm text-text-primary">
-                      {selectedRow.latencyMs} ms
-                    </span>{" "}
-                    Total
-                  </p>
-                </div>
-              </article>
-
-              <article className="card-surface-soft p-4">
-                <p className="text-xs text-text-secondary">Estimated cost</p>
-                <p className="mt-2 text-xl leading-none font-semibold text-text-primary">
-                  {formatCost(selectedRow.costUsd)}
-                </p>
-                <div className="mt-3 space-y-1 text-sm text-text-secondary">
-                  <p>
-                    <span className="font-medium text-sm text-text-primary">
-                      {formatCost(selectedRow.costUsd * 0.71)}
-                    </span>{" "}
-                    Input
-                  </p>
-                  <p>
-                    <span className="font-medium text-sm text-text-primary">
-                      {formatCost(selectedRow.costUsd * 0.29)}
-                    </span>{" "}
-                    Output
-                  </p>
-                </div>
-              </article>
-
-              <article className="card-surface-soft p-4">
-                <p className="text-xs text-text-secondary">Status</p>
-                <p className="mt-2 text-xl leading-none font-semibold text-accent-green">
+                  <span className="status-dot bg-current" />
                   {selectedOutcome.charAt(0).toUpperCase() + selectedOutcome.slice(1)}
-                </p>
-                <div className="mt-3 space-y-1 text-sm text-text-secondary">
-                  <p>Completed</p>
-                  <p>{formatTimestamp(selectedRow.timestamp)}</p>
-                </div>
-              </article>
+                </span>
+              </div>
+
+              <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-sm">
+                <dt className="text-text-secondary">Request ID</dt>
+                <dd className="flex items-center gap-2 font-medium text-text-primary">
+                  {selectedRow.id}
+                  <button
+                    type="button"
+                    aria-label="Copy request ID"
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-text-muted hover:bg-bg-card-muted"
+                  >
+                    <CopyIcon size={13} />
+                  </button>
+                </dd>
+
+                <dt className="text-text-secondary">Endpoint</dt>
+                <dd className="font-medium text-text-primary">{selectedRow.endpoint}</dd>
+
+                <dt className="text-text-secondary">Client</dt>
+                <dd className="font-medium text-text-primary">{selectedRow.client}</dd>
+
+                <dt className="text-text-secondary">Provider</dt>
+                <dd className="font-medium text-text-primary">{selectedRow.provider}</dd>
+
+                <dt className="text-text-secondary">Model</dt>
+                <dd className="font-medium text-text-primary">{selectedRow.model}</dd>
+              </dl>
+            </div>
+
+            <div className="p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h3>Metrics</h3>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <article className="card-surface-soft p-4">
+                  <p className="text-xs text-text-secondary">Tokens</p>
+                  <p className="mt-2 text-xl leading-none font-semibold text-text-primary">
+                    {formatInteger(selectedRow.totalTokens)}
+                  </p>
+                  <div className="mt-3 space-y-1 text-sm text-text-secondary">
+                    <p>
+                      <span className="font-medium text-sm text-text-primary">
+                        {formatInteger(selectedRow.inputTokens)}
+                      </span>{" "}
+                      Input
+                    </p>
+                    <p>
+                      <span className="font-medium text-sm text-text-primary">
+                        {formatInteger(selectedRow.outputTokens)}
+                      </span>{" "}
+                      Output
+                    </p>
+                  </div>
+                </article>
+
+                <article className="card-surface-soft p-4">
+                  <p className="text-xs text-text-secondary">Latency</p>
+                  <p className="mt-2 text-xl leading-none font-semibold text-text-primary">
+                    {formatDuration(selectedRow.latencyMs)}
+                  </p>
+                  <div className="mt-3 space-y-1 text-sm text-text-secondary">
+                    <p>
+                      <span className="font-medium text-sm text-text-primary">
+                        {Math.round(selectedRow.latencyMs * 0.42)} ms
+                      </span>{" "}
+                      TTFB
+                    </p>
+                    <p>
+                      <span className="font-medium text-sm text-text-primary">
+                        {selectedRow.latencyMs} ms
+                      </span>{" "}
+                      Total
+                    </p>
+                  </div>
+                </article>
+
+                <article className="card-surface-soft p-4">
+                  <p className="text-xs text-text-secondary">Estimated cost</p>
+                  <p className="mt-2 text-xl leading-none font-semibold text-text-primary">
+                    {formatCost(selectedRow.costUsd)}
+                  </p>
+                  <div className="mt-3 space-y-1 text-sm text-text-secondary">
+                    <p>
+                      <span className="font-medium text-sm text-text-primary">
+                        {formatCost(selectedRow.costUsd * 0.71)}
+                      </span>{" "}
+                      Input
+                    </p>
+                    <p>
+                      <span className="font-medium text-sm text-text-primary">
+                        {formatCost(selectedRow.costUsd * 0.29)}
+                      </span>{" "}
+                      Output
+                    </p>
+                  </div>
+                </article>
+
+                <article className="card-surface-soft p-4">
+                  <p className="text-xs text-text-secondary">Status</p>
+                  <p className="mt-2 text-xl leading-none font-semibold text-accent-green">
+                    {selectedOutcome.charAt(0).toUpperCase() + selectedOutcome.slice(1)}
+                  </p>
+                  <div className="mt-3 space-y-1 text-sm text-text-secondary">
+                    <p>Completed</p>
+                    <p>{formatTimestamp(selectedRow.timestamp)}</p>
+                  </div>
+                </article>
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="p-8 text-sm text-text-secondary">
+            No requests match the current search and filters.
+          </div>
+        )}
       </section>
     </div>
   );
