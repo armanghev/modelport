@@ -6,7 +6,7 @@ import { SunIcon } from "@phosphor-icons/react/dist/ssr";
 const pages = {
   overview: { title: "Overview", description: "Usage and routing overview" },
   requests: { title: "Requests", description: "Search and inspect proxy activity" },
-  models: { title: "Models", description: "Manage model aliases, defaults, and usage" },
+  models: { title: "Models", description: "Manage model aliases and usage" },
   providers: { title: "Providers", description: "Monitor provider health and routing" },
   costs: { title: "Costs", description: "Track spending across providers and models" },
   settings: { title: "Settings", description: "Configure clients, defaults, and more" },
