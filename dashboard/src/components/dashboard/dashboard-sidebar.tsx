@@ -68,7 +68,6 @@ export function DashboardSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="mt-auto p-4">
-        <div className="card-surface rounded-(--radius-card) p-4">
           <p className="mb-1 text-xs text-text-muted">Proxy status</p>
           <div className="flex items-center justify-between gap-2">
           <p className="flex items-center gap-2 text-sm font-semibold text-accent-green">
@@ -77,7 +76,6 @@ export function DashboardSidebar() {
           </p>
           <p className="text-xs text-text-muted">v1.2.0</p>
           </div>
-        </div>
       </SidebarFooter>
     </Sidebar>
   );
