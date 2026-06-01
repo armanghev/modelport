@@ -160,7 +160,12 @@ export function InteractiveAreaChart({
         className={cn(
           chartHeightClassName,
           "px-4 pt-4 pb-3 sm:px-6 sm:pt-5",
+          "[&_svg:focus]:outline-none",
+          "[&_svg:focus-visible]:outline-none",
+          "[&_[tabindex]:focus]:outline-none",
+          "[&_[tabindex]:focus-visible]:outline-none",
           "[&_.recharts-surface:focus]:outline-none",
+          "[&_.recharts-surface:focus-visible]:outline-none",
           "[&_.recharts-wrapper:focus]:outline-none",
           "[&_.recharts-wrapper:focus-visible]:outline-none",
         )}

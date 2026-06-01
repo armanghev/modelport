@@ -89,6 +89,33 @@ export interface RoutingRule {
   fallbackProviders: string[];
 }
 
+export interface ProviderBillingCycle {
+  planName: string;
+  periodStart: string;
+  periodEnd: string;
+  nextInvoiceDate: string;
+  budgetUsd: number;
+  spentUsd: number;
+  forecastUsd: number;
+}
+
+export interface ProviderTrendPoint {
+  date: string;
+  requests: number;
+  successfulRequests: number;
+  costUsd: number;
+}
+
+export interface ProviderDetail {
+  providerId: string;
+  region: string;
+  supportTier: string;
+  billingCycle: ProviderBillingCycle;
+  costBreakdown: CostBucket[];
+  requestTrend: ProviderTrendPoint[];
+  notes: string;
+}
+
 export interface CostBucket {
   label: string;
   amountUsd: number;
@@ -152,6 +179,7 @@ export interface DashboardMockData {
   providers: {
     cards: ProviderHealth[];
     routingRules: RoutingRule[];
+    details: ProviderDetail[];
   };
   costs: {
     note: string;
@@ -333,6 +361,212 @@ const requests: RequestRow[] = [
     latencyMs: 486,
     streaming: true,
     status: "success",
+  },
+];
+
+function buildProviderTrend(
+  startDate: string,
+  requestsByDay: number[],
+  successRate: number,
+  dailyCostMultiplier: number,
+): ProviderTrendPoint[] {
+  const start = new Date(startDate);
+
+  return requestsByDay.map((requests, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const successfulRequests = Math.round(requests * successRate);
+    const costUsd = Number((requests * dailyCostMultiplier).toFixed(2));
+
+    return {
+      date: date.toISOString(),
+      requests,
+      successfulRequests,
+      costUsd,
+    };
+  });
+}
+
+const providerDetails: ProviderDetail[] = [
+  {
+    providerId: "prov_openai",
+    region: "us-east-1",
+    supportTier: "Enterprise",
+    billingCycle: {
+      planName: "Scale Tier",
+      periodStart: "2026-05-01",
+      periodEnd: "2026-05-31",
+      nextInvoiceDate: "2026-06-01",
+      budgetUsd: 6500,
+      spentUsd: 4821.37,
+      forecastUsd: 5312.18,
+    },
+    costBreakdown: [
+      { label: "Completions", amountUsd: 2831.42 },
+      { label: "Reasoning", amountUsd: 1167.83 },
+      { label: "Embeddings", amountUsd: 432.16 },
+      { label: "Audio", amountUsd: 389.96 },
+    ],
+    requestTrend: buildProviderTrend(
+      "2026-05-01T00:00:00-07:00",
+      [
+        412, 398, 420, 436, 452, 468, 479, 491, 505, 523, 538, 546, 559, 571,
+        584, 596, 612, 625, 619, 637, 651, 662, 675, 688, 703, 712, 721, 735,
+        744, 759,
+      ],
+      0.985,
+      3.08,
+    ),
+    notes: "Primary production provider for reasoning and multimodal traffic.",
+  },
+  {
+    providerId: "prov_anthropic",
+    region: "us-west-2",
+    supportTier: "Enterprise",
+    billingCycle: {
+      planName: "Team Annual",
+      periodStart: "2026-05-01",
+      periodEnd: "2026-05-31",
+      nextInvoiceDate: "2026-06-01",
+      budgetUsd: 5200,
+      spentUsd: 3962.08,
+      forecastUsd: 4270.44,
+    },
+    costBreakdown: [
+      { label: "Claude Sonnet", amountUsd: 2684.73 },
+      { label: "Claude Opus", amountUsd: 821.65 },
+      { label: "Claude Haiku", amountUsd: 455.7 },
+    ],
+    requestTrend: buildProviderTrend(
+      "2026-05-01T00:00:00-07:00",
+      [
+        368, 372, 379, 387, 391, 405, 418, 421, 433, 446, 452, 461, 473, 486,
+        498, 511, 524, 538, 543, 552, 563, 576, 585, 597, 612, 626, 641, 652,
+        663, 679,
+      ],
+      0.989,
+      2.41,
+    ),
+    notes: "Preferred provider for Claude-specific routes and long-context prompts.",
+  },
+  {
+    providerId: "prov_gemini",
+    region: "us-central1",
+    supportTier: "Standard",
+    billingCycle: {
+      planName: "Pay as you go",
+      periodStart: "2026-05-01",
+      periodEnd: "2026-05-31",
+      nextInvoiceDate: "2026-06-01",
+      budgetUsd: 2400,
+      spentUsd: 1594.92,
+      forecastUsd: 1830.16,
+    },
+    costBreakdown: [
+      { label: "Gemini Pro", amountUsd: 1014.43 },
+      { label: "Gemini Flash", amountUsd: 489.17 },
+      { label: "Context caching", amountUsd: 91.32 },
+    ],
+    requestTrend: buildProviderTrend(
+      "2026-05-01T00:00:00-07:00",
+      [
+        221, 228, 233, 241, 248, 252, 259, 268, 276, 281, 288, 295, 301, 306,
+        312, 321, 326, 338, 347, 355, 362, 369, 377, 384, 390, 396, 401, 409,
+        417, 426,
+      ],
+      0.969,
+      1.27,
+    ),
+    notes: "Degraded due to rate limiting bursts on peak hours.",
+  },
+  {
+    providerId: "prov_openrouter",
+    region: "global",
+    supportTier: "Pro",
+    billingCycle: {
+      planName: "Volume",
+      periodStart: "2026-05-01",
+      periodEnd: "2026-05-31",
+      nextInvoiceDate: "2026-06-01",
+      budgetUsd: 1800,
+      spentUsd: 944.53,
+      forecastUsd: 1106.2,
+    },
+    costBreakdown: [
+      { label: "Claude routes", amountUsd: 392.77 },
+      { label: "GPT routes", amountUsd: 288.49 },
+      { label: "Fallback traffic", amountUsd: 263.27 },
+    ],
+    requestTrend: buildProviderTrend(
+      "2026-05-01T00:00:00-07:00",
+      [
+        132, 126, 129, 134, 139, 141, 144, 147, 151, 156, 159, 162, 164, 168,
+        171, 173, 176, 179, 181, 184, 188, 192, 196, 199, 201, 204, 206, 209,
+        211, 215,
+      ],
+      0.979,
+      0.84,
+    ),
+    notes: "Used heavily for fallback and specialty model routing.",
+  },
+  {
+    providerId: "prov_ollama",
+    region: "local-gpu",
+    supportTier: "Self-hosted",
+    billingCycle: {
+      planName: "Infra-backed",
+      periodStart: "2026-05-01",
+      periodEnd: "2026-05-31",
+      nextInvoiceDate: "2026-06-01",
+      budgetUsd: 420,
+      spentUsd: 278.61,
+      forecastUsd: 334.08,
+    },
+    costBreakdown: [
+      { label: "GPU runtime", amountUsd: 182.14 },
+      { label: "Storage", amountUsd: 54.33 },
+      { label: "Power", amountUsd: 42.14 },
+    ],
+    requestTrend: buildProviderTrend(
+      "2026-05-01T00:00:00-07:00",
+      [
+        44, 47, 45, 49, 53, 57, 58, 61, 63, 66, 68, 70, 73, 75, 78, 82, 84, 87,
+        89, 92, 95, 97, 101, 103, 106, 109, 111, 115, 117, 121,
+      ],
+      0.948,
+      0.18,
+    ),
+    notes: "Local provider with intermittent VRAM pressure under concurrent load.",
+  },
+  {
+    providerId: "prov_azure_openai",
+    region: "eastus2",
+    supportTier: "Enterprise",
+    billingCycle: {
+      planName: "Enterprise commitment",
+      periodStart: "2026-05-01",
+      periodEnd: "2026-05-31",
+      nextInvoiceDate: "2026-06-01",
+      budgetUsd: 3100,
+      spentUsd: 1872.44,
+      forecastUsd: 2140.03,
+    },
+    costBreakdown: [
+      { label: "Completions", amountUsd: 1108.72 },
+      { label: "Embeddings", amountUsd: 429.11 },
+      { label: "Image generation", amountUsd: 334.61 },
+    ],
+    requestTrend: buildProviderTrend(
+      "2026-05-01T00:00:00-07:00",
+      [
+        121, 124, 129, 132, 137, 141, 146, 149, 152, 156, 158, 163, 168, 173,
+        177, 181, 186, 190, 194, 197, 202, 205, 209, 212, 216, 219, 224, 227,
+        232, 236,
+      ],
+      0.987,
+      1.02,
+    ),
+    notes: "Secondary OpenAI-compatible provider for enterprise failover.",
   },
 ];
 
@@ -1225,6 +1459,20 @@ export const dashboardMockData: DashboardMockData = {
         lastError: null,
       },
       {
+        id: "prov_azure_openai",
+        displayName: "Azure OpenAI",
+        type: "openai_compatible",
+        status: "operational",
+        baseUrl: "https://modelport-azure.openai.azure.com/openai/v1",
+        requestsToday: 167,
+        successRate: 98.7,
+        errorRate: 1.3,
+        avgLatencyMs: 801,
+        availableModelCount: 14,
+        lastCheckedAt: "2026-05-27T09:29:40-07:00",
+        lastError: null,
+      },
+      {
         id: "prov_anthropic",
         displayName: "Anthropic",
         type: "anthropic_compatible",
@@ -1253,6 +1501,90 @@ export const dashboardMockData: DashboardMockData = {
         lastError: "Intermittent 429 rate limits in the last 10 minutes",
       },
       {
+        id: "prov_groq",
+        displayName: "Groq",
+        type: "openai_compatible",
+        status: "operational",
+        baseUrl: "https://api.groq.com/openai/v1",
+        requestsToday: 218,
+        successRate: 98.6,
+        errorRate: 1.4,
+        avgLatencyMs: 412,
+        availableModelCount: 17,
+        lastCheckedAt: "2026-05-27T09:29:40-07:00",
+        lastError: null,
+      },
+      {
+        id: "prov_together",
+        displayName: "Together AI",
+        type: "openai_compatible",
+        status: "operational",
+        baseUrl: "https://api.together.xyz/v1",
+        requestsToday: 141,
+        successRate: 97.4,
+        errorRate: 2.6,
+        avgLatencyMs: 933,
+        availableModelCount: 62,
+        lastCheckedAt: "2026-05-27T09:29:40-07:00",
+        lastError: null,
+      },
+      {
+        id: "prov_mistral",
+        displayName: "Mistral",
+        type: "openai_compatible",
+        status: "operational",
+        baseUrl: "https://api.mistral.ai/v1",
+        requestsToday: 88,
+        successRate: 98.1,
+        errorRate: 1.9,
+        avgLatencyMs: 684,
+        availableModelCount: 9,
+        lastCheckedAt: "2026-05-27T09:29:40-07:00",
+        lastError: null,
+      },
+      {
+        id: "prov_deepseek",
+        displayName: "DeepSeek",
+        type: "openai_compatible",
+        status: "degraded",
+        baseUrl: "https://api.deepseek.com/v1",
+        requestsToday: 73,
+        successRate: 94.6,
+        errorRate: 5.4,
+        avgLatencyMs: 1268,
+        availableModelCount: 6,
+        lastCheckedAt: "2026-05-27T09:29:40-07:00",
+        lastError: "Upstream gateway timeouts detected for deepseek-reasoner",
+      },
+      {
+        id: "prov_cerebras",
+        displayName: "Cerebras",
+        type: "openai_compatible",
+        status: "operational",
+        baseUrl: "https://api.cerebras.ai/v1",
+        requestsToday: 52,
+        successRate: 99.1,
+        errorRate: 0.9,
+        avgLatencyMs: 358,
+        availableModelCount: 4,
+        lastCheckedAt: "2026-05-27T09:29:40-07:00",
+        lastError: null,
+      },
+      {
+        id: "prov_fireworks",
+        displayName: "Fireworks",
+        type: "openai_compatible",
+        status: "degraded",
+        baseUrl: "https://api.fireworks.ai/inference/v1",
+        requestsToday: 64,
+        successRate: 95.8,
+        errorRate: 4.2,
+        avgLatencyMs: 1044,
+        availableModelCount: 26,
+        lastCheckedAt: "2026-05-27T09:29:40-07:00",
+        lastError: "Elevated p95 latency on image-capable model endpoints",
+      },
+      {
         id: "prov_openrouter",
         displayName: "OpenRouter",
         type: "openai_compatible",
@@ -1267,16 +1599,44 @@ export const dashboardMockData: DashboardMockData = {
         lastError: null,
       },
       {
+        id: "prov_xai",
+        displayName: "xAI",
+        type: "openai_compatible",
+        status: "degraded",
+        baseUrl: "https://api.x.ai/v1",
+        requestsToday: 39,
+        successRate: 93.7,
+        errorRate: 6.3,
+        avgLatencyMs: 1579,
+        availableModelCount: 3,
+        lastCheckedAt: "2026-05-27T09:29:40-07:00",
+        lastError: "Frequent 5xx errors on grok-beta during peak traffic",
+      },
+      {
         id: "prov_ollama",
         displayName: "Ollama",
         type: "local_openai_compatible",
-        status: "operational",
+        status: "degraded",
         baseUrl: "http://localhost:11434/v1",
-        requestsToday: 64,
-        successRate: 95.4,
-        errorRate: 4.6,
-        avgLatencyMs: 1468,
-        availableModelCount: 9,
+        requestsToday: 96,
+        successRate: 94.8,
+        errorRate: 5.2,
+        avgLatencyMs: 1496,
+        availableModelCount: 12,
+        lastCheckedAt: "2026-05-27T09:29:40-07:00",
+        lastError: "Local GPU memory pressure observed on larger quantized models",
+      },
+      {
+        id: "prov_vllm_local",
+        displayName: "vLLM Local",
+        type: "local_openai_compatible",
+        status: "operational",
+        baseUrl: "http://localhost:8001/v1",
+        requestsToday: 37,
+        successRate: 97.2,
+        errorRate: 2.8,
+        avgLatencyMs: 522,
+        availableModelCount: 15,
         lastCheckedAt: "2026-05-27T09:29:40-07:00",
         lastError: null,
       },
@@ -1297,6 +1657,21 @@ export const dashboardMockData: DashboardMockData = {
     ],
     routingRules: [
       {
+        match: "*",
+        primaryProvider: "openai",
+        fallbackProviders: ["anthropic", "gemini", "openrouter"],
+      },
+      {
+        match: "gpt-*",
+        primaryProvider: "openai",
+        fallbackProviders: ["azure_openai", "anthropic", "openrouter"],
+      },
+      {
+        match: "o*-*",
+        primaryProvider: "openai",
+        fallbackProviders: ["anthropic", "deepseek", "openrouter"],
+      },
+      {
         match: "claude-*",
         primaryProvider: "anthropic",
         fallbackProviders: ["openrouter", "gemini"],
@@ -1304,14 +1679,80 @@ export const dashboardMockData: DashboardMockData = {
       {
         match: "gemini-*",
         primaryProvider: "gemini",
-        fallbackProviders: ["openrouter"],
+        fallbackProviders: ["openai", "anthropic", "openrouter"],
+      },
+      {
+        match: "grok-*",
+        primaryProvider: "xai",
+        fallbackProviders: ["openrouter", "openai"],
+      },
+      {
+        match: "deepseek-*",
+        primaryProvider: "deepseek",
+        fallbackProviders: ["openrouter", "together", "openai"],
+      },
+      {
+        match: "mistral-*",
+        primaryProvider: "mistral",
+        fallbackProviders: ["openrouter", "together"],
+      },
+      {
+        match: "llama-*",
+        primaryProvider: "groq",
+        fallbackProviders: ["openrouter", "cerebras", "together"],
+      },
+      {
+        match: "qwen-*",
+        primaryProvider: "openrouter",
+        fallbackProviders: ["together", "ollama", "vllm_local"],
+      },
+      {
+        match: "coder-*",
+        primaryProvider: "deepseek",
+        fallbackProviders: ["anthropic", "openai", "openrouter"],
       },
       {
         match: "local-*",
-        primaryProvider: "ollama",
-        fallbackProviders: ["openrouter"],
+        primaryProvider: "vllm_local",
+        fallbackProviders: ["ollama", "openrouter", "lmstudio"],
+      },
+      {
+        match: "embeddings-*",
+        primaryProvider: "openai",
+        fallbackProviders: ["azure_openai", "openrouter"],
+      },
+      {
+        match: "vision-*",
+        primaryProvider: "openai",
+        fallbackProviders: ["gemini", "anthropic", "openrouter"],
+      },
+      {
+        match: "audio-*",
+        primaryProvider: "openai",
+        fallbackProviders: ["groq", "openrouter"],
+      },
+      {
+        match: "rerank-*",
+        primaryProvider: "together",
+        fallbackProviders: ["openrouter", "mistral"],
+      },
+      {
+        match: "batch-*",
+        primaryProvider: "openrouter",
+        fallbackProviders: ["openai", "together"],
+      },
+      {
+        match: "reasoning-*",
+        primaryProvider: "openai",
+        fallbackProviders: ["anthropic", "deepseek", "openrouter"],
+      },
+      {
+        match: "emergency-fallback",
+        primaryProvider: "openrouter",
+        fallbackProviders: ["openai", "anthropic", "groq"],
       },
     ],
+    details: providerDetails,
   },
   costs: {
     note: "Costs are estimated using configured pricing and may differ from final provider billing.",
