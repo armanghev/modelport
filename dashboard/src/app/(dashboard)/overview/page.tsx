@@ -7,13 +7,13 @@ import {
   LightningIcon,
   RobotIcon,
 } from "@phosphor-icons/react/dist/ssr";
-import { Anthropic, Gemini, OpenAI, Google } from "@lobehub/icons";
 import {
   dashboardMockData,
   type OverviewMetric,
   type RequestStatus,
   type UsagePoint,
 } from "@/lib/mock-dashboard-data";
+import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { InteractiveAreaChart } from "@/components/dashboard/interactive-area-chart";
 
 type MetricIcon = typeof LightningIcon;
@@ -30,26 +30,6 @@ const statusStyles: Record<RequestStatus, string> = {
   error: "bg-accent-red-bg text-accent-red",
   cancelled: "bg-bg-card-muted text-text-muted",
 };
-
-function renderProviderIcon(
-  provider: string | undefined,
-  size: number,
-  fallback: "robot" | "google" = "google",
-) {
-  if (provider === "Anthropic") {
-    return <Anthropic size={size} />;
-  }
-
-  if (provider === "Gemini") {
-    return <Gemini.Color size={size} />;
-  }
-
-  if (provider === "OpenAI") {
-    return <OpenAI size={size} />;
-  }
-
-  return fallback === "robot" ? <RobotIcon size={size} /> : <Google size={size} />;
-}
 
 function formatLargeTokenValue(tokens: number): string {
   if (tokens >= 1_000_000) {
@@ -157,7 +137,11 @@ export default function OverviewPage() {
                 </div>
                 <span className="card-surface-soft inline-flex h-10 w-10 items-center justify-center rounded-xl text-text-secondary">
                   {metric.id === "top_model" ? (
-                    renderProviderIcon(topMetricProvider, 20, "robot")
+                    <ProviderIcon
+                      provider={topMetricProvider ?? ""}
+                      size={20}
+                      fallback={<RobotIcon size={20} />}
+                    />
                   ) : (
                     <Icon size={20} />
                   )}
@@ -216,7 +200,7 @@ export default function OverviewPage() {
               >
                 <div className="flex col-span-5 items-center gap-2">
                   <span className="inline-flex h-5 w-5 items-center justify-center text-sm font-semibold text-text-primary">
-                    {renderProviderIcon(model.provider, 20)}
+                    <ProviderIcon provider={model.provider} size={20} />
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-base font-semibold text-text-primary">

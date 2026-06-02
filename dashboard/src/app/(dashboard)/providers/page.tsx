@@ -12,9 +12,8 @@ import {
   PulseIcon,
   ShieldCheckIcon,
 } from "@phosphor-icons/react";
-import { Anthropic, Gemini, OpenAI, OpenRouter, Ollama } from "@lobehub/icons";
-
 import { ProviderDetailsModal } from "@/components/dashboard/providers/provider-details-modal";
+import { renderProviderIcon } from "@/components/brand/render-provider-icon";
 import {
   dashboardMockData,
   type ProviderDetail,
@@ -68,36 +67,6 @@ function formatProviderType(type: ProviderHealth["type"]): string {
   }
 
   return "OpenAI-compatible";
-}
-
-function renderProviderIcon(name: string, size = 20) {
-  const normalized = name.toLowerCase();
-
-  if (normalized.includes("anthropic")) {
-    return <Anthropic size={size} />;
-  }
-
-  if (normalized.includes("gemini")) {
-    return <Gemini.Color size={size} />;
-  }
-
-  if (normalized.includes("openrouter")) {
-    return <OpenRouter size={size} />;
-  }
-
-  if (normalized.includes("ollama")) {
-    return <Ollama size={size} />;
-  }
-
-  if (normalized.includes("openai") || normalized.includes("azure")) {
-    return <OpenAI size={size} />;
-  }
-
-  return (
-    <span className="text-xs font-semibold text-text-secondary">
-      {name.slice(0, 2).toUpperCase()}
-    </span>
-  );
 }
 
 function formatTimestamp(value: string): string {

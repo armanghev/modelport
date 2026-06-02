@@ -12,9 +12,8 @@ import {
   StackIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
-import { Anthropic, Gemini, OpenAI } from "@lobehub/icons";
-
 import { ModelDetailsModal } from "@/components/dashboard/models/model-details-modal";
+import { renderProviderIcon } from "@/components/brand/render-provider-icon";
 import {
   buildDailyUsageValues,
   buildHourlyUsageValues,
@@ -135,26 +134,6 @@ function buildSparklinePoints(values: number[], width = 128, height = 24): strin
       return `${x},${y}`;
     })
     .join(" ");
-}
-
-function renderProviderIcon(provider: string) {
-  if (provider === "Anthropic") {
-    return <Anthropic size={20} />;
-  }
-
-  if (provider === "Gemini") {
-    return <Gemini.Color size={20} />;
-  }
-
-  if (provider === "OpenAI") {
-    return <OpenAI size={20} />;
-  }
-
-  return (
-    <span className="text-xs font-semibold text-text-secondary">
-      {provider.slice(0, 2).toUpperCase()}
-    </span>
-  );
 }
 
 export default function ModelsPage() {
@@ -288,7 +267,11 @@ export default function ModelsPage() {
               </p>
             </div>
             <span className="card-surface-soft inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-text-secondary">
-              {renderProviderIcon(topModel?.provider) ?? <RobotIcon size={20} />}
+              {topModel?.provider ? (
+                renderProviderIcon(topModel.provider)
+              ) : (
+                <RobotIcon size={20} />
+              )}
             </span>
           </div>
           <div className="mt-2 flex items-center gap-2 text-sm">

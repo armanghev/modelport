@@ -11,8 +11,9 @@ import {
   DownloadSimpleIcon,
   MagnifyingGlassIcon,
 } from "@phosphor-icons/react";
-import { Anthropic, Gemini, OpenAI, ClaudeCode, GeminiCLI, Codex, Cursor, OpenRouter, Ollama } from "@lobehub/icons";
+import { ClaudeCode, GeminiCLI, Codex, Cursor, OpenAI } from "@lobehub/icons";
 
+import { renderProviderIcon } from "@/components/brand/render-provider-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -86,26 +87,6 @@ function formatInteger(value: number): string {
 
 function getOutcome(row: RequestRow): RequestOutcome {
   return row.status;
-}
-
-function renderProviderIcon(provider: string) {
-
-  switch (provider) {
-    case "Anthropic":
-      return <Anthropic size={20} />;
-    case "Gemini":
-      return <Gemini.Color size={20} />;
-    case "OpenAI":
-      return <OpenAI size={20} />;
-    case "OpenRouter":
-      return <OpenRouter size={20} />;
-    case "Ollama":
-      return <Ollama size={20} />;
-    default:
-      return <span className="text-sm leading-none font-semibold text-text-secondary">
-        {provider.slice(0, 2).toUpperCase()}
-      </span>;
-  }
 }
 
 function renderClientIcon(client: RequestRow["client"]) {
