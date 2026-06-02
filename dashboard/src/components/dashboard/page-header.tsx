@@ -23,20 +23,10 @@ export function PageHeader() {
   const activeTheme = theme ?? "system";
 
   const themeIcon =
-    activeTheme === "dark" ? <MoonIcon size={18} /> : activeTheme === "light" ? <SunIcon size={18} /> : <DesktopIcon size={18} />;
+    activeTheme === "dark" ? <MoonIcon size={18} /> : <SunIcon size={18} />;
 
   const cycleTheme = () => {
-    if (activeTheme === "light") {
-      setTheme("dark");
-      return;
-    }
-
-    if (activeTheme === "dark") {
-      setTheme("system");
-      return;
-    }
-
-    setTheme("light");
+    setTheme(activeTheme === "light" ? "dark" : "light");
   };
 
   return (

@@ -127,15 +127,11 @@ function FilterSelect({
         <SelectTrigger
           id={id}
           aria-label={label}
-          className="h-11 w-full rounded-lg border-border-default bg-bg-card text-xs text-text-primary hover:bg-bg-card-muted"
+          className="h-11 w-full rounded-lg border-border-default text-xs text-text-primary"
         >
           <SelectValue />
         </SelectTrigger>
-        <SelectContent
-          position="popper"
-          align="start"
-          className="rounded-lg border-border-subtle bg-bg-card p-1"
-        >
+        <SelectContent position="popper" align="start" className="rounded-lg p-1">
           {options.map((option) => (
             <SelectItem key={option.value} value={option.value} className="rounded-md text-xs">
               {option.label}
@@ -388,15 +384,11 @@ export default function RequestsPage() {
           >
             <SelectTrigger
               id="time-range-filter"
-              className="h-11 w-full rounded-lg border-border-default bg-bg-card text-sm text-text-primary hover:bg-bg-card-muted"
+              className="h-11 w-full rounded-lg border-border-default text-sm text-text-primary"
             >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent
-              position="popper"
-              align="start"
-              className="rounded-lg border-border-subtle bg-bg-card p-1"
-            >
+            <SelectContent position="popper" align="start" className="rounded-lg p-1">
               {filterOptions.timeRange.map((range) => (
                 <SelectItem key={range.value} value={range.value} className="rounded-md text-sm">
                   {range.label}
