@@ -1,7 +1,8 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { SunIcon } from "@phosphor-icons/react/dist/ssr";
+import { DesktopIcon, MoonIcon, SunIcon } from "@phosphor-icons/react";
+import { useTheme } from "next-themes";
 
 const pages = {
   overview: { title: "Overview", description: "Usage and routing overview" },
@@ -16,8 +17,27 @@ const DEFAULT_PAGE = pages.overview;
 
 export function PageHeader() {
   const pathname = usePathname();
+  const { theme, setTheme } = useTheme();
   const currentPage = pathname.split("/").filter(Boolean).pop() as keyof typeof pages | undefined;
   const currentPageData = (currentPage && pages[currentPage]) || DEFAULT_PAGE;
+  const activeTheme = theme ?? "system";
+
+  const themeIcon =
+    activeTheme === "dark" ? <MoonIcon size={18} /> : activeTheme === "light" ? <SunIcon size={18} /> : <DesktopIcon size={18} />;
+
+  const cycleTheme = () => {
+    if (activeTheme === "light") {
+      setTheme("dark");
+      return;
+    }
+
+    if (activeTheme === "dark") {
+      setTheme("system");
+      return;
+    }
+
+    setTheme("light");
+  };
 
   return (
     <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -35,9 +55,10 @@ export function PageHeader() {
         <button
           type="button"
           className="card-surface-soft inline-flex h-9 w-9 items-center justify-center rounded-full"
-          aria-label="Toggle theme"
+          aria-label={`Theme: ${activeTheme}. Switch theme`}
+          onClick={cycleTheme}
         >
-          <SunIcon size={18} />
+          {themeIcon}
         </button>
         <button
           type="button"

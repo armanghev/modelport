@@ -232,7 +232,7 @@ export function AddProviderModal({ onAddProvider }: AddProviderModalProps) {
             <div className="space-y-2">
               <p className="text-sm font-medium text-text-primary">Provider preset</p>
               <Select value={selectedProvider} onValueChange={handlePresetChange}>
-                <SelectTrigger className="h-11 w-full rounded-lg text-sm text-text-primary">
+                <SelectTrigger className="h-11 w-full rounded-lg border-border-default bg-bg-card text-sm text-text-primary hover:bg-bg-card-muted focus-visible:border-border-default focus-visible:ring-0">
                   <div className="flex items-center gap-2">
                     <ProviderIcon provider={selectedProvider} size={16} />
                     <span className="truncate">{selectedProvider}</span>
@@ -241,7 +241,7 @@ export function AddProviderModal({ onAddProvider }: AddProviderModalProps) {
                 <SelectContent
                   position="popper"
                   align="start"
-                  className="rounded-lg p-1"
+                  className="rounded-lg border-border-subtle bg-bg-card p-1"
                 >
                   {PROVIDER_PRESETS.map((preset) => (
                     <SelectItem

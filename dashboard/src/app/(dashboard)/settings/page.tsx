@@ -1,13 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useTheme } from "next-themes";
 
 import {
   CheckIcon,
   CopyIcon,
+  DesktopIcon,
   DotsThreeIcon,
   EyeIcon,
   EyeSlashIcon,
+  MoonIcon,
   SunDimIcon,
   XIcon,
 } from "@phosphor-icons/react";
@@ -29,6 +32,14 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { dashboardMockData } from "@/lib/mock-dashboard-data";
+
+const themeOptions = [
+  { value: "light", label: "Light", icon: SunDimIcon },
+  { value: "dark", label: "Dark", icon: MoonIcon },
+  { value: "system", label: "System", icon: DesktopIcon },
+] as const;
+
+type ThemeOption = (typeof themeOptions)[number];
 
 function SettingsCard({
   title,
@@ -76,11 +87,11 @@ function ToggleRow({
 
 export default function SettingsPage() {
   const { settings } = dashboardMockData;
+  const { theme, setTheme } = useTheme();
   const [apiKeys, setApiKeys] = useState(settings.apiKeys);
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [copiedProvider, setCopiedProvider] = useState<string | null>(null);
   const [tracking, setTracking] = useState(settings.tracking);
-  const [theme, setTheme] = useState(settings.appearance.theme);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(
     settings.appearance.autoRefreshInterval,
   );
@@ -90,6 +101,9 @@ export default function SettingsPage() {
     () => Object.fromEntries(settings.apiKeys.map((item) => [item.provider, item])),
     [settings.apiKeys],
   );
+  const selectedTheme = theme ?? "system";
+  const selectedThemeOption =
+    themeOptions.find((option) => option.value === selectedTheme) ?? themeOptions[2];
 
   const toggleKeyVisibility = (provider: string) => {
     setVisibleKeys((current) => ({
@@ -287,17 +301,20 @@ export default function SettingsPage() {
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
           <div className="space-y-2">
             <p className="text-sm font-medium text-text-primary">Theme</p>
-            <Select value={theme} onValueChange={setTheme}>
+            <Select
+              value={selectedTheme}
+              onValueChange={(value) => setTheme(value as ThemeOption["value"])}
+            >
               <SelectTrigger className="h-11 rounded-lg text-sm text-text-primary">
                 <div className="flex items-center gap-2">
-                  <SunDimIcon size={16} className="text-text-secondary" />
-                  <SelectValue />
+                  <selectedThemeOption.icon size={16} className="text-text-secondary" />
+                  <SelectValue>{selectedThemeOption.label}</SelectValue>
                 </div>
               </SelectTrigger>
               <SelectContent className="rounded-lg p-1">
-                {settings.appearance.themes.map((option) => (
-                  <SelectItem key={option} value={option} className="rounded-md text-sm">
-                    {option}
+                {themeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value} className="rounded-md text-sm">
+                    {option.label}
                   </SelectItem>
                 ))}
               </SelectContent>
