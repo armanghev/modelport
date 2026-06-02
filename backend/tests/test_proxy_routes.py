@@ -7,6 +7,7 @@ def test_messages_route_requires_proxy_token(client: TestClient) -> None:
     response = client.post(
         "/v1/messages",
         json={
+            "provider": "openai",
             "model": "gpt",
             "max_tokens": 32,
             "messages": [{"role": "user", "content": "hello"}],
@@ -15,6 +16,21 @@ def test_messages_route_requires_proxy_token(client: TestClient) -> None:
 
     assert response.status_code == 401
     assert "Authorization" in response.json()["detail"]
+
+
+def test_messages_route_requires_explicit_provider_selection(client: TestClient) -> None:
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "gpt-5.5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Provider selection is required" in response.json()["detail"]
 
 
 def test_messages_route_translates_anthropic_request_to_openai_upstream(
@@ -71,7 +87,8 @@ def test_messages_route_translates_anthropic_request_to_openai_upstream(
         "/v1/messages",
         headers={"Authorization": "Bearer test-local-token"},
         json={
-            "model": "gpt",
+            "provider": "openai",
+            "model": "gpt-5.5",
             "max_tokens": 128,
             "system": "You are helpful.",
             "messages": [
@@ -86,7 +103,7 @@ def test_messages_route_translates_anthropic_request_to_openai_upstream(
         "id": "chatcmpl_test_123",
         "type": "message",
         "role": "assistant",
-        "model": "gpt",
+        "model": "gpt-5.5",
         "content": [{"type": "text", "text": "Hello from OpenAI"}],
         "stop_reason": "end_turn",
         "stop_sequence": None,
@@ -162,7 +179,8 @@ def test_messages_route_uses_database_backed_default_credential(
         "/v1/messages",
         headers={"Authorization": "Bearer test-local-token"},
         json={
-            "model": "gpt",
+            "provider": "openai",
+            "model": "gpt-5.5",
             "max_tokens": 32,
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -172,7 +190,7 @@ def test_messages_route_uses_database_backed_default_credential(
     assert response.json()["content"][0]["text"] == "Using database credential"
 
 
-def test_messages_route_falls_back_to_default_provider_with_requested_model(
+def test_messages_route_supports_provider_header_override(
     client: TestClient,
     monkeypatch,
 ) -> None:
@@ -216,7 +234,10 @@ def test_messages_route_falls_back_to_default_provider_with_requested_model(
 
     response = client.post(
         "/v1/messages",
-        headers={"Authorization": "Bearer test-local-token"},
+        headers={
+            "Authorization": "Bearer test-local-token",
+            "X-ModelPort-Provider": "openrouter",
+        },
         json={
             "model": "gpt-4.1-mini",
             "max_tokens": 64,
@@ -242,16 +263,6 @@ def test_messages_route_allows_localhost_openai_compatible_provider_without_key(
         },
     )
     assert provider_response.status_code == 201
-    alias_response = client.post(
-        "/admin/model-aliases",
-        json={
-            "alias": "lmstudio-chat",
-            "provider_id": "lmstudio",
-            "model": "local-model",
-            "description": "Local OpenAI-compatible route",
-        },
-    )
-    assert alias_response.status_code == 201
 
     class FakeResponse:
         def raise_for_status(self) -> None:
@@ -292,7 +303,8 @@ def test_messages_route_allows_localhost_openai_compatible_provider_without_key(
         "/v1/messages",
         headers={"Authorization": "Bearer test-local-token"},
         json={
-            "model": "lmstudio-chat",
+            "provider": "lmstudio",
+            "model": "local-model",
             "max_tokens": 32,
             "messages": [{"role": "user", "content": "hello"}],
         },

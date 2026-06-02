@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 from fastapi.testclient import TestClient
-
-from app.main import create_app
 
 
 def test_provider_routes_list_create_and_patch(client: TestClient) -> None:
@@ -59,47 +54,7 @@ def test_credential_routes_mask_and_reveal(client: TestClient) -> None:
     assert reveal_response.json()["api_key"] == "sk-replaced-from-dashboard"
 
 
-def test_model_alias_routes_create_and_patch(client: TestClient) -> None:
-    create_response = client.post(
-        "/admin/model-aliases",
-        json={
-            "alias": "fast",
-            "provider_id": "openai",
-            "model": "gpt-5.4-mini",
-            "description": "Fast alias",
-            "enabled": True,
-        },
-    )
-    assert create_response.status_code == 201
-    assert create_response.json()["alias"] == "fast"
-
-    patch_response = client.patch(
-        "/admin/model-aliases/fast",
-        json={"description": "Updated fast alias", "is_default": True},
-    )
-    assert patch_response.status_code == 200
-    assert patch_response.json()["description"] == "Updated fast alias"
-    assert patch_response.json()["is_default"] is True
-
-
-def test_routing_pricing_and_settings_routes(client: TestClient) -> None:
-    routing_create = client.post(
-        "/admin/routing-rules",
-        json={
-            "match": "gpt*",
-            "priority": 10,
-            "primary_provider_id": "openai",
-            "primary_alias": "gpt",
-            "fallback_provider_ids": ["openrouter"],
-        },
-    )
-    assert routing_create.status_code == 201
-    routing_id = routing_create.json()["id"]
-
-    routing_patch = client.patch(f"/admin/routing-rules/{routing_id}", json={"enabled": False})
-    assert routing_patch.status_code == 200
-    assert routing_patch.json()["enabled"] is False
-
+def test_pricing_and_settings_routes(client: TestClient) -> None:
     pricing_create = client.post(
         "/admin/pricing",
         json={
@@ -120,13 +75,6 @@ def test_routing_pricing_and_settings_routes(client: TestClient) -> None:
     assert pricing_patch.status_code == 200
     assert pricing_patch.json()["output_per_1m_usd"] == 9.0
 
-    default_routing_patch = client.patch(
-        "/admin/settings/default-routing",
-        json={"provider": "openai", "model": "gpt"},
-    )
-    assert default_routing_patch.status_code == 200
-    assert default_routing_patch.json()["provider"] == "openai"
-
     tracking_patch = client.patch(
         "/admin/settings/tracking",
         json={"request_logging": True, "cost_tracking": True, "retention_days": 14},
@@ -144,44 +92,31 @@ def test_routing_pricing_and_settings_routes(client: TestClient) -> None:
     settings_response = client.get("/admin/settings")
     assert settings_response.status_code == 200
     payload = settings_response.json()
-    assert payload["settings"]["default_routing"]["provider"] == "openai"
+    assert "model_aliases" not in payload
+    assert "routing_rules" not in payload
+    assert "default_routing" not in payload["settings"]
     assert payload["settings"]["tracking"]["retention_days"] == 14
     assert payload["settings"]["appearance"]["theme"] == "system"
 
 
 def test_invalid_provider_references_return_client_errors(client: TestClient) -> None:
-    alias_response = client.post(
-        "/admin/model-aliases",
-        json={"alias": "broken", "provider_id": "missing", "model": "gpt-5.5"},
-    )
-    assert alias_response.status_code == 404
-
-    routing_response = client.post(
-        "/admin/routing-rules",
+    pricing_response = client.post(
+        "/admin/pricing",
         json={
-            "match": "broken*",
-            "priority": 1,
-            "primary_provider_id": "missing",
+            "provider_id": "missing",
+            "model": "broken-model",
+            "input_per_1m_usd": 1.0,
+            "output_per_1m_usd": 2.0,
+            "currency": "USD",
         },
     )
-    assert routing_response.status_code == 404
+    assert pricing_response.status_code == 404
 
 
 def test_provider_health_endpoint_returns_dashboard_ready_cards(
     client: TestClient,
     monkeypatch,
 ) -> None:
-    client.post(
-        "/admin/routing-rules",
-        json={
-            "match": "gpt*",
-            "priority": 10,
-            "primary_provider_id": "openai",
-            "primary_alias": "gpt",
-            "fallback_provider_ids": ["openrouter"],
-        },
-    )
-
     def fake_collect_provider_health_payload(session):
         return {
             "cards": [
@@ -228,13 +163,6 @@ def test_provider_health_endpoint_returns_dashboard_ready_cards(
                     "lastError": None,
                 },
             ],
-            "routingRules": [
-                {
-                    "match": "gpt*",
-                    "primaryProvider": "openai",
-                    "fallbackProviders": ["openrouter"],
-                }
-            ],
             "details": [],
         }
 
@@ -248,13 +176,7 @@ def test_provider_health_endpoint_returns_dashboard_ready_cards(
     assert health_response.status_code == 200
     payload = health_response.json()
     assert payload["details"] == []
-    assert payload["routingRules"] == [
-        {
-            "match": "gpt*",
-            "primaryProvider": "openai",
-            "fallbackProviders": ["openrouter"],
-        }
-    ]
+    assert "routingRules" not in payload
 
     cards_by_id = {card["id"]: card for card in payload["cards"]}
     assert cards_by_id["openai"]["status"] == "operational"
@@ -296,7 +218,6 @@ def test_provider_health_endpoint_marks_unreachable_provider_offline(
                     "lastError": "Connection refused",
                 }
             ],
-            "routingRules": [],
             "details": [],
         }
 

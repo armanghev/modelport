@@ -5,11 +5,11 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.database import Provider, ProviderCredential, build_session_factory, initialize_database
+from app.database import Provider, ProviderCredential, build_session_factory
 from app.main import create_app
 
 
-def test_startup_seeds_providers_credentials_and_aliases(client: TestClient) -> None:
+def test_startup_seeds_providers_and_credentials(client: TestClient) -> None:
     settings_response = client.get("/admin/settings")
 
     assert settings_response.status_code == 200
@@ -26,7 +26,8 @@ def test_startup_seeds_providers_credentials_and_aliases(client: TestClient) -> 
         and credential["api_key_env"] == "OPENAI_API_KEY"
         for credential in payload["provider_credentials"]
     )
-    assert any(alias["alias"] == "gpt" and alias["provider_id"] == "openai" for alias in payload["model_aliases"])
+    assert "model_aliases" not in payload
+    assert "routing_rules" not in payload
 
 
 def test_seed_is_idempotent(app_config: Path, encryption_key: str) -> None:
