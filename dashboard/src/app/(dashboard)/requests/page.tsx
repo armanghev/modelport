@@ -124,10 +124,18 @@ function FilterSelect({
   return (
     <div className="min-w-0 space-y-1">
       <Select value={value} onValueChange={onValueChange}>
-        <SelectTrigger id={id} aria-label={label} className="h-11 w-full rounded-lg text-xs text-text-primary">
+        <SelectTrigger
+          id={id}
+          aria-label={label}
+          className="h-11 w-full rounded-lg border-border-default bg-bg-card text-xs text-text-primary hover:bg-bg-card-muted"
+        >
           <SelectValue />
         </SelectTrigger>
-        <SelectContent position="popper" align="start" className="rounded-lg p-1">
+        <SelectContent
+          position="popper"
+          align="start"
+          className="rounded-lg border-border-subtle bg-bg-card p-1"
+        >
           {options.map((option) => (
             <SelectItem key={option.value} value={option.value} className="rounded-md text-xs">
               {option.label}
@@ -378,10 +386,17 @@ export default function RequestsPage() {
               setCurrentPage(1);
             }}
           >
-            <SelectTrigger id="time-range-filter" className="h-11 w-full rounded-lg text-sm text-text-primary">
+            <SelectTrigger
+              id="time-range-filter"
+              className="h-11 w-full rounded-lg border-border-default bg-bg-card text-sm text-text-primary hover:bg-bg-card-muted"
+            >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent position="popper" align="start" className="rounded-lg p-1">
+            <SelectContent
+              position="popper"
+              align="start"
+              className="rounded-lg border-border-subtle bg-bg-card p-1"
+            >
               {filterOptions.timeRange.map((range) => (
                 <SelectItem key={range.value} value={range.value} className="rounded-md text-sm">
                   {range.label}
