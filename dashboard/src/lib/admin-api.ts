@@ -3,7 +3,6 @@ import type {
   ProviderDetail,
   ProviderHealth,
   ProviderType,
-  RoutingRule,
   SettingsAppearance,
   SettingsTrackingOption,
 } from "@/lib/mock-dashboard-data";
@@ -45,15 +44,8 @@ export interface AdminPricingOverride {
 export interface AdminSettingsPayload {
   providers: AdminProvider[];
   provider_credentials: AdminCredential[];
-  model_aliases: Array<Record<string, unknown>>;
-  routing_rules: Array<Record<string, unknown>>;
   pricing_overrides: AdminPricingOverride[];
   settings: {
-    default_routing: {
-      input_format?: string;
-      provider?: string;
-      model?: string;
-    };
     tracking: {
       request_logging?: boolean;
       cost_tracking?: boolean;
@@ -94,7 +86,6 @@ export interface ProviderConfigDraft {
 
 export interface ProviderHealthPayload {
   cards: ProviderHealth[];
-  routingRules: RoutingRule[];
   details: ProviderDetail[];
 }
 

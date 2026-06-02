@@ -82,12 +82,6 @@ export interface ProviderHealth {
   lastError: string | null;
 }
 
-export interface RoutingRule {
-  match: string;
-  primaryProvider: string;
-  fallbackProviders: string[];
-}
-
 export interface ProviderBillingCycle {
   planName: string;
   periodStart: string;
@@ -197,7 +191,6 @@ export interface DashboardMockData {
   };
   providers: {
     cards: ProviderHealth[];
-    routingRules: RoutingRule[];
     details: ProviderDetail[];
   };
   costs: {
@@ -1663,103 +1656,6 @@ export const dashboardMockData: DashboardMockData = {
         availableModelCount: 0,
         lastCheckedAt: "2026-05-27T09:29:40-07:00",
         lastError: "Connection refused on health check",
-      },
-    ],
-    routingRules: [
-      {
-        match: "*",
-        primaryProvider: "openai",
-        fallbackProviders: ["anthropic", "gemini", "openrouter"],
-      },
-      {
-        match: "gpt-*",
-        primaryProvider: "openai",
-        fallbackProviders: ["azure_openai", "anthropic", "openrouter"],
-      },
-      {
-        match: "o*-*",
-        primaryProvider: "openai",
-        fallbackProviders: ["anthropic", "deepseek", "openrouter"],
-      },
-      {
-        match: "claude-*",
-        primaryProvider: "anthropic",
-        fallbackProviders: ["openrouter", "gemini"],
-      },
-      {
-        match: "gemini-*",
-        primaryProvider: "gemini",
-        fallbackProviders: ["openai", "anthropic", "openrouter"],
-      },
-      {
-        match: "grok-*",
-        primaryProvider: "xai",
-        fallbackProviders: ["openrouter", "openai"],
-      },
-      {
-        match: "deepseek-*",
-        primaryProvider: "deepseek",
-        fallbackProviders: ["openrouter", "together", "openai"],
-      },
-      {
-        match: "mistral-*",
-        primaryProvider: "mistral",
-        fallbackProviders: ["openrouter", "together"],
-      },
-      {
-        match: "llama-*",
-        primaryProvider: "groq",
-        fallbackProviders: ["openrouter", "cerebras", "together"],
-      },
-      {
-        match: "qwen-*",
-        primaryProvider: "openrouter",
-        fallbackProviders: ["together", "ollama", "vllm_local"],
-      },
-      {
-        match: "coder-*",
-        primaryProvider: "deepseek",
-        fallbackProviders: ["anthropic", "openai", "openrouter"],
-      },
-      {
-        match: "local-*",
-        primaryProvider: "vllm_local",
-        fallbackProviders: ["ollama", "openrouter", "lmstudio"],
-      },
-      {
-        match: "embeddings-*",
-        primaryProvider: "openai",
-        fallbackProviders: ["azure_openai", "openrouter"],
-      },
-      {
-        match: "vision-*",
-        primaryProvider: "openai",
-        fallbackProviders: ["gemini", "anthropic", "openrouter"],
-      },
-      {
-        match: "audio-*",
-        primaryProvider: "openai",
-        fallbackProviders: ["groq", "openrouter"],
-      },
-      {
-        match: "rerank-*",
-        primaryProvider: "together",
-        fallbackProviders: ["openrouter", "mistral"],
-      },
-      {
-        match: "batch-*",
-        primaryProvider: "openrouter",
-        fallbackProviders: ["openai", "together"],
-      },
-      {
-        match: "reasoning-*",
-        primaryProvider: "openai",
-        fallbackProviders: ["anthropic", "deepseek", "openrouter"],
-      },
-      {
-        match: "emergency-fallback",
-        primaryProvider: "openrouter",
-        fallbackProviders: ["openai", "anthropic", "groq"],
       },
     ],
     details: providerDetails,
