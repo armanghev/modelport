@@ -6,7 +6,6 @@ export type ProviderType =
   | "openai_compatible"
   | "anthropic_compatible"
   | "local_openai_compatible";
-export type LoggingLevel = "debug" | "info" | "warn" | "error";
 
 export interface MetricTrend {
   direction: TrendDirection;
@@ -132,7 +131,27 @@ export interface ApiKeyStatus {
   provider: string;
   envVar: string;
   configured: boolean;
-  keyHint: string;
+  maskedKey: string;
+  fullKey: string;
+  baseUrl?: string;
+  headers?: Array<{
+    key: string;
+    value: string;
+  }>;
+}
+
+export interface SettingsTrackingOption {
+  id: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+}
+
+export interface SettingsAppearance {
+  theme: string;
+  themes: string[];
+  autoRefreshInterval: string;
+  autoRefreshIntervals: string[];
 }
 
 export interface DashboardMockData {
@@ -193,21 +212,10 @@ export interface DashboardMockData {
     dailyTrend: CostBucket[];
   };
   settings: {
-    defaults: {
-      inputFormat: "anthropic" | "openai";
-      provider: string;
-    };
     apiKeys: ApiKeyStatus[];
     pricingTable: PricingEntry[];
-    logging: {
-      level: LoggingLevel;
-      availableLevels: LoggingLevel[];
-    };
-    retention: {
-      requestLogsDays: number;
-      providerHealthDays: number;
-      metricGranularity: "5m" | "15m" | "1h";
-    };
+    tracking: SettingsTrackingOption[];
+    appearance: SettingsAppearance;
   };
 }
 
@@ -363,6 +371,131 @@ const requests: RequestRow[] = [
     status: "success",
   },
 ];
+
+const overviewTokenUsage: Record<UsageRange, TimeRangeUsage> = {
+  "1h": {
+    range: "1h",
+    points: [
+      { label: "-55m", tokens: 72000 },
+      { label: "-50m", tokens: 76000 },
+      { label: "-45m", tokens: 70200 },
+      { label: "-40m", tokens: 83400 },
+      { label: "-35m", tokens: 79000 },
+      { label: "-30m", tokens: 88600 },
+      { label: "-25m", tokens: 84200 },
+      { label: "-20m", tokens: 91800 },
+      { label: "-15m", tokens: 86000 },
+      { label: "-10m", tokens: 81100 },
+      { label: "-5m", tokens: 78400 },
+      { label: "Now", tokens: 83200 },
+    ],
+  },
+  "6h": {
+    range: "6h",
+    points: [
+      { label: "4:00", tokens: 332000 },
+      { label: "4:15", tokens: 351000 },
+      { label: "4:30", tokens: 347000 },
+      { label: "4:45", tokens: 365000 },
+      { label: "5:00", tokens: 378000 },
+      { label: "5:15", tokens: 391000 },
+      { label: "5:30", tokens: 402000 },
+      { label: "5:45", tokens: 418000 },
+      { label: "6:00", tokens: 429000 },
+      { label: "6:15", tokens: 452000 },
+      { label: "6:30", tokens: 479000 },
+      { label: "6:45", tokens: 498000 },
+      { label: "7:00", tokens: 515000 },
+      { label: "7:15", tokens: 537000 },
+      { label: "7:30", tokens: 521000 },
+      { label: "7:45", tokens: 546000 },
+      { label: "8:00", tokens: 568000 },
+      { label: "8:15", tokens: 583000 },
+      { label: "8:30", tokens: 561000 },
+      { label: "8:45", tokens: 549000 },
+      { label: "9:00", tokens: 525000 },
+      { label: "9:15", tokens: 501000 },
+      { label: "9:30", tokens: 487000 },
+      { label: "9:45", tokens: 466000 },
+    ],
+  },
+  "24h": {
+    range: "24h",
+    points: [
+      { label: "12 AM", tokens: 1200000 },
+      { label: "1 AM", tokens: 1010000 },
+      { label: "2 AM", tokens: 860000 },
+      { label: "3 AM", tokens: 900000 },
+      { label: "4 AM", tokens: 1020000 },
+      { label: "5 AM", tokens: 1290000 },
+      { label: "6 AM", tokens: 1480000 },
+      { label: "7 AM", tokens: 1780000 },
+      { label: "8 AM", tokens: 2010000 },
+      { label: "9 AM", tokens: 2310000 },
+      { label: "10 AM", tokens: 2220000 },
+      { label: "11 AM", tokens: 2310000 },
+      { label: "12 PM", tokens: 2590000 },
+      { label: "1 PM", tokens: 2900000 },
+      { label: "2 PM", tokens: 3020000 },
+      { label: "3 PM", tokens: 3200000 },
+      { label: "4 PM", tokens: 3510000 },
+      { label: "5 PM", tokens: 3210000 },
+      { label: "6 PM", tokens: 3030000 },
+      { label: "7 PM", tokens: 2810000 },
+      { label: "8 PM", tokens: 2500000 },
+      { label: "9 PM", tokens: 2240000 },
+      { label: "10 PM", tokens: 1940000 },
+      { label: "11 PM", tokens: 1730000 },
+    ],
+  },
+  "7d": {
+    range: "7d",
+    points: [
+      { label: "Thu", tokens: 18200000 },
+      { label: "Fri", tokens: 19500000 },
+      { label: "Sat", tokens: 14300000 },
+      { label: "Sun", tokens: 12800000 },
+      { label: "Mon", tokens: 21100000 },
+      { label: "Tue", tokens: 22600000 },
+      { label: "Wed", tokens: 24700000 },
+    ],
+  },
+  "30d": {
+    range: "30d",
+    points: [
+      { label: "D1", tokens: 11000000 },
+      { label: "D2", tokens: 12500000 },
+      { label: "D3", tokens: 11900000 },
+      { label: "D4", tokens: 12100000 },
+      { label: "D5", tokens: 13200000 },
+      { label: "D6", tokens: 13800000 },
+      { label: "D7", tokens: 14200000 },
+      { label: "D8", tokens: 14800000 },
+      { label: "D9", tokens: 15200000 },
+      { label: "D10", tokens: 16000000 },
+      { label: "D11", tokens: 16500000 },
+      { label: "D12", tokens: 17200000 },
+      { label: "D13", tokens: 17500000 },
+      { label: "D14", tokens: 16900000 },
+      { label: "D15", tokens: 17700000 },
+      { label: "D16", tokens: 18100000 },
+      { label: "D17", tokens: 18700000 },
+      { label: "D18", tokens: 19000000 },
+      { label: "D19", tokens: 20100000 },
+      { label: "D20", tokens: 20800000 },
+      { label: "D21", tokens: 21400000 },
+      { label: "D22", tokens: 20500000 },
+      { label: "D23", tokens: 21800000 },
+      { label: "D24", tokens: 22600000 },
+      { label: "D25", tokens: 21900000 },
+      { label: "D26", tokens: 23200000 },
+      { label: "D27", tokens: 23800000 },
+      { label: "D28", tokens: 24100000 },
+      { label: "D29", tokens: 24500000 },
+      { label: "D30", tokens: 24700000 },
+    ],
+  },
+};
 
 function buildProviderTrend(
   startDate: string,
@@ -621,130 +754,7 @@ export const dashboardMockData: DashboardMockData = {
         },
       },
     ],
-    tokenUsage: {
-      "1h": {
-        range: "1h",
-        points: [
-          { label: "-55m", tokens: 72000 },
-          { label: "-50m", tokens: 76000 },
-          { label: "-45m", tokens: 70200 },
-          { label: "-40m", tokens: 83400 },
-          { label: "-35m", tokens: 79000 },
-          { label: "-30m", tokens: 88600 },
-          { label: "-25m", tokens: 84200 },
-          { label: "-20m", tokens: 91800 },
-          { label: "-15m", tokens: 86000 },
-          { label: "-10m", tokens: 81100 },
-          { label: "-5m", tokens: 78400 },
-          { label: "Now", tokens: 83200 },
-        ],
-      },
-      "6h": {
-        range: "6h",
-        points: [
-          { label: "4:00", tokens: 332000 },
-          { label: "4:15", tokens: 351000 },
-          { label: "4:30", tokens: 347000 },
-          { label: "4:45", tokens: 365000 },
-          { label: "5:00", tokens: 378000 },
-          { label: "5:15", tokens: 391000 },
-          { label: "5:30", tokens: 402000 },
-          { label: "5:45", tokens: 418000 },
-          { label: "6:00", tokens: 429000 },
-          { label: "6:15", tokens: 452000 },
-          { label: "6:30", tokens: 479000 },
-          { label: "6:45", tokens: 498000 },
-          { label: "7:00", tokens: 515000 },
-          { label: "7:15", tokens: 537000 },
-          { label: "7:30", tokens: 521000 },
-          { label: "7:45", tokens: 546000 },
-          { label: "8:00", tokens: 568000 },
-          { label: "8:15", tokens: 583000 },
-          { label: "8:30", tokens: 561000 },
-          { label: "8:45", tokens: 549000 },
-          { label: "9:00", tokens: 525000 },
-          { label: "9:15", tokens: 501000 },
-          { label: "9:30", tokens: 487000 },
-          { label: "9:45", tokens: 466000 },
-        ],
-      },
-      "24h": {
-        range: "24h",
-        points: [
-          { label: "12 AM", tokens: 1200000 },
-          { label: "1 AM", tokens: 1010000 },
-          { label: "2 AM", tokens: 860000 },
-          { label: "3 AM", tokens: 900000 },
-          { label: "4 AM", tokens: 1020000 },
-          { label: "5 AM", tokens: 1290000 },
-          { label: "6 AM", tokens: 1480000 },
-          { label: "7 AM", tokens: 1780000 },
-          { label: "8 AM", tokens: 2010000 },
-          { label: "9 AM", tokens: 2310000 },
-          { label: "10 AM", tokens: 2220000 },
-          { label: "11 AM", tokens: 2310000 },
-          { label: "12 PM", tokens: 2590000 },
-          { label: "1 PM", tokens: 2900000 },
-          { label: "2 PM", tokens: 3020000 },
-          { label: "3 PM", tokens: 3200000 },
-          { label: "4 PM", tokens: 3510000 },
-          { label: "5 PM", tokens: 3210000 },
-          { label: "6 PM", tokens: 3030000 },
-          { label: "7 PM", tokens: 2810000 },
-          { label: "8 PM", tokens: 2500000 },
-          { label: "9 PM", tokens: 2240000 },
-          { label: "10 PM", tokens: 1940000 },
-          { label: "11 PM", tokens: 1730000 },
-        ],
-      },
-      "7d": {
-        range: "7d",
-        points: [
-          { label: "Thu", tokens: 18200000 },
-          { label: "Fri", tokens: 19500000 },
-          { label: "Sat", tokens: 14300000 },
-          { label: "Sun", tokens: 12800000 },
-          { label: "Mon", tokens: 21100000 },
-          { label: "Tue", tokens: 22600000 },
-          { label: "Wed", tokens: 24700000 },
-        ],
-      },
-      "30d": {
-        range: "30d",
-        points: [
-          { label: "D1", tokens: 11000000 },
-          { label: "D2", tokens: 12500000 },
-          { label: "D3", tokens: 11900000 },
-          { label: "D4", tokens: 12100000 },
-          { label: "D5", tokens: 13200000 },
-          { label: "D6", tokens: 13800000 },
-          { label: "D7", tokens: 14200000 },
-          { label: "D8", tokens: 14800000 },
-          { label: "D9", tokens: 15200000 },
-          { label: "D10", tokens: 16000000 },
-          { label: "D11", tokens: 16500000 },
-          { label: "D12", tokens: 17200000 },
-          { label: "D13", tokens: 17500000 },
-          { label: "D14", tokens: 16900000 },
-          { label: "D15", tokens: 17700000 },
-          { label: "D16", tokens: 18100000 },
-          { label: "D17", tokens: 18700000 },
-          { label: "D18", tokens: 19000000 },
-          { label: "D19", tokens: 20100000 },
-          { label: "D20", tokens: 20800000 },
-          { label: "D21", tokens: 21400000 },
-          { label: "D22", tokens: 20500000 },
-          { label: "D23", tokens: 21800000 },
-          { label: "D24", tokens: 22600000 },
-          { label: "D25", tokens: 21900000 },
-          { label: "D26", tokens: 23200000 },
-          { label: "D27", tokens: 23800000 },
-          { label: "D28", tokens: 24100000 },
-          { label: "D29", tokens: 24500000 },
-          { label: "D30", tokens: 24700000 },
-        ],
-      },
-    },
+    tokenUsage: overviewTokenUsage,
     topModels: [
       {
         id: "top_01",
@@ -1787,46 +1797,34 @@ export const dashboardMockData: DashboardMockData = {
     ],
   },
   settings: {
-    defaults: {
-      inputFormat: "anthropic",
-      provider: "openrouter",
-    },
     apiKeys: [
       {
         provider: "OpenAI",
         envVar: "OPENAI_API_KEY",
         configured: true,
-        keyHint: "sk-**********AB12",
+        maskedKey: "sk-************************",
+        fullKey: "sk-proj-N7xQ2mLp8rTy4uVb1cDe9FgH3jKl6MnP",
       },
       {
         provider: "Anthropic",
         envVar: "ANTHROPIC_API_KEY",
         configured: true,
-        keyHint: "sk-ant-********9XZ4",
+        maskedKey: "sk-ant-********************",
+        fullKey: "sk-ant-api03-Qv7mX2pL9nKd4sHj8rTf1wZc6bNy",
       },
       {
         provider: "Gemini",
         envVar: "GEMINI_API_KEY",
         configured: true,
-        keyHint: "AIza********PQ8",
+        maskedKey: "AIza**********************",
+        fullKey: "AIzaSyD4pQ8xLm2Nc7Vb5Rk1Tz9Hw6Yj3Fs0Ua",
       },
       {
         provider: "OpenRouter",
         envVar: "OPENROUTER_API_KEY",
-        configured: false,
-        keyHint: "Not configured",
-      },
-      {
-        provider: "Groq",
-        envVar: "GROQ_API_KEY",
-        configured: false,
-        keyHint: "Not configured",
-      },
-      {
-        provider: "Together AI",
-        envVar: "TOGETHER_API_KEY",
-        configured: false,
-        keyHint: "Not configured",
+        configured: true,
+        maskedKey: "sk-or-********************",
+        fullKey: "sk-or-v1-J8mR3qLp6Xt2Nv9Ka4Hs7Wd1Pf5Cy",
       },
     ],
     pricingTable: [
@@ -1867,14 +1865,31 @@ export const dashboardMockData: DashboardMockData = {
         outputPer1kUsd: 0.003,
       },
     ],
-    logging: {
-      level: "info",
-      availableLevels: ["debug", "info", "warn", "error"],
-    },
-    retention: {
-      requestLogsDays: 30,
-      providerHealthDays: 14,
-      metricGranularity: "5m",
+    tracking: [
+      {
+        id: "request-logging",
+        label: "Request logging",
+        description: "Log details of all incoming requests.",
+        enabled: true,
+      },
+      {
+        id: "token-estimation",
+        label: "Token estimation",
+        description: "Estimate and track token usage for requests.",
+        enabled: true,
+      },
+      {
+        id: "error-capture",
+        label: "Error capture",
+        description: "Capture and log errors for debugging.",
+        enabled: true,
+      },
+    ],
+    appearance: {
+      theme: "Light",
+      themes: ["Light", "Dark", "System"],
+      autoRefreshInterval: "30 seconds",
+      autoRefreshIntervals: ["15 seconds", "30 seconds", "1 minute", "5 minutes"],
     },
   },
 };
