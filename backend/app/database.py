@@ -58,7 +58,6 @@ class Provider(TimestampMixin, Base):
         back_populates="provider",
         cascade="all, delete-orphan",
     )
-    aliases: Mapped[list["ModelAlias"]] = relationship(back_populates="provider")
 
 
 class ProviderCredential(TimestampMixin, Base):
@@ -75,34 +74,6 @@ class ProviderCredential(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     provider: Mapped[Provider] = relationship(back_populates="credentials")
-    aliases: Mapped[list["ModelAlias"]] = relationship(back_populates="credential")
-
-
-class ModelAlias(TimestampMixin, Base):
-    __tablename__ = "model_aliases"
-
-    alias: Mapped[str] = mapped_column(String(128), primary_key=True)
-    provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"), nullable=False, index=True)
-    model: Mapped[str] = mapped_column(String(255), nullable=False)
-    credential_id: Mapped[str | None] = mapped_column(ForeignKey("provider_credentials.id"))
-    description: Mapped[str | None] = mapped_column(Text)
-    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-
-    provider: Mapped[Provider] = relationship(back_populates="aliases")
-    credential: Mapped[ProviderCredential | None] = relationship(back_populates="aliases")
-
-
-class RoutingRule(TimestampMixin, Base):
-    __tablename__ = "routing_rules"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    match: Mapped[str] = mapped_column(String(255), nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    primary_provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"), nullable=False)
-    primary_alias: Mapped[str | None] = mapped_column(String(128))
-    fallback_provider_ids_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class PricingOverride(TimestampMixin, Base):
@@ -228,26 +199,6 @@ def seed_admin_data(session_factory: sessionmaker[Session], config: AppConfig) -
                     )
                 )
 
-        for alias, alias_config in config.model_aliases.items():
-            session.add(
-                ModelAlias(
-                    alias=alias,
-                    provider_id=alias_config.provider,
-                    model=alias_config.model,
-                    description=alias_config.description,
-                    enabled=True,
-                )
-            )
-
-        set_setting(
-            session,
-            "default_routing",
-            {
-                "input_format": config.defaults.input_format,
-                "provider": config.defaults.provider,
-                "model": config.defaults.model,
-            },
-        )
         set_setting(
             session,
             "tracking",

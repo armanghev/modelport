@@ -16,6 +16,7 @@ class AnthropicMessage(BaseModel):
 
 
 class AnthropicMessageCreate(BaseModel):
+    provider: str | None = None
     model: str
     max_tokens: int | None = None
     system: str | list[AnthropicTextBlock] | None = None

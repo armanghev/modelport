@@ -27,12 +27,6 @@ class DatabaseConfig(BaseModel):
     url: str = "sqlite:///./data/modelport.db"
 
 
-class DefaultsConfig(BaseModel):
-    input_format: str = "anthropic"
-    provider: str = "openrouter"
-    model: str = "claude-sonnet"
-
-
 class ProviderSeedConfig(BaseModel):
     type: ProviderType
     display_name: str
@@ -40,19 +34,11 @@ class ProviderSeedConfig(BaseModel):
     api_key_env: str | None = None
 
 
-class ModelAliasSeedConfig(BaseModel):
-    provider: str
-    model: str
-    description: str | None = None
-
-
 class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
     providers: dict[str, ProviderSeedConfig] = Field(default_factory=dict)
-    model_aliases: dict[str, ModelAliasSeedConfig] = Field(default_factory=dict)
 
 
 def load_config(config_path: str | Path | None = None) -> AppConfig:

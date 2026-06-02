@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urljoin
@@ -12,13 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import (
-    AppSetting,
-    ModelAlias,
     PricingOverride,
     Provider,
     ProviderCredential,
     ProviderHealthCheck,
-    RoutingRule,
     clear_default_credentials,
     get_setting,
     is_credential_configured,
@@ -29,10 +25,6 @@ from app.database import (
 from app.schemas.admin import (
     AppearanceSettings,
     CredentialSecretResponse,
-    DefaultRoutingSettings,
-    ModelAliasCreate,
-    ModelAliasResponse,
-    ModelAliasUpdate,
     PricingOverrideCreate,
     PricingOverrideResponse,
     PricingOverrideUpdate,
@@ -43,10 +35,6 @@ from app.schemas.admin import (
     ProviderHealthPayload,
     ProviderResponse,
     ProviderUpdate,
-    ProviderRoutingRuleSummary,
-    RoutingRuleCreate,
-    RoutingRuleResponse,
-    RoutingRuleUpdate,
     SettingsEnvelope,
     SettingsResponse,
     TrackingSettings,
@@ -74,20 +62,6 @@ def require_credential(session: Session, credential_id: str) -> ProviderCredenti
     if credential is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential not found.")
     return credential
-
-
-def require_alias(session: Session, alias: str) -> ModelAlias:
-    record = session.get(ModelAlias, alias)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model alias not found.")
-    return record
-
-
-def require_routing_rule(session: Session, rule_id: str) -> RoutingRule:
-    record = session.get(RoutingRule, rule_id)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Routing rule not found.")
-    return record
 
 
 def require_pricing_override(session: Session, pricing_id: str) -> PricingOverride:
@@ -127,26 +101,6 @@ def serialize_credential(credential: ProviderCredential) -> ProviderCredentialRe
             "enabled": credential.enabled,
             "created_at": credential.created_at,
             "updated_at": credential.updated_at,
-        }
-    )
-
-
-def serialize_alias(record: ModelAlias) -> ModelAliasResponse:
-    return ModelAliasResponse.model_validate(record)
-
-
-def serialize_routing_rule(record: RoutingRule) -> RoutingRuleResponse:
-    return RoutingRuleResponse.model_validate(
-        {
-            "id": record.id,
-            "match": record.match,
-            "priority": record.priority,
-            "primary_provider_id": record.primary_provider_id,
-            "primary_alias": record.primary_alias,
-            "fallback_provider_ids": json.loads(record.fallback_provider_ids_json),
-            "enabled": record.enabled,
-            "created_at": record.created_at,
-            "updated_at": record.updated_at,
         }
     )
 
@@ -379,27 +333,10 @@ def collect_provider_health_payload(session: Session) -> dict:
         recent_checks = get_recent_provider_health_checks(session, provider.id)
         cards.append(serialize_provider_health_card(provider, latest_check, recent_checks))
 
-    routing_rules = session.scalars(
-        select(RoutingRule).order_by(RoutingRule.priority.desc(), RoutingRule.match)
-    ).all()
-
     return {
         "cards": cards,
-        "routingRules": [
-            ProviderRoutingRuleSummary(
-                match=rule.match,
-                primaryProvider=rule.primary_provider_id,
-                fallbackProviders=json.loads(rule.fallback_provider_ids_json),
-            ).model_dump()
-            for rule in routing_rules
-        ],
         "details": [],
     }
-
-
-def validate_fallback_providers(session: Session, provider_ids: list[str]) -> None:
-    for provider_id in provider_ids:
-        require_provider(session, provider_id)
 
 
 def apply_credential_secret(credential: ProviderCredential, api_key: str) -> None:
@@ -572,91 +509,6 @@ def reveal_provider_credential(
     )
 
 
-@router.get("/model-aliases", response_model=list[ModelAliasResponse])
-def list_model_aliases(session: Session = Depends(get_session)) -> list[ModelAliasResponse]:
-    aliases = session.scalars(select(ModelAlias).order_by(ModelAlias.alias)).all()
-    return [serialize_alias(record) for record in aliases]
-
-
-@router.post("/model-aliases", response_model=ModelAliasResponse, status_code=status.HTTP_201_CREATED)
-def create_model_alias(payload: ModelAliasCreate, session: Session = Depends(get_session)) -> ModelAliasResponse:
-    require_provider(session, payload.provider_id)
-    if payload.credential_id:
-        require_credential(session, payload.credential_id)
-    if session.get(ModelAlias, payload.alias) is not None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Model alias already exists.")
-
-    record = ModelAlias(**payload.model_dump())
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    return serialize_alias(record)
-
-
-@router.patch("/model-aliases/{alias}", response_model=ModelAliasResponse)
-def update_model_alias(
-    alias: str,
-    payload: ModelAliasUpdate,
-    session: Session = Depends(get_session),
-) -> ModelAliasResponse:
-    record = require_alias(session, alias)
-    updates = payload.model_dump(exclude_unset=True)
-    if "provider_id" in updates and updates["provider_id"] is not None:
-        require_provider(session, updates["provider_id"])
-    if "credential_id" in updates and updates["credential_id"] is not None:
-        require_credential(session, updates["credential_id"])
-    for field, value in updates.items():
-        setattr(record, field, value)
-    session.commit()
-    session.refresh(record)
-    return serialize_alias(record)
-
-
-@router.get("/routing-rules", response_model=list[RoutingRuleResponse])
-def list_routing_rules(session: Session = Depends(get_session)) -> list[RoutingRuleResponse]:
-    records = session.scalars(select(RoutingRule).order_by(RoutingRule.priority.desc(), RoutingRule.match)).all()
-    return [serialize_routing_rule(record) for record in records]
-
-
-@router.post("/routing-rules", response_model=RoutingRuleResponse, status_code=status.HTTP_201_CREATED)
-def create_routing_rule(payload: RoutingRuleCreate, session: Session = Depends(get_session)) -> RoutingRuleResponse:
-    require_provider(session, payload.primary_provider_id)
-    validate_fallback_providers(session, payload.fallback_provider_ids)
-
-    record = RoutingRule(
-        match=payload.match,
-        priority=payload.priority,
-        primary_provider_id=payload.primary_provider_id,
-        primary_alias=payload.primary_alias,
-        fallback_provider_ids_json=json.dumps(payload.fallback_provider_ids),
-        enabled=payload.enabled,
-    )
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    return serialize_routing_rule(record)
-
-
-@router.patch("/routing-rules/{rule_id}", response_model=RoutingRuleResponse)
-def update_routing_rule(
-    rule_id: str,
-    payload: RoutingRuleUpdate,
-    session: Session = Depends(get_session),
-) -> RoutingRuleResponse:
-    record = require_routing_rule(session, rule_id)
-    updates = payload.model_dump(exclude_unset=True)
-    if "primary_provider_id" in updates and updates["primary_provider_id"] is not None:
-        require_provider(session, updates["primary_provider_id"])
-    if "fallback_provider_ids" in updates and updates["fallback_provider_ids"] is not None:
-        validate_fallback_providers(session, updates["fallback_provider_ids"])
-        record.fallback_provider_ids_json = json.dumps(updates.pop("fallback_provider_ids"))
-    for field, value in updates.items():
-        setattr(record, field, value)
-    session.commit()
-    session.refresh(record)
-    return serialize_routing_rule(record)
-
-
 @router.get("/pricing", response_model=list[PricingOverrideResponse])
 def list_pricing(session: Session = Depends(get_session)) -> list[PricingOverrideResponse]:
     records = session.scalars(select(PricingOverride).order_by(PricingOverride.provider_id, PricingOverride.model)).all()
@@ -693,18 +545,6 @@ def update_pricing_override(
     return serialize_pricing(record)
 
 
-@router.patch("/settings/default-routing")
-def update_default_routing(
-    payload: DefaultRoutingSettings,
-    session: Session = Depends(get_session),
-) -> dict:
-    current = get_setting(session, "default_routing", {})
-    current.update(payload.model_dump(exclude_unset=True))
-    set_setting(session, "default_routing", current)
-    session.commit()
-    return current
-
-
 @router.patch("/settings/tracking")
 def update_tracking_settings(
     payload: TrackingSettings,
@@ -735,10 +575,6 @@ def get_settings(session: Session = Depends(get_session)) -> SettingsResponse:
     credentials = session.scalars(
         select(ProviderCredential).order_by(ProviderCredential.provider_id, ProviderCredential.display_name)
     ).all()
-    aliases = session.scalars(select(ModelAlias).order_by(ModelAlias.alias)).all()
-    routing_rules = session.scalars(
-        select(RoutingRule).order_by(RoutingRule.priority.desc(), RoutingRule.match)
-    ).all()
     pricing = session.scalars(
         select(PricingOverride).order_by(PricingOverride.provider_id, PricingOverride.model)
     ).all()
@@ -746,11 +582,8 @@ def get_settings(session: Session = Depends(get_session)) -> SettingsResponse:
     return SettingsResponse(
         providers=[serialize_provider(provider) for provider in providers],
         provider_credentials=[serialize_credential(credential) for credential in credentials],
-        model_aliases=[serialize_alias(record) for record in aliases],
-        routing_rules=[serialize_routing_rule(record) for record in routing_rules],
         pricing_overrides=[serialize_pricing(record) for record in pricing],
         settings=SettingsEnvelope(
-            default_routing=get_setting(session, "default_routing", {}),
             tracking=get_setting(session, "tracking", {}),
             appearance=get_setting(session, "appearance", {}),
         ),

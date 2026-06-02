@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 ProviderType = Literal[
     "openai_compatible",
@@ -94,75 +94,6 @@ class CredentialSecretResponse(BaseModel):
     api_key: str | None
 
 
-class ModelAliasCreate(BaseModel):
-    alias: str
-    provider_id: str
-    model: str
-    credential_id: str | None = None
-    description: str | None = None
-    is_default: bool = False
-    enabled: bool = True
-
-    @field_validator("alias")
-    @classmethod
-    def validate_alias(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if not normalized.replace("-", "").replace("_", "").isalnum():
-            raise ValueError("Aliases must be lowercase slugs.")
-        return normalized
-
-
-class ModelAliasUpdate(BaseModel):
-    provider_id: str | None = None
-    model: str | None = None
-    credential_id: str | None = None
-    description: str | None = None
-    is_default: bool | None = None
-    enabled: bool | None = None
-
-
-class ModelAliasResponse(ORMModel):
-    alias: str
-    provider_id: str
-    model: str
-    credential_id: str | None
-    description: str | None
-    is_default: bool
-    enabled: bool
-    created_at: datetime
-    updated_at: datetime
-
-
-class RoutingRuleCreate(BaseModel):
-    match: str
-    priority: int = 0
-    primary_provider_id: str
-    primary_alias: str | None = None
-    fallback_provider_ids: list[str] = Field(default_factory=list)
-    enabled: bool = True
-
-
-class RoutingRuleUpdate(BaseModel):
-    match: str | None = None
-    priority: int | None = None
-    primary_provider_id: str | None = None
-    primary_alias: str | None = None
-    fallback_provider_ids: list[str] | None = None
-    enabled: bool | None = None
-
-
-class RoutingRuleResponse(ORMModel):
-    id: str
-    match: str
-    priority: int
-    primary_provider_id: str
-    primary_alias: str | None
-    fallback_provider_ids: list[str]
-    enabled: bool
-    created_at: datetime
-    updated_at: datetime
-
-
 class PricingOverrideCreate(BaseModel):
     provider_id: str
     model: str
@@ -193,12 +124,6 @@ class PricingOverrideResponse(ORMModel):
     updated_at: datetime
 
 
-class DefaultRoutingSettings(BaseModel):
-    input_format: str | None = None
-    provider: str | None = None
-    model: str | None = None
-
-
 class TrackingSettings(BaseModel):
     request_logging: bool | None = None
     cost_tracking: bool | None = None
@@ -211,7 +136,6 @@ class AppearanceSettings(BaseModel):
 
 
 class SettingsEnvelope(BaseModel):
-    default_routing: dict
     tracking: dict
     appearance: dict
 
@@ -219,8 +143,6 @@ class SettingsEnvelope(BaseModel):
 class SettingsResponse(BaseModel):
     providers: list[ProviderResponse]
     provider_credentials: list[ProviderCredentialResponse]
-    model_aliases: list[ModelAliasResponse]
-    routing_rules: list[RoutingRuleResponse]
     pricing_overrides: list[PricingOverrideResponse]
     settings: SettingsEnvelope
 
@@ -240,13 +162,6 @@ class ProviderHealthCard(BaseModel):
     lastError: str | None
 
 
-class ProviderRoutingRuleSummary(BaseModel):
-    match: str
-    primaryProvider: str
-    fallbackProviders: list[str]
-
-
 class ProviderHealthPayload(BaseModel):
     cards: list[ProviderHealthCard]
-    routingRules: list[ProviderRoutingRuleSummary]
     details: list[dict]

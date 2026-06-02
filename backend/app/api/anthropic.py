@@ -60,13 +60,29 @@ def provider_supports_anonymous_access(base_url: str, provider_type: str) -> boo
     return provider_type == "local_openai_compatible" or "localhost" in base_url or "127.0.0.1" in base_url
 
 
+def resolve_requested_provider(request: Request, payload: AnthropicMessageCreate) -> str:
+    header_provider = request.headers.get("X-ModelPort-Provider")
+    provider_id = header_provider or payload.provider
+    if not provider_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provider selection is required. Pass X-ModelPort-Provider or provider in the request body.",
+        )
+    return provider_id.strip().lower()
+
+
 @router.post("/v1/messages", response_model=AnthropicMessageResponse)
 def create_message(
+    request: Request,
     payload: AnthropicMessageCreate,
     session: Session = Depends(get_session),
     _: None = Depends(require_proxy_token),
 ) -> AnthropicMessageResponse:
-    resolved_route = resolve_provider_route(session, payload.model)
+    resolved_route = resolve_provider_route(
+        session,
+        provider_id=resolve_requested_provider(request, payload),
+        requested_model=payload.model,
+    )
 
     try:
         provider_secret = resolve_credential_secret(resolved_route.credential)
