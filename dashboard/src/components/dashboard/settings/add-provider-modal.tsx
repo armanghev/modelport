@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { PlusIcon, TrashIcon, XIcon } from "@phosphor-icons/react";
 
@@ -17,6 +17,21 @@ import type { ApiKeyStatus } from "@/lib/mock-dashboard-data";
 
 interface AddProviderModalProps {
   onAddProvider: (provider: ApiKeyStatus) => void;
+}
+
+interface EditProviderModalProps {
+  open: boolean;
+  provider: ApiKeyStatus | null;
+  onOpenChange: (open: boolean) => void;
+  onEditProvider: (provider: ApiKeyStatus) => void;
+}
+
+interface ProviderModalProps {
+  mode: "add" | "edit";
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (provider: ApiKeyStatus) => void;
+  initialProvider?: ApiKeyStatus;
 }
 
 interface HeaderEntry {
@@ -70,39 +85,67 @@ const PROVIDER_PRESETS = [
   },
 ] as const;
 
-export function AddProviderModal({ onAddProvider }: AddProviderModalProps) {
-  const [open, setOpen] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<string>(PROVIDER_PRESETS[0].provider);
-  const activePreset = useMemo(
-    () => PROVIDER_PRESETS.find((preset) => preset.provider === selectedProvider) ?? PROVIDER_PRESETS[0],
-    [selectedProvider],
-  );
-  const [providerName, setProviderName] = useState<string>(activePreset.provider);
-  const [envVar, setEnvVar] = useState<string>(activePreset.envVar);
-  const [apiKeyValue, setApiKeyValue] = useState<string>("");
-  const [baseUrl, setBaseUrl] = useState<string>(activePreset.baseUrl);
-  const [headers, setHeaders] = useState<HeaderEntry[]>([]);
+function createMaskedKey(fullKey: string) {
+  const normalizedFullKey = fullKey.trim();
 
-  const reset = () => {
-    setSelectedProvider(PROVIDER_PRESETS[0].provider);
-    setProviderName(PROVIDER_PRESETS[0].provider);
-    setEnvVar(PROVIDER_PRESETS[0].envVar);
-    setApiKeyValue("");
-    setBaseUrl(PROVIDER_PRESETS[0].baseUrl);
-    setHeaders([]);
-  };
+  if (!normalizedFullKey) {
+    return "Not configured";
+  }
+
+  const prefix = normalizedFullKey.includes("-")
+    ? `${normalizedFullKey.split("-").slice(0, -1).join("-")}-`
+    : normalizedFullKey.slice(0, Math.min(4, normalizedFullKey.length));
+
+  return `${prefix}${"*".repeat(24)}`;
+}
+
+function createHeaderEntries(
+  headers: ApiKeyStatus["headers"] = [],
+): HeaderEntry[] {
+  return (headers ?? []).map((header) => ({
+    id: crypto.randomUUID(),
+    key: header.key,
+    value: header.value,
+  }));
+}
+
+function getPreset(provider?: ApiKeyStatus) {
+  if (!provider) {
+    return PROVIDER_PRESETS[0];
+  }
+
+  return (
+    PROVIDER_PRESETS.find((preset) => preset.provider === provider.provider) ??
+    PROVIDER_PRESETS.find((preset) => preset.envVar === provider.envVar) ??
+    PROVIDER_PRESETS[0]
+  );
+}
+
+function ProviderModal({
+  mode,
+  open,
+  onOpenChange,
+  onSubmit,
+  initialProvider,
+}: ProviderModalProps) {
+  const activePreset = getPreset(initialProvider);
+  const [selectedProvider, setSelectedProvider] = useState<string>(activePreset.provider);
+  const [providerName, setProviderName] = useState<string>(initialProvider?.provider ?? activePreset.provider);
+  const [envVar, setEnvVar] = useState<string>(initialProvider?.envVar ?? activePreset.envVar);
+  const [apiKeyValue, setApiKeyValue] = useState<string>(initialProvider?.fullKey ?? "");
+  const [baseUrl, setBaseUrl] = useState<string>(initialProvider?.baseUrl ?? activePreset.baseUrl);
+  const [headers, setHeaders] = useState<HeaderEntry[]>(createHeaderEntries(initialProvider?.headers));
 
   const handleClose = useCallback(() => {
-    setOpen(false);
-    reset();
-  }, []);
+    onOpenChange(false);
+  }, [onOpenChange]);
 
   const handlePresetChange = (provider: string) => {
     const preset = PROVIDER_PRESETS.find((item) => item.provider === provider) ?? PROVIDER_PRESETS[0];
     setSelectedProvider(provider);
     setProviderName(preset.provider);
     setEnvVar(preset.envVar);
-    setApiKeyValue("");
+    setApiKeyValue(mode === "edit" && initialProvider?.provider === provider ? initialProvider.fullKey : "");
     setBaseUrl(preset.baseUrl);
     setHeaders([]);
   };
@@ -131,16 +174,12 @@ export function AddProviderModal({ onAddProvider }: AddProviderModalProps) {
     const normalizedEnvVar = envVar.trim() || activePreset.envVar;
     const normalizedFullKey = apiKeyValue.trim();
     const isConfigured = normalizedFullKey.length > 0;
-    const prefix = normalizedFullKey.includes("-")
-      ? `${normalizedFullKey.split("-").slice(0, -1).join("-")}-`
-      : normalizedFullKey.slice(0, Math.min(4, normalizedFullKey.length));
-    const maskedKey = isConfigured ? `${prefix}${"*".repeat(24)}` : "Not configured";
 
-    onAddProvider({
+    onSubmit({
       provider: normalizedProvider,
       envVar: normalizedEnvVar,
       configured: isConfigured,
-      maskedKey,
+      maskedKey: createMaskedKey(normalizedFullKey),
       fullKey: normalizedFullKey,
       baseUrl: baseUrl.trim(),
       headers: headers
@@ -180,21 +219,13 @@ export function AddProviderModal({ onAddProvider }: AddProviderModalProps) {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, handleClose]);
+  }, [handleClose, open]);
 
   if (!open) {
-    return (
-      <Button
-        type="button"
-        variant="outline"
-        size="lg"
-        className="h-10 rounded-lg border-border-default px-4 text-sm"
-        onClick={() => setOpen(true)}
-      >
-        Add provider
-      </Button>
-    );
+    return null;
   }
+
+  const isEditMode = mode === "edit";
 
   return (
     <div
@@ -207,13 +238,17 @@ export function AddProviderModal({ onAddProvider }: AddProviderModalProps) {
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Add provider"
+        aria-label={isEditMode ? "Edit provider" : "Add provider"}
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-semibold text-text-primary">Add provider</h2>
+            <h2 className="text-xl font-semibold text-text-primary">
+              {isEditMode ? "Edit provider" : "Add provider"}
+            </h2>
             <p className="mt-1 text-sm text-text-secondary">
-              Create a new provider entry and its API key mapping.
+              {isEditMode
+                ? "Update the provider configuration and API key mapping."
+                : "Create a new provider entry and its API key mapping."}
             </p>
           </div>
           <Button
@@ -364,10 +399,57 @@ export function AddProviderModal({ onAddProvider }: AddProviderModalProps) {
             className="h-10 rounded-lg px-4 text-sm"
             onClick={handleSubmit}
           >
-            Add provider
+            {isEditMode ? "Save changes" : "Add provider"}
           </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+export function AddProviderModal({ onAddProvider }: AddProviderModalProps) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="lg"
+        className="h-10 rounded-lg border-border-default px-4 text-sm"
+        onClick={() => setOpen(true)}
+      >
+        Add provider
+      </Button>
+      <ProviderModal
+        key={`add-${open ? "open" : "closed"}`}
+        mode="add"
+        open={open}
+        onOpenChange={setOpen}
+        onSubmit={onAddProvider}
+      />
+    </>
+  );
+}
+
+export function EditProviderModal({
+  open,
+  provider,
+  onOpenChange,
+  onEditProvider,
+}: EditProviderModalProps) {
+  if (!provider) {
+    return null;
+  }
+
+  return (
+    <ProviderModal
+      key={`edit-${provider.provider}-${open ? "open" : "closed"}`}
+      mode="edit"
+      open={open}
+      onOpenChange={onOpenChange}
+      onSubmit={onEditProvider}
+      initialProvider={provider}
+    />
   );
 }

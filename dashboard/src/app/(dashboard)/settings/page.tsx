@@ -11,12 +11,15 @@ import {
   EyeIcon,
   EyeSlashIcon,
   MoonIcon,
+  PencilSimpleIcon,
   SunDimIcon,
-  XIcon,
 } from "@phosphor-icons/react";
 
 import { ProviderIcon } from "@/components/brand/render-provider-icon";
-import { AddProviderModal } from "@/components/dashboard/settings/add-provider-modal";
+import {
+  AddProviderModal,
+  EditProviderModal,
+} from "@/components/dashboard/settings/add-provider-modal";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -31,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { dashboardMockData } from "@/lib/mock-dashboard-data";
+import { dashboardMockData, type ApiKeyStatus } from "@/lib/mock-dashboard-data";
 
 const themeOptions = [
   { value: "light", label: "Light", icon: SunDimIcon },
@@ -91,6 +94,8 @@ export default function SettingsPage() {
   const [apiKeys, setApiKeys] = useState(settings.apiKeys);
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [copiedProvider, setCopiedProvider] = useState<string | null>(null);
+  const [editingProvider, setEditingProvider] = useState<ApiKeyStatus | null>(null);
+  const [openMenuProvider, setOpenMenuProvider] = useState<string | null>(null);
   const [tracking, setTracking] = useState(settings.tracking);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(
     settings.appearance.autoRefreshInterval,
@@ -98,8 +103,8 @@ export default function SettingsPage() {
 
   const pricingPreview = useMemo(() => settings.pricingTable.slice(0, 4), [settings.pricingTable]);
   const apiKeyLookup = useMemo(
-    () => Object.fromEntries(settings.apiKeys.map((item) => [item.provider, item])),
-    [settings.apiKeys],
+    () => Object.fromEntries(apiKeys.map((item) => [item.provider, item])),
+    [apiKeys],
   );
   const selectedTheme = theme ?? "system";
   const selectedThemeOption =
@@ -112,25 +117,32 @@ export default function SettingsPage() {
     }));
   };
 
-  const toggleProviderConfigured = (provider: string) => {
-    setApiKeys((current) =>
-      current.map((item) =>
-        item.provider === provider
-          ? {
-              ...item,
-              configured: !item.configured,
-            }
-          : item,
-      ),
-    );
-  };
-
   const copyEnvVar = async (provider: string, envVar: string) => {
     await navigator.clipboard.writeText(envVar);
     setCopiedProvider(provider);
     window.setTimeout(() => {
       setCopiedProvider((current) => (current === provider ? null : current));
     }, 1500);
+  };
+
+  const updateProvider = (originalProvider: string, nextProvider: ApiKeyStatus) => {
+    setApiKeys((current) =>
+      current.map((item) => (item.provider === originalProvider ? nextProvider : item)),
+    );
+    setVisibleKeys((current) => {
+      if (originalProvider === nextProvider.provider || current[originalProvider] === undefined) {
+        return current;
+      }
+
+      const { [originalProvider]: previousValue, ...rest } = current;
+      return previousValue === undefined
+        ? rest
+        : {
+            ...rest,
+            [nextProvider.provider]: previousValue,
+          };
+    });
+    setCopiedProvider((current) => (current === originalProvider ? nextProvider.provider : current));
   };
 
   const getDisplayedKeyValue = (provider: string, configured: boolean) => {
@@ -184,7 +196,12 @@ export default function SettingsPage() {
                   {visibleKeys[apiKey.provider] ? <EyeSlashIcon /> : <EyeIcon />}
                 </Button>
                 <div className="relative z-30">
-                  <Popover>
+                  <Popover
+                    open={openMenuProvider === apiKey.provider}
+                    onOpenChange={(open) =>
+                      setOpenMenuProvider(open ? apiKey.provider : null)
+                    }
+                  >
                     <PopoverTrigger asChild>
                       <Button
                         type="button"
@@ -198,7 +215,21 @@ export default function SettingsPage() {
                     <PopoverContent align="end" className="w-auto min-w-max">
                       <button
                         type="button"
-                        onClick={() => copyEnvVar(apiKey.provider, apiKey.fullKey)}
+                        onClick={() => {
+                          setOpenMenuProvider(null);
+                          setEditingProvider(apiKey);
+                        }}
+                        className="flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-card-muted"
+                      >
+                        <PencilSimpleIcon size={14} />
+                        Edit provider
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenMenuProvider(null);
+                          void copyEnvVar(apiKey.provider, apiKey.fullKey);
+                        }}
                         className="flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-card-muted"
                       >
                         {copiedProvider === apiKey.provider ? (
@@ -207,14 +238,6 @@ export default function SettingsPage() {
                           <CopyIcon size={14} />
                         )}
                         {copiedProvider === apiKey.provider ? "Copied env var" : "Copy env var"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleProviderConfigured(apiKey.provider)}
-                        className="flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-card-muted"
-                      >
-                        <XIcon size={14} />
-                        {apiKey.configured ? "Mark unconfigured" : "Mark configured"}
                       </button>
                     </PopoverContent>
                   </Popover>
@@ -230,6 +253,22 @@ export default function SettingsPage() {
               }}
             />
           </div>
+          <EditProviderModal
+            open={editingProvider !== null}
+            provider={editingProvider}
+            onOpenChange={(open) => {
+              if (!open) {
+                setEditingProvider(null);
+              }
+            }}
+            onEditProvider={(nextProvider) => {
+              if (!editingProvider) {
+                return;
+              }
+
+              updateProvider(editingProvider.provider, nextProvider);
+            }}
+          />
         </SettingsCard>
 
         <SettingsCard

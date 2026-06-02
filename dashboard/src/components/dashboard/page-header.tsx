@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { DesktopIcon, MoonIcon, SunIcon } from "@phosphor-icons/react";
+import { MoonIcon, SunIcon } from "@phosphor-icons/react";
 import { useTheme } from "next-themes";
 
 const pages = {
