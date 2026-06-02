@@ -72,9 +72,11 @@ def app_config(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def client(app_config: Path, encryption_key: str) -> TestClient:
+    previous_proxy_token = os.environ.get("MODELPORT_TOKEN")
     previous_openai = os.environ.get("OPENAI_API_KEY")
     previous_openrouter = os.environ.get("OPENROUTER_API_KEY")
     previous_encryption = os.environ.get("PROXY_ENCRYPTION_KEY")
+    os.environ["MODELPORT_TOKEN"] = "test-local-token"
     os.environ["OPENAI_API_KEY"] = "sk-openai-seeded"
     os.environ["OPENROUTER_API_KEY"] = "sk-openrouter-seeded"
     os.environ["PROXY_ENCRYPTION_KEY"] = encryption_key
@@ -83,6 +85,11 @@ def client(app_config: Path, encryption_key: str) -> TestClient:
 
     with TestClient(app) as test_client:
         yield test_client
+
+    if previous_proxy_token is None:
+        os.environ.pop("MODELPORT_TOKEN", None)
+    else:
+        os.environ["MODELPORT_TOKEN"] = previous_proxy_token
 
     if previous_openai is None:
         os.environ.pop("OPENAI_API_KEY", None)

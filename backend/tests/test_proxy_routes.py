@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+
+def test_messages_route_requires_proxy_token(client: TestClient) -> None:
+    response = client.post(
+        "/v1/messages",
+        json={
+            "model": "gpt",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 401
+    assert "Authorization" in response.json()["detail"]
+
+
+def test_messages_route_translates_anthropic_request_to_openai_upstream(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_test_123",
+                "model": "gpt-5.5",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Hello from OpenAI"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 7},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://api.openai.com/v1/chat/completions"
+            assert headers is not None
+            assert headers["Authorization"] == "Bearer sk-openai-seeded"
+            assert json == {
+                "model": "gpt-5.5",
+                "max_tokens": 128,
+                "messages": [
+                    {"role": "system", "content": "You are helpful."},
+                    {"role": "user", "content": "Hello"},
+                    {"role": "assistant", "content": "How can I help?"},
+                ],
+                "stream": False,
+            }
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "gpt",
+            "max_tokens": 128,
+            "system": "You are helpful.",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": [{"type": "text", "text": "How can I help?"}]},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "chatcmpl_test_123",
+        "type": "message",
+        "role": "assistant",
+        "model": "gpt",
+        "content": [{"type": "text", "text": "Hello from OpenAI"}],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {"input_tokens": 12, "output_tokens": 7},
+    }
+
+
+def test_messages_route_uses_database_backed_default_credential(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    credentials_response = client.get("/admin/provider-credentials")
+    default_openai_credential = next(
+        credential
+        for credential in credentials_response.json()
+        if credential["provider_id"] == "openai" and credential["is_default"]
+    )
+    disable_response = client.patch(
+        f"/admin/provider-credentials/{default_openai_credential['id']}",
+        json={"enabled": False},
+    )
+    assert disable_response.status_code == 200
+
+    create_response = client.post(
+        "/admin/provider-credentials",
+        json={
+            "provider_id": "openai",
+            "display_name": "OpenAI DB Key",
+            "source": "database",
+            "api_key": "sk-db-backed-secret",
+            "is_default": True,
+            "enabled": True,
+        },
+    )
+    assert create_response.status_code == 201
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_db_123",
+                "model": "gpt-5.5",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Using database credential"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 5},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert headers is not None
+            assert headers["Authorization"] == "Bearer sk-db-backed-secret"
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "gpt",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"][0]["text"] == "Using database credential"
+
+
+def test_messages_route_falls_back_to_default_provider_with_requested_model(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_fallback_123",
+                "model": "gpt-4.1-mini",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Fallback route"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://openrouter.ai/api/v1/chat/completions"
+            assert headers is not None
+            assert headers["Authorization"] == "Bearer sk-openrouter-seeded"
+            assert json is not None
+            assert json["model"] == "gpt-4.1-mini"
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "gpt-4.1-mini",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model"] == "gpt-4.1-mini"
+
+
+def test_messages_route_allows_localhost_openai_compatible_provider_without_key(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    provider_response = client.post(
+        "/admin/providers",
+        json={
+            "id": "lmstudio",
+            "display_name": "LM Studio",
+            "provider_type": "openai_compatible",
+            "base_url": "http://127.0.0.1:12345/v1",
+        },
+    )
+    assert provider_response.status_code == 201
+    alias_response = client.post(
+        "/admin/model-aliases",
+        json={
+            "alias": "lmstudio-chat",
+            "provider_id": "lmstudio",
+            "model": "local-model",
+            "description": "Local OpenAI-compatible route",
+        },
+    )
+    assert alias_response.status_code == 201
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_local_123",
+                "model": "local-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Local provider route"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 4},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "http://127.0.0.1:12345/v1/chat/completions"
+            assert headers == {"Content-Type": "application/json"}
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "lmstudio-chat",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"][0]["text"] == "Local provider route"
