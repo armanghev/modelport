@@ -2,8 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { PlusIcon, TrashIcon, XIcon } from "@phosphor-icons/react";
+import { XIcon } from "@phosphor-icons/react";
 
+import {
+  type ProviderConfigDraft,
+  type ProviderConfigRow,
+} from "@/lib/admin-api";
 import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,109 +17,78 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
-import type { ApiKeyStatus } from "@/lib/mock-dashboard-data";
 
 interface AddProviderModalProps {
-  onAddProvider: (provider: ApiKeyStatus) => void;
+  onAddProvider: (provider: ProviderConfigDraft) => void;
 }
 
 interface EditProviderModalProps {
   open: boolean;
-  provider: ApiKeyStatus | null;
+  provider: ProviderConfigRow | null;
   onOpenChange: (open: boolean) => void;
-  onEditProvider: (provider: ApiKeyStatus) => void;
+  onEditProvider: (provider: ProviderConfigDraft) => void;
 }
 
 interface ProviderModalProps {
   mode: "add" | "edit";
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (provider: ApiKeyStatus) => void;
-  initialProvider?: ApiKeyStatus;
-}
-
-interface HeaderEntry {
-  id: string;
-  key: string;
-  value: string;
+  onSubmit: (provider: ProviderConfigDraft) => void;
+  initialProvider?: ProviderConfigRow;
 }
 
 const PROVIDER_PRESETS = [
   {
+    providerId: "openai",
+    providerType: "openai_compatible" as const,
     provider: "OpenAI",
     envVar: "OPENAI_API_KEY",
-    maskedKey: "sk-************************",
-    fullKey: "sk-proj-Q4mRt8Lp2Xn7Va1Ke9Hs5Wd3Pf6CyZjU",
     baseUrl: "https://api.openai.com/v1",
   },
   {
+    providerId: "anthropic",
+    providerType: "anthropic_compatible" as const,
     provider: "Anthropic",
     envVar: "ANTHROPIC_API_KEY",
-    maskedKey: "sk-ant-********************",
-    fullKey: "sk-ant-api03-R7mQ2pLx9Nk4Ts8Hv1Wd6Cy5ZjFa",
-    baseUrl: "https://api.anthropic.com/v1/",
+    baseUrl: "https://api.anthropic.com",
   },
   {
+    providerId: "gemini",
+    providerType: "openai_compatible" as const,
     provider: "Gemini",
     envVar: "GEMINI_API_KEY",
-    maskedKey: "AIza**********************",
-    fullKey: "AIzaSyC7mQ2pLv9Nx4Ta8Hr1Wd6Cy5ZjFk3UsB",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
   },
   {
+    providerId: "openrouter",
+    providerType: "openai_compatible" as const,
     provider: "OpenRouter",
     envVar: "OPENROUTER_API_KEY",
-    maskedKey: "sk-or-********************",
-    fullKey: "sk-or-v1-R8mQ3pLx7Nt2Ka9Hv4Wd1Pf6CyZj",
     baseUrl: "https://openrouter.ai/api/v1",
   },
   {
+    providerId: "groq",
+    providerType: "openai_compatible" as const,
     provider: "Groq",
     envVar: "GROQ_API_KEY",
-    maskedKey: "gsk_************************",
-    fullKey: "gsk_R4mQt8Lp2Nx7Va1Ke9Hs5Wd3Pf6CyZjU",
     baseUrl: "https://api.groq.com/openai/v1",
   },
   {
+    providerId: "together",
+    providerType: "openai_compatible" as const,
     provider: "Together",
     envVar: "TOGETHER_API_KEY",
-    maskedKey: "tsk_************************",
-    fullKey: "tsk_R7mQ2pLv9Nx4Ta8Hr1Wd6Cy5ZjFk3UsB",
     baseUrl: "https://api.together.ai/v1",
   },
 ] as const;
 
-function createMaskedKey(fullKey: string) {
-  const normalizedFullKey = fullKey.trim();
-
-  if (!normalizedFullKey) {
-    return "Not configured";
-  }
-
-  const prefix = normalizedFullKey.includes("-")
-    ? `${normalizedFullKey.split("-").slice(0, -1).join("-")}-`
-    : normalizedFullKey.slice(0, Math.min(4, normalizedFullKey.length));
-
-  return `${prefix}${"*".repeat(24)}`;
-}
-
-function createHeaderEntries(
-  headers: ApiKeyStatus["headers"] = [],
-): HeaderEntry[] {
-  return (headers ?? []).map((header) => ({
-    id: crypto.randomUUID(),
-    key: header.key,
-    value: header.value,
-  }));
-}
-
-function getPreset(provider?: ApiKeyStatus) {
+function getPreset(provider?: ProviderConfigRow) {
   if (!provider) {
     return PROVIDER_PRESETS[0];
   }
 
   return (
-    PROVIDER_PRESETS.find((preset) => preset.provider === provider.provider) ??
+    PROVIDER_PRESETS.find((preset) => preset.providerId === provider.providerId) ??
     PROVIDER_PRESETS.find((preset) => preset.envVar === provider.envVar) ??
     PROVIDER_PRESETS[0]
   );
@@ -129,62 +102,53 @@ function ProviderModal({
   initialProvider,
 }: ProviderModalProps) {
   const activePreset = getPreset(initialProvider);
-  const [selectedProvider, setSelectedProvider] = useState<string>(activePreset.provider);
-  const [providerName, setProviderName] = useState<string>(initialProvider?.provider ?? activePreset.provider);
-  const [envVar, setEnvVar] = useState<string>(initialProvider?.envVar ?? activePreset.envVar);
-  const [apiKeyValue, setApiKeyValue] = useState<string>(initialProvider?.fullKey ?? "");
-  const [baseUrl, setBaseUrl] = useState<string>(initialProvider?.baseUrl ?? activePreset.baseUrl);
-  const [headers, setHeaders] = useState<HeaderEntry[]>(createHeaderEntries(initialProvider?.headers));
+  const [selectedProviderId, setSelectedProviderId] = useState<string>(
+    activePreset.providerId,
+  );
+  const [providerType, setProviderType] = useState(activePreset.providerType);
+  const [providerName, setProviderName] = useState(
+    initialProvider?.provider ?? activePreset.provider,
+  );
+  const [credentialName, setCredentialName] = useState(
+    initialProvider?.credentialName ?? `${activePreset.provider} Default`,
+  );
+  const [envVar, setEnvVar] = useState(
+    initialProvider?.envVar ?? activePreset.envVar,
+  );
+  const [apiKeyValue, setApiKeyValue] = useState(initialProvider?.fullKey ?? "");
+  const [baseUrl, setBaseUrl] = useState(
+    initialProvider?.baseUrl ?? activePreset.baseUrl,
+  );
 
   const handleClose = useCallback(() => {
     onOpenChange(false);
   }, [onOpenChange]);
 
-  const handlePresetChange = (provider: string) => {
-    const preset = PROVIDER_PRESETS.find((item) => item.provider === provider) ?? PROVIDER_PRESETS[0];
-    setSelectedProvider(provider);
+  const handlePresetChange = (providerId: string) => {
+    const preset =
+      PROVIDER_PRESETS.find((item) => item.providerId === providerId) ??
+      PROVIDER_PRESETS[0];
+    setSelectedProviderId(providerId);
+    setProviderType(preset.providerType);
     setProviderName(preset.provider);
+    setCredentialName(`${preset.provider} Default`);
     setEnvVar(preset.envVar);
-    setApiKeyValue(mode === "edit" && initialProvider?.provider === provider ? initialProvider.fullKey : "");
     setBaseUrl(preset.baseUrl);
-    setHeaders([]);
-  };
-
-  const addHeader = () => {
-    setHeaders((current) => [
-      ...current,
-      { id: crypto.randomUUID(), key: "", value: "" },
-    ]);
-  };
-
-  const updateHeader = (id: string, field: "key" | "value", nextValue: string) => {
-    setHeaders((current) =>
-      current.map((header) =>
-        header.id === id ? { ...header, [field]: nextValue } : header,
-      ),
-    );
-  };
-
-  const removeHeader = (id: string) => {
-    setHeaders((current) => current.filter((header) => header.id !== id));
+    if (mode === "add") {
+      setApiKeyValue("");
+    }
   };
 
   const handleSubmit = () => {
-    const normalizedProvider = providerName.trim() || activePreset.provider;
-    const normalizedEnvVar = envVar.trim() || activePreset.envVar;
-    const normalizedFullKey = apiKeyValue.trim();
-    const isConfigured = normalizedFullKey.length > 0;
-
     onSubmit({
-      provider: normalizedProvider,
-      envVar: normalizedEnvVar,
-      configured: isConfigured,
-      maskedKey: createMaskedKey(normalizedFullKey),
-      fullKey: normalizedFullKey,
+      providerId: selectedProviderId,
+      providerType,
+      provider: providerName.trim() || activePreset.provider,
+      credentialName:
+        credentialName.trim() || `${providerName.trim() || activePreset.provider} Default`,
+      envVar: envVar.trim(),
+      fullKey: apiKeyValue.trim(),
       baseUrl: baseUrl.trim(),
-      headers: headers
-        .map((header) => ({ key: header.key.trim(), value: header.value.trim() }))
-        .filter((header) => header.key || header.value),
     });
     handleClose();
   };
@@ -234,7 +198,7 @@ function ProviderModal({
       role="presentation"
     >
       <div
-        className="card-surface max-h-[calc(100vh-6rem)] w-full max-w-5xl overflow-y-auto rounded-2xl border border-border-subtle p-6"
+        className="card-surface max-h-[calc(100vh-6rem)] w-full max-w-4xl overflow-y-auto rounded-2xl border border-border-subtle p-6"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -247,8 +211,8 @@ function ProviderModal({
             </h2>
             <p className="mt-1 text-sm text-text-secondary">
               {isEditMode
-                ? "Update the provider configuration and API key mapping."
-                : "Create a new provider entry and its API key mapping."}
+                ? "Update the provider configuration and credential mapping."
+                : "Create a new provider entry and its default credential."}
             </p>
           </div>
           <Button
@@ -262,22 +226,26 @@ function ProviderModal({
           </Button>
         </div>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div className="space-y-4">
             <div className="space-y-2">
               <p className="text-sm font-medium text-text-primary">Provider preset</p>
-              <Select value={selectedProvider} onValueChange={handlePresetChange}>
+              <Select
+                value={selectedProviderId}
+                onValueChange={handlePresetChange}
+                disabled={isEditMode}
+              >
                 <SelectTrigger className="h-11 w-full rounded-lg border-border-default text-sm text-text-primary focus-visible:border-border-default focus-visible:ring-0">
                   <div className="flex items-center gap-2">
-                    <ProviderIcon provider={selectedProvider} size={16} />
-                    <span className="truncate">{selectedProvider}</span>
+                    <ProviderIcon provider={providerName} size={16} />
+                    <span className="truncate">{providerName}</span>
                   </div>
                 </SelectTrigger>
                 <SelectContent position="popper" align="start" className="rounded-lg p-1">
                   {PROVIDER_PRESETS.map((preset) => (
                     <SelectItem
-                      key={preset.provider}
-                      value={preset.provider}
+                      key={preset.providerId}
+                      value={preset.providerId}
                       className="rounded-md text-sm"
                     >
                       <ProviderIcon provider={preset.provider} size={16} />
@@ -298,10 +266,29 @@ function ProviderModal({
                 />
               </div>
               <div className="space-y-2">
+                <p className="text-sm font-medium text-text-primary">Credential label</p>
+                <Input
+                  value={credentialName}
+                  onChange={(event) => setCredentialName(event.target.value)}
+                  className="h-11 rounded-lg border-border-default px-3 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
                 <p className="text-sm font-medium text-text-primary">Env variable</p>
                 <Input
                   value={envVar}
                   onChange={(event) => setEnvVar(event.target.value)}
+                  className="h-11 rounded-lg border-border-default px-3 text-sm"
+                />
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-text-primary">Provider id</p>
+                <Input
+                  value={selectedProviderId}
+                  disabled
                   className="h-11 rounded-lg border-border-default px-3 text-sm"
                 />
               </div>
@@ -328,58 +315,11 @@ function ProviderModal({
           </div>
 
           <div className="rounded-2xl border border-border-subtle bg-bg-card-muted/40 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-sm font-medium text-text-primary">Optional headers</h3>
-                <p className="mt-1 text-sm text-text-secondary">
-                  Add any provider-specific headers that should be sent with requests.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 rounded-lg border-border-default px-3 text-sm"
-                onClick={addHeader}
-              >
-                <PlusIcon size={14} />
-                Add
-              </Button>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {headers.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-border-subtle px-4 py-6 text-sm text-text-secondary">
-                  No custom headers added.
-                </div>
-              ) : (
-                headers.map((header) => (
-                  <div key={header.id} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                    <Input
-                      value={header.key}
-                      onChange={(event) => updateHeader(header.id, "key", event.target.value)}
-                      placeholder="Header name"
-                      className="h-10 rounded-lg border-border-default px-3 text-sm"
-                    />
-                    <Input
-                      value={header.value}
-                      onChange={(event) => updateHeader(header.id, "value", event.target.value)}
-                      placeholder="Header value"
-                      className="h-10 rounded-lg border-border-default px-3 text-sm"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="h-10 w-10 rounded-lg text-text-secondary"
-                      onClick={() => removeHeader(header.id)}
-                    >
-                      <TrashIcon size={16} />
-                    </Button>
-                  </div>
-                ))
-              )}
-            </div>
+            <h3 className="text-sm font-medium text-text-primary">Credential storage</h3>
+            <p className="mt-1 text-sm text-text-secondary">
+              Entering an API key stores it in the backend using reversible encryption. Leaving it
+              blank keeps the credential env-backed using the configured variable name.
+            </p>
           </div>
         </div>
 
@@ -444,7 +384,7 @@ export function EditProviderModal({
 
   return (
     <ProviderModal
-      key={`edit-${provider.provider}-${open ? "open" : "closed"}`}
+      key={`edit-${provider.id}-${open ? "open" : "closed"}`}
       mode="edit"
       open={open}
       onOpenChange={onOpenChange}

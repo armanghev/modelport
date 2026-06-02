@@ -165,3 +165,248 @@ def test_invalid_provider_references_return_client_errors(client: TestClient) ->
         },
     )
     assert routing_response.status_code == 404
+
+
+def test_provider_health_endpoint_returns_dashboard_ready_cards(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    client.post(
+        "/admin/routing-rules",
+        json={
+            "match": "gpt*",
+            "priority": 10,
+            "primary_provider_id": "openai",
+            "primary_alias": "gpt",
+            "fallback_provider_ids": ["openrouter"],
+        },
+    )
+
+    def fake_collect_provider_health_payload(session):
+        return {
+            "cards": [
+                {
+                    "id": "openai",
+                    "displayName": "OpenAI",
+                    "type": "openai_compatible",
+                    "status": "operational",
+                    "baseUrl": "https://api.openai.com/v1",
+                    "requestsToday": 0,
+                    "successRate": 100.0,
+                    "errorRate": 0.0,
+                    "avgLatencyMs": 120,
+                    "availableModelCount": 2,
+                    "lastCheckedAt": "2026-06-02T12:00:00Z",
+                    "lastError": None,
+                },
+                {
+                    "id": "openrouter",
+                    "displayName": "OpenRouter",
+                    "type": "openai_compatible",
+                    "status": "operational",
+                    "baseUrl": "https://openrouter.ai/api/v1",
+                    "requestsToday": 0,
+                    "successRate": 100.0,
+                    "errorRate": 0.0,
+                    "avgLatencyMs": 150,
+                    "availableModelCount": 1,
+                    "lastCheckedAt": "2026-06-02T12:00:00Z",
+                    "lastError": None,
+                },
+                {
+                    "id": "ollama",
+                    "displayName": "Ollama",
+                    "type": "local_openai_compatible",
+                    "status": "operational",
+                    "baseUrl": "http://localhost:11434/v1",
+                    "requestsToday": 0,
+                    "successRate": 100.0,
+                    "errorRate": 0.0,
+                    "avgLatencyMs": 80,
+                    "availableModelCount": 1,
+                    "lastCheckedAt": "2026-06-02T12:00:00Z",
+                    "lastError": None,
+                },
+            ],
+            "routingRules": [
+                {
+                    "match": "gpt*",
+                    "primaryProvider": "openai",
+                    "fallbackProviders": ["openrouter"],
+                }
+            ],
+            "details": [],
+        }
+
+    monkeypatch.setattr(
+        "app.api.admin.collect_provider_health_payload",
+        fake_collect_provider_health_payload,
+    )
+
+    health_response = client.get("/admin/providers/health")
+
+    assert health_response.status_code == 200
+    payload = health_response.json()
+    assert payload["details"] == []
+    assert payload["routingRules"] == [
+        {
+            "match": "gpt*",
+            "primaryProvider": "openai",
+            "fallbackProviders": ["openrouter"],
+        }
+    ]
+
+    cards_by_id = {card["id"]: card for card in payload["cards"]}
+    assert cards_by_id["openai"]["status"] == "operational"
+    assert cards_by_id["openai"]["availableModelCount"] == 2
+    assert cards_by_id["openai"]["successRate"] == 100.0
+    assert cards_by_id["openrouter"]["availableModelCount"] == 1
+    assert cards_by_id["ollama"]["availableModelCount"] == 1
+
+
+def test_provider_health_endpoint_marks_unreachable_provider_offline(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    client.post(
+        "/admin/providers",
+        json={
+            "id": "broken-local",
+            "display_name": "Broken Local",
+            "provider_type": "local_openai_compatible",
+            "base_url": "http://localhost:9999/v1",
+        },
+    )
+
+    def fake_collect_provider_health_payload(session):
+        return {
+            "cards": [
+                {
+                    "id": "broken-local",
+                    "displayName": "Broken Local",
+                    "type": "local_openai_compatible",
+                    "status": "offline",
+                    "baseUrl": "http://localhost:9999/v1",
+                    "requestsToday": 0,
+                    "successRate": 0.0,
+                    "errorRate": 100.0,
+                    "avgLatencyMs": 0,
+                    "availableModelCount": 0,
+                    "lastCheckedAt": "2026-06-02T12:00:00Z",
+                    "lastError": "Connection refused",
+                }
+            ],
+            "routingRules": [],
+            "details": [],
+        }
+
+    monkeypatch.setattr(
+        "app.api.admin.collect_provider_health_payload",
+        fake_collect_provider_health_payload,
+    )
+
+    health_response = client.get("/admin/providers/health")
+
+    assert health_response.status_code == 200
+    cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
+    assert cards_by_id["broken-local"]["status"] == "offline"
+    assert "Connection refused" in cards_by_id["broken-local"]["lastError"]
+
+
+def test_provider_health_allows_local_provider_without_api_key(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    import httpx
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"data": [{"id": "qwen2.5-coder"}]}
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None):
+            if "localhost:11434" in url:
+                return FakeResponse()
+            raise httpx.ConnectError("remote unavailable")
+
+    monkeypatch.setattr("app.api.admin.httpx.Client", FakeHttpClient)
+
+    health_response = client.get("/admin/providers/health")
+
+    assert health_response.status_code == 200
+    cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
+    assert cards_by_id["ollama"]["status"] == "operational"
+    assert cards_by_id["ollama"]["availableModelCount"] == 1
+
+
+def test_provider_health_prefers_configured_enabled_credential(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    created_credential = client.post(
+        "/admin/provider-credentials",
+        json={
+            "provider_id": "openai",
+            "display_name": "OpenAI Primary",
+            "source": "database",
+            "api_key": "sk-configured-secret",
+            "is_default": False,
+            "enabled": True,
+        },
+    )
+    assert created_credential.status_code == 201
+    credentials_response = client.get("/admin/provider-credentials")
+    default_openai_credential = next(
+        credential
+        for credential in credentials_response.json()
+        if credential["provider_id"] == "openai" and credential["is_default"]
+    )
+    disable_response = client.patch(
+        f"/admin/provider-credentials/{default_openai_credential['id']}",
+        json={"enabled": False},
+    )
+    assert disable_response.status_code == 200
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"data": [{"id": "gpt-4.1"}]}
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None):
+            headers = headers or {}
+            if "api.openai.com" in url:
+                assert headers.get("Authorization") == "Bearer sk-configured-secret"
+            return FakeResponse()
+
+    monkeypatch.setattr("app.api.admin.httpx.Client", FakeHttpClient)
+
+    health_response = client.get("/admin/providers/health")
+
+    assert health_response.status_code == 200
+    cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
+    assert cards_by_id["openai"]["status"] == "operational"
+    assert cards_by_id["openai"]["availableModelCount"] == 1

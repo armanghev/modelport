@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   ArrowDownIcon,
@@ -14,8 +14,9 @@ import {
 } from "@phosphor-icons/react";
 import { ProviderDetailsModal } from "@/components/dashboard/providers/provider-details-modal";
 import { renderProviderIcon } from "@/components/brand/render-provider-icon";
+import { Button } from "@/components/ui/button";
+import { fetchProviderHealth } from "@/lib/admin-api";
 import {
-  dashboardMockData,
   type ProviderDetail,
   type ProviderHealth,
   type ProviderStatus,
@@ -88,20 +89,49 @@ function buildPageButtons(currentPage: number, totalPages: number): number[] {
 
 export default function ProvidersPage() {
   const providerRowsPerPage = 8;
-
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const [providerCards, setProviderCards] = useState<ProviderHealth[]>([]);
+  const [providerDetails, setProviderDetails] = useState<ProviderDetail[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const providerCards = dashboardMockData.providers.cards;
-  const providerDetails = dashboardMockData.providers.details;
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      try {
+        const payload = await fetchProviderHealth();
+        if (!active) {
+          return;
+        }
+        setProviderCards(payload.cards);
+        setProviderDetails(payload.details);
+        setErrorMessage(null);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to load provider health analytics.",
+        );
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const providerDetailsById = useMemo(() => {
     const map = new Map<string, ProviderDetail>();
-
     for (const detail of providerDetails) {
       map.set(detail.providerId, detail);
     }
-
     return map;
   }, [providerDetails]);
 
@@ -139,9 +169,9 @@ export default function ProvidersPage() {
       id: "uptime",
       label: "Average uptime",
       value: `${averageUptime.toFixed(1)}%`,
-      subtext: "vs yesterday",
+      subtext: "latest health checks",
       direction: "up",
-      change: `${(operationalProviders.length / Math.max(1, providerCards.length) * 0.03).toFixed(2)}%`,
+      change: `${(operationalProviders.length / Math.max(1, providerCards.length) * 100).toFixed(0)}% healthy`,
       icon: PulseIcon,
     },
     {
@@ -150,7 +180,7 @@ export default function ProvidersPage() {
       value: nonOperationalProviders.length.toString(),
       subtext: "degraded/offline providers",
       direction: "down",
-      change: `${Math.max(1, providerCards.length - operationalProviders.length) * 5}%`,
+      change: `${Math.max(0, nonOperationalProviders.length)} active alerts`,
       icon: ShieldCheckIcon,
     },
     {
@@ -159,7 +189,7 @@ export default function ProvidersPage() {
       value: `${Math.round(averageLatency).toLocaleString("en-US")} ms`,
       subtext: "across active providers",
       direction: "down",
-      change: `${(Math.max(1, providerCards.length - operationalProviders.length) * 1.2).toFixed(1)}%`,
+      change: `${avgLatencyProviders.length} sampled`,
       icon: ClockIcon,
     },
   ];
@@ -196,8 +226,17 @@ export default function ProvidersPage() {
     [providerDetailsById, selectedProvider],
   );
 
+  if (isLoading) {
+    return <div className="text-sm text-text-secondary">Loading provider health analytics...</div>;
+  }
+
   return (
     <div className="space-y-6">
+      {errorMessage ? (
+        <div className="rounded-xl border border-accent-red/20 bg-accent-red-bg px-4 py-3 text-sm text-accent-red">
+          {errorMessage}
+        </div>
+      ) : null}
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {summaryMetrics.map((metric) => {
           const Icon = metric.icon;
@@ -259,84 +298,77 @@ export default function ProvidersPage() {
               {pagedProviders.map((provider) => (
                 <tr
                   key={provider.id}
+                  className="cursor-pointer border-t border-border-subtle text-text-secondary transition-colors hover:bg-bg-card-muted/60"
                   onClick={() => setSelectedProviderId(provider.id)}
-                  className="border-t border-border-subtle text-text-secondary cursor-pointer hover:bg-bg-card-muted"
                 >
                   <td className="px-5 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex h-6 w-6 items-center justify-center text-text-primary">
-                        {renderProviderIcon(provider.displayName)}
+                    <div className="flex items-center gap-3">
+                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-bg-card-muted text-text-primary">
+                        {renderProviderIcon(provider.displayName, 18)}
                       </span>
-                      <span className="font-medium text-text-primary">{provider.displayName}</span>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-text-primary">{provider.displayName}</p>
+                        <p className="truncate text-xs text-text-muted">{provider.baseUrl}</p>
+                      </div>
                     </div>
                   </td>
-                  <td className="px-5 py-3 text-text-primary">{formatProviderType(provider.type)}</td>
+                  <td className="px-5 py-3">{formatProviderType(provider.type)}</td>
                   <td className="px-5 py-3">
                     <span className={`inline-flex items-center gap-2 font-medium ${statusTextStyles[provider.status]}`}>
                       <span className={`status-dot ${statusDotStyles[provider.status]}`} />
                       {formatProviderStatus(provider.status)}
                     </span>
                   </td>
-                  <td className="px-5 py-3 text-text-primary">{provider.availableModelCount}</td>
-                  <td className="px-5 py-3 text-text-primary">{provider.successRate.toFixed(1)}%</td>
-                  <td className="px-5 py-3 text-text-primary">
-                    {provider.avgLatencyMs > 0 ? `${provider.avgLatencyMs.toLocaleString("en-US")} ms` : "n/a"}
-                  </td>
-                  <td className="px-5 py-3 text-text-primary">{provider.requestsToday.toLocaleString("en-US")}</td>
-                  <td className="px-5 py-3 text-text-primary">{formatTimestamp(provider.lastCheckedAt)}</td>
+                  <td className="px-5 py-3">{provider.availableModelCount}</td>
+                  <td className="px-5 py-3">{provider.successRate.toFixed(1)}%</td>
+                  <td className="px-5 py-3">{provider.avgLatencyMs.toLocaleString("en-US")} ms</td>
+                  <td className="px-5 py-3">{provider.requestsToday.toLocaleString("en-US")}</td>
+                  <td className="px-5 py-3">{formatTimestamp(provider.lastCheckedAt)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        <footer className="flex flex-col gap-3 border-t border-border-subtle px-5 py-3 text-sm text-text-secondary sm:flex-row sm:items-center sm:justify-between">
+        <footer className="flex flex-col gap-4 border-t border-border-subtle px-5 py-4 text-sm text-text-secondary md:flex-row md:items-center md:justify-between">
           <p>
-            Showing {startRow} to {endRow} of {totalRows} providers
+            Showing {startRow}-{endRow} of {totalRows} providers
           </p>
-          <div className="flex items-center gap-2">
-            <button
+          <div className="flex items-center gap-2 self-end md:self-auto">
+            <Button
               type="button"
-              onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border-subtle text-text-muted disabled:cursor-not-allowed disabled:opacity-50"
+              variant="outline"
+              size="icon-sm"
+              className="h-9 w-9 rounded-lg border-border-default"
+              onClick={() => canGoPrevious && setCurrentPage((page) => page - 1)}
               disabled={!canGoPrevious}
-              aria-label="Previous page"
             >
-              <CaretLeftIcon size={14} />
-            </button>
-
-            {pageButtons.map((page, index) => {
-              const previousPage = pageButtons[index - 1];
-              const showEllipsis = previousPage !== undefined && page - previousPage > 1;
-
-              return (
-                <div key={page} className="flex items-center gap-2">
-                  {showEllipsis && <span className="px-1 text-text-muted">...</span>}
-                  <button
-                    type="button"
-                    onClick={() => setCurrentPage(page)}
-                    className={
-                      page === safeCurrentPage
-                        ? "inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-text-primary px-2 text-text-primary"
-                        : "inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-border-subtle px-2"
-                    }
-                    aria-label={`Go to page ${page}`}
-                  >
-                    {page}
-                  </button>
-                </div>
-              );
-            })}
-
-            <button
+              <CaretLeftIcon size={16} />
+            </Button>
+            <div className="flex items-center gap-2">
+              {pageButtons.map((page) => (
+                <Button
+                  key={page}
+                  type="button"
+                  variant={page === safeCurrentPage ? "default" : "outline"}
+                  size="sm"
+                  className="h-9 min-w-9 rounded-lg px-3"
+                  onClick={() => setCurrentPage(page)}
+                >
+                  {page}
+                </Button>
+              ))}
+            </div>
+            <Button
               type="button"
-              onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border-subtle text-text-muted disabled:cursor-not-allowed disabled:opacity-50"
+              variant="outline"
+              size="icon-sm"
+              className="h-9 w-9 rounded-lg border-border-default"
+              onClick={() => canGoNext && setCurrentPage((page) => page + 1)}
               disabled={!canGoNext}
-              aria-label="Next page"
             >
-              <CaretRightIcon size={14} />
-            </button>
+              <CaretRightIcon size={16} />
+            </Button>
           </div>
         </footer>
       </section>

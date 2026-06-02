@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 
 import {
@@ -15,11 +15,11 @@ import {
   SunDimIcon,
 } from "@phosphor-icons/react";
 
-import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import {
   AddProviderModal,
   EditProviderModal,
 } from "@/components/dashboard/settings/add-provider-modal";
+import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -34,7 +34,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { dashboardMockData, type ApiKeyStatus } from "@/lib/mock-dashboard-data";
+import {
+  createProvider,
+  createProviderCredential,
+  fetchAdminSettings,
+  mapAdminSettingsToUi,
+  revealCredentialSecret,
+  slugifyProviderId,
+  updateAppearanceSettings,
+  updateProvider,
+  updateProviderCredential,
+  updateTrackingSettings,
+  type AdminSettingsPayload,
+  type ProviderConfigDraft,
+  type ProviderConfigRow,
+} from "@/lib/admin-api";
 
 const themeOptions = [
   { value: "light", label: "Light", icon: SunDimIcon },
@@ -88,78 +102,263 @@ function ToggleRow({
   );
 }
 
+function formatTrackingPayload(
+  tracking: Array<{ id: string; enabled: boolean }>,
+) {
+  return {
+    request_logging:
+      tracking.find((item) => item.id === "request_logging")?.enabled ?? true,
+    cost_tracking:
+      tracking.find((item) => item.id === "cost_tracking")?.enabled ?? true,
+    retention_days:
+      tracking.find((item) => item.id === "retention_days")?.enabled ? 30 : 0,
+  };
+}
+
+function parseRefreshInterval(value: string) {
+  if (value.endsWith("m")) {
+    return Number.parseInt(value, 10) * 60;
+  }
+  return Number.parseInt(value, 10);
+}
+
 export default function SettingsPage() {
-  const { settings } = dashboardMockData;
   const { theme, setTheme } = useTheme();
-  const [apiKeys, setApiKeys] = useState(settings.apiKeys);
+  const [settingsPayload, setSettingsPayload] = useState<AdminSettingsPayload | null>(null);
+  const [apiKeys, setApiKeys] = useState<ProviderConfigRow[]>([]);
+  const [pricingTable, setPricingTable] = useState<Array<{ provider: string; model: string; inputPer1kUsd: number; outputPer1kUsd: number }>>([]);
+  const [tracking, setTracking] = useState<
+    Array<{ id: string; label: string; description: string; enabled: boolean }>
+  >([]);
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [copiedProvider, setCopiedProvider] = useState<string | null>(null);
-  const [editingProvider, setEditingProvider] = useState<ApiKeyStatus | null>(null);
+  const [editingProvider, setEditingProvider] = useState<ProviderConfigRow | null>(null);
   const [openMenuProvider, setOpenMenuProvider] = useState<string | null>(null);
-  const [tracking, setTracking] = useState(settings.tracking);
-  const [autoRefreshInterval, setAutoRefreshInterval] = useState(
-    settings.appearance.autoRefreshInterval,
-  );
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState("30s");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const pricingPreview = useMemo(() => settings.pricingTable.slice(0, 4), [settings.pricingTable]);
-  const apiKeyLookup = useMemo(
-    () => Object.fromEntries(apiKeys.map((item) => [item.provider, item])),
-    [apiKeys],
-  );
   const selectedTheme = theme ?? "system";
   const selectedThemeOption =
     themeOptions.find((option) => option.value === selectedTheme) ?? themeOptions[2];
 
-  const toggleKeyVisibility = (provider: string) => {
+  const pricingPreview = useMemo(() => pricingTable.slice(0, 4), [pricingTable]);
+  const apiKeyLookup = useMemo(
+    () => Object.fromEntries(apiKeys.map((item) => [item.id, item])),
+    [apiKeys],
+  );
+
+  const loadSettings = useCallback(async () => {
+    const payload = await fetchAdminSettings();
+    const mapped = mapAdminSettingsToUi(payload);
+    setSettingsPayload(payload);
+    setApiKeys(mapped.providerRows);
+    setPricingTable(mapped.pricingTable);
+    setTracking(mapped.tracking);
+    setAutoRefreshInterval(mapped.appearance.autoRefreshInterval);
+    if (mapped.appearance.theme) {
+      setTheme(mapped.appearance.theme);
+    }
+  }, [setTheme]);
+
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      try {
+        await loadSettings();
+        if (active) {
+          setErrorMessage(null);
+        }
+      } catch (error) {
+        if (active) {
+          setErrorMessage(
+            error instanceof Error ? error.message : "Failed to load admin settings.",
+          );
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [loadSettings]);
+
+  const ensureSecretLoaded = async (credentialId: string) => {
+    const current = apiKeyLookup[credentialId];
+    if (!current || current.fullKey || !current.configured) {
+      return current;
+    }
+
+    const secret = await revealCredentialSecret(credentialId);
+    const nextRow = {
+      ...current,
+      fullKey: secret.api_key ?? "",
+    };
+    setApiKeys((existing) =>
+      existing.map((item) => (item.id === credentialId ? nextRow : item)),
+    );
+    return nextRow;
+  };
+
+  const toggleKeyVisibility = async (credentialId: string) => {
+    if (!visibleKeys[credentialId]) {
+      try {
+        await ensureSecretLoaded(credentialId);
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to reveal provider secret.",
+        );
+        return;
+      }
+    }
+
     setVisibleKeys((current) => ({
       ...current,
-      [provider]: !current[provider],
+      [credentialId]: !current[credentialId],
     }));
   };
 
-  const copyEnvVar = async (provider: string, envVar: string) => {
-    await navigator.clipboard.writeText(envVar);
-    setCopiedProvider(provider);
+  const copyApiKey = async (credentialId: string) => {
+    const row = await ensureSecretLoaded(credentialId);
+    if (!row?.fullKey) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(row.fullKey);
+    setCopiedProvider(credentialId);
     window.setTimeout(() => {
-      setCopiedProvider((current) => (current === provider ? null : current));
+      setCopiedProvider((current) => (current === credentialId ? null : current));
     }, 1500);
   };
 
-  const updateProvider = (originalProvider: string, nextProvider: ApiKeyStatus) => {
-    setApiKeys((current) =>
-      current.map((item) => (item.provider === originalProvider ? nextProvider : item)),
-    );
-    setVisibleKeys((current) => {
-      if (originalProvider === nextProvider.provider || current[originalProvider] === undefined) {
-        return current;
-      }
-
-      const { [originalProvider]: previousValue, ...rest } = current;
-      return previousValue === undefined
-        ? rest
-        : {
-            ...rest,
-            [nextProvider.provider]: previousValue,
-          };
-    });
-    setCopiedProvider((current) => (current === originalProvider ? nextProvider.provider : current));
-  };
-
-  const getDisplayedKeyValue = (provider: string, configured: boolean) => {
+  const getDisplayedKeyValue = (credentialId: string, configured: boolean) => {
     if (!configured) {
       return "Not configured";
     }
 
-    const source = apiKeyLookup[provider];
+    const source = apiKeyLookup[credentialId];
     if (!source) {
       return "";
     }
 
-    return visibleKeys[provider] ? source.fullKey : source.maskedKey;
+    return visibleKeys[credentialId] ? source.fullKey : source.maskedKey;
   };
+
+  const handleAddProvider = async (draft: ProviderConfigDraft) => {
+    const providerId = slugifyProviderId(draft.providerId || draft.provider);
+    const providerExists = settingsPayload?.providers.some(
+      (provider) => provider.id === providerId,
+    );
+
+    try {
+      if (!providerExists) {
+        await createProvider({
+          id: providerId,
+          display_name: draft.provider,
+          provider_type: draft.providerType,
+          base_url: draft.baseUrl,
+        });
+      }
+
+      await createProviderCredential({
+        provider_id: providerId,
+        display_name: draft.credentialName,
+        source: draft.fullKey ? "database" : "env",
+        api_key: draft.fullKey || undefined,
+        api_key_env: draft.fullKey ? undefined : draft.envVar || undefined,
+        is_default: true,
+        enabled: true,
+      });
+
+      await loadSettings();
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to add provider configuration.",
+      );
+    }
+  };
+
+  const handleEditProvider = async (draft: ProviderConfigDraft) => {
+    if (!editingProvider) {
+      return;
+    }
+
+    try {
+      await updateProvider(editingProvider.providerId, {
+        display_name: draft.provider,
+        base_url: draft.baseUrl,
+      });
+
+      const credentialPatch: Record<string, string | boolean> = {
+        display_name: draft.credentialName,
+        enabled: true,
+      };
+
+      if (
+        draft.fullKey.trim() &&
+        draft.fullKey.trim() !== editingProvider.fullKey.trim()
+      ) {
+        credentialPatch.api_key = draft.fullKey.trim();
+      } else if (
+        editingProvider.source === "env" &&
+        draft.envVar.trim() !== editingProvider.envVar.trim()
+      ) {
+        credentialPatch.api_key_env = draft.envVar.trim();
+      }
+
+      await updateProviderCredential(editingProvider.id, credentialPatch);
+      await loadSettings();
+      setEditingProvider(null);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to update provider configuration.",
+      );
+    }
+  };
+
+  const saveTracking = async () => {
+    try {
+      await updateTrackingSettings(formatTrackingPayload(tracking));
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to save tracking settings.",
+      );
+    }
+  };
+
+  const saveAppearance = async () => {
+    try {
+      await updateAppearanceSettings({
+        theme: selectedTheme,
+        refresh_interval_seconds: parseRefreshInterval(autoRefreshInterval) || 30,
+      });
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to save appearance settings.",
+      );
+    }
+  };
+
+  if (isLoading) {
+    return <div className="text-sm text-text-secondary">Loading provider configuration...</div>;
+  }
 
   return (
     <div className="space-y-4">
+      {errorMessage ? (
+        <div className="rounded-xl border border-accent-red/20 bg-accent-red-bg px-4 py-3 text-sm text-accent-red">
+          {errorMessage}
+        </div>
+      ) : null}
       <section className="grid gap-4 xl:grid-cols-5">
         <SettingsCard
           title="API keys"
@@ -169,7 +368,7 @@ export default function SettingsPage() {
           <div className="overflow-visible rounded-xl border border-border-subtle bg-bg-card">
             {apiKeys.map((apiKey, index) => (
               <div
-                key={apiKey.provider}
+                key={apiKey.id}
                 className={`grid items-center gap-1 px-4 py-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto_auto] ${
                   index > 0 ? "border-t border-border-subtle" : ""
                 }`}
@@ -178,28 +377,31 @@ export default function SettingsPage() {
                   <ProviderIcon provider={apiKey.provider} size={20} />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-text-primary">
-                      {apiKey.envVar}
+                      {apiKey.credentialName}
                     </p>
-                    <p className="truncate text-xs text-text-secondary">{apiKey.provider}</p>
+                    <p className="truncate text-xs text-text-secondary">
+                      {apiKey.provider}
+                      {apiKey.envVar ? ` · ${apiKey.envVar}` : ` · ${apiKey.source}`}
+                    </p>
                   </div>
                 </div>
                 <p className="text-sm text-text-secondary">
-                  {getDisplayedKeyValue(apiKey.provider, apiKey.configured)}
+                  {getDisplayedKeyValue(apiKey.id, apiKey.configured)}
                 </p>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   className="h-8 rounded-lg border-border-default px-3 text-sm"
-                  onClick={() => toggleKeyVisibility(apiKey.provider)}
+                  onClick={() => void toggleKeyVisibility(apiKey.id)}
                 >
-                  {visibleKeys[apiKey.provider] ? <EyeSlashIcon /> : <EyeIcon />}
+                  {visibleKeys[apiKey.id] ? <EyeSlashIcon /> : <EyeIcon />}
                 </Button>
                 <div className="relative z-30">
                   <Popover
-                    open={openMenuProvider === apiKey.provider}
+                    open={openMenuProvider === apiKey.id}
                     onOpenChange={(open) =>
-                      setOpenMenuProvider(open ? apiKey.provider : null)
+                      setOpenMenuProvider(open ? apiKey.id : null)
                     }
                   >
                     <PopoverTrigger asChild>
@@ -215,9 +417,20 @@ export default function SettingsPage() {
                     <PopoverContent align="end" className="w-auto min-w-max">
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
                           setOpenMenuProvider(null);
-                          setEditingProvider(apiKey);
+                          try {
+                            const row = await ensureSecretLoaded(apiKey.id);
+                            if (row) {
+                              setEditingProvider(row);
+                            }
+                          } catch (error) {
+                            setErrorMessage(
+                              error instanceof Error
+                                ? error.message
+                                : "Failed to load credential secret.",
+                            );
+                          }
                         }}
                         className="flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-card-muted"
                       >
@@ -228,16 +441,16 @@ export default function SettingsPage() {
                         type="button"
                         onClick={() => {
                           setOpenMenuProvider(null);
-                          void copyEnvVar(apiKey.provider, apiKey.fullKey);
+                          void copyApiKey(apiKey.id);
                         }}
                         className="flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-card-muted"
                       >
-                        {copiedProvider === apiKey.provider ? (
+                        {copiedProvider === apiKey.id ? (
                           <CheckIcon size={14} />
                         ) : (
                           <CopyIcon size={14} />
                         )}
-                        {copiedProvider === apiKey.provider ? "Copied env var" : "Copy env var"}
+                        {copiedProvider === apiKey.id ? "Copied API key" : "Copy API key"}
                       </button>
                     </PopoverContent>
                   </Popover>
@@ -247,11 +460,7 @@ export default function SettingsPage() {
           </div>
 
           <div className="mt-4">
-            <AddProviderModal
-              onAddProvider={(provider) => {
-                setApiKeys((current) => [...current, provider]);
-              }}
-            />
+            <AddProviderModal onAddProvider={(provider) => void handleAddProvider(provider)} />
           </div>
           <EditProviderModal
             open={editingProvider !== null}
@@ -261,13 +470,7 @@ export default function SettingsPage() {
                 setEditingProvider(null);
               }
             }}
-            onEditProvider={(nextProvider) => {
-              if (!editingProvider) {
-                return;
-              }
-
-              updateProvider(editingProvider.provider, nextProvider);
-            }}
+            onEditProvider={(nextProvider) => void handleEditProvider(nextProvider)}
           />
         </SettingsCard>
 
@@ -295,7 +498,12 @@ export default function SettingsPage() {
           </div>
 
           <div className="mt-6 flex justify-end">
-            <Button type="button" size="lg" className="h-10 rounded-lg px-5 text-sm">
+            <Button
+              type="button"
+              size="lg"
+              className="h-10 rounded-lg px-5 text-sm"
+              onClick={() => void saveTracking()}
+            >
               Save
             </Button>
           </div>
@@ -367,7 +575,7 @@ export default function SettingsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="rounded-lg p-1">
-                {settings.appearance.autoRefreshIntervals.map((option) => (
+                {["15s", "30s", "60s", "5m"].map((option) => (
                   <SelectItem key={option} value={option} className="rounded-md text-sm">
                     {option}
                   </SelectItem>
@@ -377,7 +585,12 @@ export default function SettingsPage() {
           </div>
 
           <div className="flex md:justify-end">
-            <Button type="button" size="lg" className="h-10 rounded-lg px-5 text-sm">
+            <Button
+              type="button"
+              size="lg"
+              className="h-10 rounded-lg px-5 text-sm"
+              onClick={() => void saveAppearance()}
+            >
               Save
             </Button>
           </div>

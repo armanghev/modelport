@@ -1,0 +1,335 @@
+import type {
+  PricingEntry,
+  ProviderDetail,
+  ProviderHealth,
+  ProviderType,
+  RoutingRule,
+  SettingsAppearance,
+  SettingsTrackingOption,
+} from "@/lib/mock-dashboard-data";
+
+const DEFAULT_BACKEND_URL = "http://127.0.0.1:13243";
+const backendBaseUrl =
+  process.env.NEXT_PUBLIC_MODELPORT_BACKEND_URL ?? DEFAULT_BACKEND_URL;
+
+export interface AdminProvider {
+  id: string;
+  display_name: string;
+  provider_type: ProviderType;
+  base_url: string;
+  enabled: boolean;
+}
+
+export interface AdminCredential {
+  id: string;
+  provider_id: string;
+  display_name: string;
+  source: "env" | "database";
+  api_key_env: string | null;
+  key_hint: string;
+  configured: boolean;
+  is_default: boolean;
+  enabled: boolean;
+}
+
+export interface AdminPricingOverride {
+  id: string;
+  provider_id: string;
+  model: string;
+  input_per_1m_usd: number;
+  output_per_1m_usd: number;
+  currency: string;
+  enabled: boolean;
+}
+
+export interface AdminSettingsPayload {
+  providers: AdminProvider[];
+  provider_credentials: AdminCredential[];
+  model_aliases: Array<Record<string, unknown>>;
+  routing_rules: Array<Record<string, unknown>>;
+  pricing_overrides: AdminPricingOverride[];
+  settings: {
+    default_routing: {
+      input_format?: string;
+      provider?: string;
+      model?: string;
+    };
+    tracking: {
+      request_logging?: boolean;
+      cost_tracking?: boolean;
+      retention_days?: number;
+    };
+    appearance: {
+      theme?: string;
+      refresh_interval_seconds?: number;
+    };
+  };
+}
+
+export interface ProviderConfigRow {
+  id: string;
+  providerId: string;
+  providerType: ProviderType;
+  provider: string;
+  credentialName: string;
+  envVar: string;
+  configured: boolean;
+  maskedKey: string;
+  fullKey: string;
+  baseUrl: string;
+  source: "env" | "database";
+  isDefault: boolean;
+  enabled: boolean;
+}
+
+export interface ProviderConfigDraft {
+  providerId: string;
+  providerType: ProviderType;
+  provider: string;
+  credentialName: string;
+  envVar: string;
+  fullKey: string;
+  baseUrl: string;
+}
+
+export interface ProviderHealthPayload {
+  cards: ProviderHealth[];
+  routingRules: RoutingRule[];
+  details: ProviderDetail[];
+}
+
+const refreshIntervals = ["15s", "30s", "60s", "5m"] as const;
+const trackingLabelMap: Record<
+  string,
+  Pick<SettingsTrackingOption, "label" | "description">
+> = {
+  request_logging: {
+    label: "Request logging",
+    description: "Log details of all incoming requests.",
+  },
+  cost_tracking: {
+    label: "Cost tracking",
+    description: "Estimate and track provider costs for requests.",
+  },
+  retention_days: {
+    label: "Retention window",
+    description: "Keep analytics data for the configured number of days.",
+  },
+};
+
+function buildUrl(path: string) {
+  return `${backendBaseUrl}${path}`;
+}
+
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(buildUrl(path), {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with status ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+function titleizeProvider(providerId: string) {
+  return providerId
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatRefreshInterval(seconds: number | undefined): string {
+  if (!seconds) {
+    return "30s";
+  }
+
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+
+  return `${Math.round(seconds / 60)}m`;
+}
+
+export function slugifyProviderId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export function inferProviderType(
+  providerId: string,
+  baseUrl: string,
+): ProviderType {
+  if (providerId.includes("anthropic") || /anthropic/i.test(baseUrl)) {
+    return "anthropic_compatible";
+  }
+
+  if (/localhost|127\.0\.0\.1/i.test(baseUrl)) {
+    return "local_openai_compatible";
+  }
+
+  return "openai_compatible";
+}
+
+export function mapAdminSettingsToUi(payload: AdminSettingsPayload): {
+  providerRows: ProviderConfigRow[];
+  pricingTable: PricingEntry[];
+  tracking: SettingsTrackingOption[];
+  appearance: SettingsAppearance;
+} {
+  const providerById = new Map(
+    payload.providers.map((provider) => [provider.id, provider]),
+  );
+
+  return {
+    providerRows: payload.provider_credentials.map((credential) => {
+      const provider = providerById.get(credential.provider_id);
+      return {
+        id: credential.id,
+        providerId: credential.provider_id,
+        providerType:
+          provider?.provider_type ??
+          inferProviderType(credential.provider_id, provider?.base_url ?? ""),
+        provider:
+          provider?.display_name ?? titleizeProvider(credential.provider_id),
+        credentialName: credential.display_name,
+        envVar: credential.api_key_env ?? "",
+        configured: credential.configured,
+        maskedKey: credential.key_hint,
+        fullKey: "",
+        baseUrl: provider?.base_url ?? "",
+        source: credential.source,
+        isDefault: credential.is_default,
+        enabled: credential.enabled,
+      };
+    }),
+    pricingTable: payload.pricing_overrides.map((entry) => ({
+      provider:
+        providerById.get(entry.provider_id)?.display_name ?? entry.provider_id,
+      model: entry.model,
+      inputPer1kUsd: entry.input_per_1m_usd / 1000,
+      outputPer1kUsd: entry.output_per_1m_usd / 1000,
+    })),
+    tracking: Object.entries(payload.settings.tracking).map(([key, value]) => ({
+      id: key,
+      label: trackingLabelMap[key]?.label ?? titleizeProvider(key),
+      description:
+        trackingLabelMap[key]?.description ??
+        "Configuration controlled by the backend.",
+      enabled: typeof value === "boolean" ? value : Number(value ?? 0) > 0,
+    })),
+    appearance: {
+      theme: payload.settings.appearance.theme ?? "system",
+      themes: ["light", "dark", "system"],
+      autoRefreshInterval: formatRefreshInterval(
+        payload.settings.appearance.refresh_interval_seconds,
+      ),
+      autoRefreshIntervals: [...refreshIntervals],
+    },
+  };
+}
+
+export async function fetchAdminSettings() {
+  return fetchJson<AdminSettingsPayload>("/admin/settings");
+}
+
+export async function fetchProviderHealth() {
+  return fetchJson<ProviderHealthPayload>("/admin/providers/health");
+}
+
+export async function revealCredentialSecret(credentialId: string) {
+  return fetchJson<{ id: string; api_key: string | null }>(
+    `/admin/provider-credentials/${credentialId}/secret`,
+  );
+}
+
+export async function createProvider(payload: {
+  id: string;
+  display_name: string;
+  provider_type: ProviderType;
+  base_url: string;
+}) {
+  return fetchJson<AdminProvider>("/admin/providers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateProvider(
+  providerId: string,
+  payload: Partial<{
+    display_name: string;
+    provider_type: ProviderType;
+    base_url: string;
+    enabled: boolean;
+  }>,
+) {
+  return fetchJson<AdminProvider>(`/admin/providers/${providerId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createProviderCredential(payload: {
+  provider_id: string;
+  display_name: string;
+  source: "env" | "database";
+  api_key_env?: string;
+  api_key?: string;
+  is_default?: boolean;
+  enabled?: boolean;
+}) {
+  return fetchJson<AdminCredential>("/admin/provider-credentials", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateProviderCredential(
+  credentialId: string,
+  payload: Partial<{
+    display_name: string;
+    source: "env" | "database";
+    api_key_env: string;
+    api_key: string;
+    is_default: boolean;
+    enabled: boolean;
+  }>,
+) {
+  return fetchJson<AdminCredential>(`/admin/provider-credentials/${credentialId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateTrackingSettings(payload: {
+  request_logging: boolean;
+  cost_tracking: boolean;
+  retention_days: number;
+}) {
+  return fetchJson("/admin/settings/tracking", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAppearanceSettings(payload: {
+  theme: string;
+  refresh_interval_seconds: number;
+}) {
+  return fetchJson("/admin/settings/appearance", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}

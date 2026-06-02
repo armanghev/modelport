@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import json
+import time
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urljoin
+
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -12,10 +17,12 @@ from app.database import (
     PricingOverride,
     Provider,
     ProviderCredential,
+    ProviderHealthCheck,
     RoutingRule,
     clear_default_credentials,
     get_setting,
     is_credential_configured,
+    resolve_env_secret,
     resolved_key_hint,
     set_setting,
 )
@@ -33,8 +40,10 @@ from app.schemas.admin import (
     ProviderCredentialCreate,
     ProviderCredentialResponse,
     ProviderCredentialUpdate,
+    ProviderHealthPayload,
     ProviderResponse,
     ProviderUpdate,
+    ProviderRoutingRuleSummary,
     RoutingRuleCreate,
     RoutingRuleResponse,
     RoutingRuleUpdate,
@@ -146,6 +155,248 @@ def serialize_pricing(record: PricingOverride) -> PricingOverrideResponse:
     return PricingOverrideResponse.model_validate(record)
 
 
+def resolve_credential_secret(credential: ProviderCredential | None) -> str | None:
+    if credential is None:
+        return None
+    if credential.source == "env":
+        return resolve_env_secret(credential)
+    if credential.encrypted_api_key:
+        return decrypt_secret(credential.encrypted_api_key)
+    return None
+
+
+def get_default_credential(provider: Provider) -> ProviderCredential | None:
+    enabled_credentials = [credential for credential in provider.credentials if credential.enabled]
+    configured_credentials = [
+        credential for credential in enabled_credentials if is_credential_configured(credential)
+    ]
+
+    default_configured = next(
+        (credential for credential in configured_credentials if credential.is_default),
+        None,
+    )
+    if default_configured is not None:
+        return default_configured
+
+    if configured_credentials:
+        return configured_credentials[0]
+
+    default_enabled = next((credential for credential in enabled_credentials if credential.is_default), None)
+    if default_enabled is not None:
+        return default_enabled
+
+    if enabled_credentials:
+        return enabled_credentials[0]
+
+    return provider.credentials[0] if provider.credentials else None
+
+
+def build_health_check_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    if provider.provider_type == "anthropic_compatible":
+        return urljoin(normalized_base, "v1/models")
+    return urljoin(normalized_base, "models")
+
+
+def provider_supports_anonymous_health_check(provider: Provider) -> bool:
+    return provider.provider_type == "local_openai_compatible" or (
+        "localhost" in provider.base_url or "127.0.0.1" in provider.base_url
+    )
+
+
+def parse_model_count(payload: dict) -> int:
+    data = payload.get("data")
+    if isinstance(data, list):
+        return len(data)
+    models = payload.get("models")
+    if isinstance(models, list):
+        return len(models)
+    return 0
+
+
+def record_provider_health_check(
+    session: Session,
+    provider_id: str,
+    status_value: str,
+    latency_ms: int,
+    available_model_count: int,
+    error_message: str | None,
+) -> ProviderHealthCheck:
+    record = ProviderHealthCheck(
+        provider_id=provider_id,
+        status=status_value,
+        latency_ms=latency_ms,
+        available_model_count=available_model_count,
+        error_message=error_message,
+    )
+    session.add(record)
+    session.flush()
+    return record
+
+
+def run_provider_health_check(session: Session, provider: Provider) -> ProviderHealthCheck:
+    if not provider.enabled:
+        return record_provider_health_check(
+            session,
+            provider.id,
+            "offline",
+            0,
+            0,
+            "Provider disabled.",
+        )
+
+    credential = get_default_credential(provider)
+    secret: str | None = None
+    try:
+        secret = resolve_credential_secret(credential)
+    except EncryptionConfigurationError as exc:
+        return record_provider_health_check(
+            session,
+            provider.id,
+            "offline",
+            0,
+            0,
+            str(exc),
+        )
+
+    if not provider_supports_anonymous_health_check(provider) and not secret:
+        return record_provider_health_check(
+            session,
+            provider.id,
+            "offline",
+            0,
+            0,
+            "No configured credential available.",
+        )
+
+    headers: dict[str, str] = {}
+    if provider.provider_type == "anthropic_compatible":
+        headers["anthropic-version"] = "2023-06-01"
+        if secret:
+            headers["x-api-key"] = secret
+    elif secret:
+        headers["Authorization"] = f"Bearer {secret}"
+
+    start = time.perf_counter()
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(build_health_check_url(provider), headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+        latency_ms = max(1, round((time.perf_counter() - start) * 1000))
+        available_model_count = parse_model_count(payload)
+        status_value = "operational" if available_model_count > 0 else "degraded"
+        error_message = None if available_model_count > 0 else "Provider returned no available models."
+        return record_provider_health_check(
+            session,
+            provider.id,
+            status_value,
+            latency_ms,
+            available_model_count,
+            error_message,
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        return record_provider_health_check(
+            session,
+            provider.id,
+            "offline",
+            0,
+            0,
+            str(exc),
+        )
+
+
+def get_latest_provider_health_check(session: Session, provider_id: str) -> ProviderHealthCheck | None:
+    return session.scalars(
+        select(ProviderHealthCheck)
+        .where(ProviderHealthCheck.provider_id == provider_id)
+        .order_by(ProviderHealthCheck.checked_at.desc())
+        .limit(1)
+    ).first()
+
+
+def get_recent_provider_health_checks(session: Session, provider_id: str) -> list[ProviderHealthCheck]:
+    return session.scalars(
+        select(ProviderHealthCheck)
+        .where(ProviderHealthCheck.provider_id == provider_id)
+        .order_by(ProviderHealthCheck.checked_at.desc())
+        .limit(20)
+    ).all()
+
+
+def serialize_provider_health_card(
+    provider: Provider,
+    latest_check: ProviderHealthCheck | None,
+    recent_checks: list[ProviderHealthCheck],
+) -> dict:
+    if latest_check is None:
+        last_checked_at = datetime.now(UTC).isoformat()
+        status_value = "offline"
+        success_rate = 0.0
+        error_rate = 100.0
+        avg_latency = 0
+        available_model_count = 0
+        last_error = "No health checks run yet."
+    else:
+        success_count = sum(1 for check in recent_checks if check.status == "operational")
+        total_count = max(1, len(recent_checks))
+        success_rate = round((success_count / total_count) * 100, 1)
+        error_rate = round(100 - success_rate, 1)
+        successful_latencies = [check.latency_ms for check in recent_checks if check.latency_ms > 0]
+        avg_latency = round(sum(successful_latencies) / len(successful_latencies)) if successful_latencies else 0
+        available_model_count = latest_check.available_model_count
+        last_checked_at = latest_check.checked_at.isoformat()
+        status_value = latest_check.status
+        last_error = latest_check.error_message
+
+    return {
+        "id": provider.id,
+        "displayName": provider.display_name,
+        "type": provider.provider_type,
+        "status": status_value,
+        "baseUrl": provider.base_url,
+        "requestsToday": 0,
+        "successRate": success_rate,
+        "errorRate": error_rate,
+        "avgLatencyMs": avg_latency,
+        "availableModelCount": available_model_count,
+        "lastCheckedAt": last_checked_at,
+        "lastError": last_error,
+    }
+
+
+def collect_provider_health_payload(session: Session) -> dict:
+    providers = session.scalars(select(Provider).order_by(Provider.id)).all()
+    cards: list[dict] = []
+    freshness_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=60)
+
+    for provider in providers:
+        latest_check = get_latest_provider_health_check(session, provider.id)
+        if latest_check is None or latest_check.checked_at < freshness_cutoff:
+            latest_check = run_provider_health_check(session, provider)
+            session.commit()
+
+        recent_checks = get_recent_provider_health_checks(session, provider.id)
+        cards.append(serialize_provider_health_card(provider, latest_check, recent_checks))
+
+    routing_rules = session.scalars(
+        select(RoutingRule).order_by(RoutingRule.priority.desc(), RoutingRule.match)
+    ).all()
+
+    return {
+        "cards": cards,
+        "routingRules": [
+            ProviderRoutingRuleSummary(
+                match=rule.match,
+                primaryProvider=rule.primary_provider_id,
+                fallbackProviders=json.loads(rule.fallback_provider_ids_json),
+            ).model_dump()
+            for rule in routing_rules
+        ],
+        "details": [],
+    }
+
+
 def validate_fallback_providers(session: Session, provider_ids: list[str]) -> None:
     for provider_id in provider_ids:
         require_provider(session, provider_id)
@@ -167,6 +418,11 @@ def apply_credential_secret(credential: ProviderCredential, api_key: str) -> Non
 def list_providers(session: Session = Depends(get_session)) -> list[ProviderResponse]:
     providers = session.scalars(select(Provider).order_by(Provider.id)).all()
     return [serialize_provider(provider) for provider in providers]
+
+
+@router.get("/providers/health", response_model=ProviderHealthPayload)
+def get_provider_health(session: Session = Depends(get_session)) -> ProviderHealthPayload:
+    return ProviderHealthPayload.model_validate(collect_provider_health_payload(session))
 
 
 @router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)

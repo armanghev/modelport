@@ -117,6 +117,18 @@ class PricingOverride(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
+class ProviderHealthCheck(Base):
+    __tablename__ = "provider_health_checks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_model_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class AppSetting(TimestampMixin, Base):
     __tablename__ = "app_settings"
 

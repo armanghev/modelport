@@ -223,3 +223,30 @@ class SettingsResponse(BaseModel):
     routing_rules: list[RoutingRuleResponse]
     pricing_overrides: list[PricingOverrideResponse]
     settings: SettingsEnvelope
+
+
+class ProviderHealthCard(BaseModel):
+    id: str
+    displayName: str
+    type: ProviderType
+    status: Literal["operational", "degraded", "offline"]
+    baseUrl: str
+    requestsToday: int
+    successRate: float
+    errorRate: float
+    avgLatencyMs: int
+    availableModelCount: int
+    lastCheckedAt: str
+    lastError: str | None
+
+
+class ProviderRoutingRuleSummary(BaseModel):
+    match: str
+    primaryProvider: str
+    fallbackProviders: list[str]
+
+
+class ProviderHealthPayload(BaseModel):
+    cards: list[ProviderHealthCard]
+    routingRules: list[ProviderRoutingRuleSummary]
+    details: list[dict]
