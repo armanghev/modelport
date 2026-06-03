@@ -350,3 +350,113 @@ def test_messages_route_streams_anthropic_sse_events(
     assert '"text": " world"' in body
     assert '"stop_reason": "end_turn"' in body
     assert "event: message_stop" in body
+
+
+def test_chat_completions_route_returns_openai_compatible_response(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_openai_123",
+                "object": "chat.completion",
+                "created": 1_717_171_717,
+                "model": "gpt-5.5",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "OpenAI route"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://api.openai.com/v1/chat/completions"
+            assert headers is not None
+            assert headers["Authorization"] == "Bearer sk-openai-seeded"
+            assert json == {
+                "model": "gpt-5.5",
+                "messages": [
+                    {"role": "system", "content": "You are helpful."},
+                    {"role": "user", "content": "Hello"},
+                    {"role": "assistant", "content": "Prior context"},
+                ],
+                "stream": False,
+                "max_tokens": 128,
+            }
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "max_tokens": 128,
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Prior context"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "chatcmpl_openai_123"
+    assert response.json()["choices"][0]["message"]["content"] == "OpenAI route"
+    assert response.json()["usage"]["total_tokens"] == 19
+
+
+def test_chat_completions_route_streams_openai_sse_chunks(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_stream_chat_completion_chunks(provider, api_key, payload):
+        assert payload["stream"] is True
+        yield '{"id":"chatcmpl_openai_stream","object":"chat.completion.chunk","choices":[{"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}'
+        yield '{"id":"chatcmpl_openai_stream","object":"chat.completion.chunk","choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":7}}'
+        yield "[DONE]"
+
+    monkeypatch.setattr(
+        "app.api.openai.stream_chat_completion_chunks",
+        fake_stream_chat_completion_chunks,
+    )
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "max_tokens": 64,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert 'data: {"id":"chatcmpl_openai_stream"' in body
+    assert '"content":"Hello"' in body
+    assert '"content":" world"' in body
+    assert "data: [DONE]" in body
