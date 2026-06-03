@@ -69,7 +69,7 @@ def normalize_client_name(value: str | None) -> str:
         return "Custom App"
 
     lowered = value.lower()
-    if "claude code" in lowered:
+    if "claude code" in lowered or "claude-code" in lowered or "claude-cli" in lowered:
         return "Claude Code"
     if "openai" in lowered:
         return "OpenAI SDK"
@@ -80,6 +80,13 @@ def normalize_client_name(value: str | None) -> str:
     if "cursor" in lowered:
         return "Cursor"
     return "Custom App"
+
+
+def client_sort_key(value: str) -> int:
+    try:
+        return KNOWN_CLIENTS.index(value)  # type: ignore[arg-type]
+    except ValueError:
+        return len(KNOWN_CLIENTS)
 
 
 def request_status(record: ApiRequest) -> str:
@@ -124,7 +131,8 @@ def serialize_request_rows(
         )
         rows.append(
             {
-                "id": record.request_id or record.id,
+                "id": record.id,
+                "upstreamRequestId": record.request_id,
                 "timestamp": coerce_utc(record.created_at).isoformat(),
                 "client": normalize_client_name(record.client_name),
                 "endpoint": endpoint,
@@ -309,7 +317,7 @@ def build_requests_payload(session: Session) -> dict:
         "models": sorted({row["model"] for row in serialized_rows}),
         "clients": sorted(
             {row["client"] for row in serialized_rows},
-            key=lambda value: KNOWN_CLIENTS.index(value),
+            key=client_sort_key,
         ),
         "statuses": sorted({row["status"] for row in serialized_rows}),
         "endpoints": sorted({row["endpoint"] for row in serialized_rows}),

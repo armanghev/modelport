@@ -167,14 +167,34 @@ export default function RequestsPage() {
   useEffect(() => {
     let active = true;
 
-    void (async () => {
+    const loadRequests = async (showLoading: boolean) => {
+      if (showLoading) {
+        setIsLoading(true);
+      }
       try {
         const nextPayload = await fetchRequestsAnalytics();
         if (!active) {
           return;
         }
         setPayload(nextPayload);
-        setSelectedRowId(nextPayload.rows[0]?.id ?? null);
+        setSelectedRowId((currentId) => {
+          if (currentId && nextPayload.rows.some((row) => row.id === currentId)) {
+            return currentId;
+          }
+          return nextPayload.rows[0]?.id ?? null;
+        });
+        setClientFilter((current) =>
+          current === "all" || nextPayload.filters.clients.includes(current) ? current : "all",
+        );
+        setProviderFilter((current) =>
+          current === "all" || nextPayload.filters.providers.includes(current) ? current : "all",
+        );
+        setModelFilter((current) =>
+          current === "all" || nextPayload.filters.models.includes(current) ? current : "all",
+        );
+        setStatusFilter((current) =>
+          current === "all" || nextPayload.filters.statuses.includes(current) ? current : "all",
+        );
         setErrorMessage(null);
       } catch (error) {
         if (!active) {
@@ -184,14 +204,20 @@ export default function RequestsPage() {
           error instanceof Error ? error.message : "Failed to load request analytics.",
         );
       } finally {
-        if (active) {
+        if (active && showLoading) {
           setIsLoading(false);
         }
       }
-    })();
+    };
+
+    void loadRequests(true);
+    const intervalId = window.setInterval(() => {
+      void loadRequests(false);
+    }, 30_000);
 
     return () => {
       active = false;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -611,7 +637,7 @@ export default function RequestsPage() {
               <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-sm">
                 <dt className="text-text-secondary">Request ID</dt>
                 <dd className="flex items-center gap-2 font-medium text-text-primary">
-                  {selectedRow.id}
+                  {selectedRow.upstreamRequestId ?? selectedRow.id}
                   <button
                     type="button"
                     aria-label="Copy request ID"

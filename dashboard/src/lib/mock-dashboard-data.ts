@@ -41,6 +41,7 @@ export interface TopModelShare {
 
 export interface RequestRow {
   id: string;
+  upstreamRequestId?: string | null;
   timestamp: string;
   client: "Claude Code" | "OpenAI SDK" | "Gemini CLI" | "Custom App" | "Codex" | "Cursor";
   endpoint: "/v1/messages" | "/v1/chat/completions";

@@ -191,7 +191,7 @@ def test_overview_analytics_endpoint_returns_aggregates(client: TestClient) -> N
     assert top_model_metric["value"] == "gpt-4.1"
     assert payload["topModels"][0]["model"] == "gpt-4.1"
     assert payload["topModels"][0]["provider"] == "OpenAI"
-    assert payload["recentRequests"][0]["id"] == "req_analytics_01"
+    assert payload["recentRequests"][0]["upstreamRequestId"] == "req_analytics_01"
     assert payload["recentRequests"][1]["status"] == "error"
     assert set(payload["tokenUsage"]) == {"1h", "6h", "24h", "7d", "30d"}
     assert len(payload["tokenUsage"]["30d"]["points"]) == 30

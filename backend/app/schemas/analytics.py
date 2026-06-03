@@ -46,6 +46,7 @@ class TopModelShare(BaseModel):
 
 class RequestRow(BaseModel):
     id: str
+    upstreamRequestId: str | None = None
     timestamp: str
     client: KnownClientName
     endpoint: RequestEndpoint
