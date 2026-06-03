@@ -776,3 +776,157 @@ def test_chat_completions_route_falls_back_after_primary_upstream_failure(
     assert response.status_code == 200
     assert response.json()["choices"][0]["message"]["content"] == "Fallback succeeded"
     assert FirstFailThenSucceedClient.call_count == 2
+
+
+def test_messages_route_forwards_tools_to_openai_upstream(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured_payload: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_tools",
+                "model": "models/gemini-2.5-pro",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_write",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "Write",
+                                        "arguments": '{"path":"claude.html","contents":"<html>"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 10},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            captured_payload.update(json or {})
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "gemini",
+            "model": "models/gemini-2.5-pro",
+            "max_tokens": 1024,
+            "tool_choice": {"type": "auto"},
+            "tools": [
+                {
+                    "name": "Write",
+                    "description": "Write a file",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                    },
+                }
+            ],
+            "messages": [{"role": "user", "content": "Create claude.html"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_payload["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "Write",
+                "description": "Write a file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            },
+        }
+    ]
+    assert captured_payload["tool_choice"] == "auto"
+    assert response.json()["stop_reason"] == "tool_use"
+    assert response.json()["content"] == [
+        {
+            "type": "tool_use",
+            "id": "call_write",
+            "name": "Write",
+            "input": {"path": "claude.html", "contents": "<html>"},
+        }
+    ]
+
+
+def test_messages_route_streams_tool_use_sse_events(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_stream_chat_completion_chunks(provider, api_key, payload):
+        assert payload.get("tools") is not None
+        assert payload["stream"] is True
+        yield (
+            '{"id":"chatcmpl_stream_tool","choices":[{"delta":{"tool_calls":[{"index":0,'
+            '"id":"call_write","type":"function","function":{"name":"Write","arguments":""}}]},'
+            '"finish_reason":null}]}'
+        )
+        yield (
+            '{"id":"chatcmpl_stream_tool","choices":[{"delta":{"tool_calls":[{"index":0,'
+            '"function":{"arguments":"{\\"path\\":\\"claude.html\\"}"}}]},'
+            '"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":50,"completion_tokens":10}}'
+        )
+        yield "[DONE]"
+
+    monkeypatch.setattr(
+        "app.api.anthropic.stream_chat_completion_chunks",
+        fake_stream_chat_completion_chunks,
+    )
+
+    with client.stream(
+        "POST",
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "gemini",
+            "model": "models/gemini-2.5-pro",
+            "max_tokens": 1024,
+            "stream": True,
+            "tools": [
+                {
+                    "name": "Write",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+            "messages": [{"role": "user", "content": "Create claude.html"}],
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "event: message_start" in body
+    assert '"type": "tool_use"' in body
+    assert '"name": "Write"' in body
+    assert '"partial_json"' in body
+    assert '"stop_reason": "tool_use"' in body
+    assert "event: message_stop" in body
