@@ -7,53 +7,44 @@ import {
   CaretRightIcon,
   ClockIcon,
   CubeIcon,
-  StackIcon,
   RobotIcon,
+  StackIcon,
 } from "@phosphor-icons/react";
-import { ModelDetailsModal } from "@/components/dashboard/models/model-details-modal";
+
 import { renderProviderIcon } from "@/components/brand/render-provider-icon";
 import {
-  buildDailyUsageValues,
-  buildHourlyUsageValues,
-  buildUsageBars,
-  downsampleSeries,
-} from "@/lib/model-usage";
-import { fetchModelsAnalytics } from "@/lib/analytics-api";
+  fetchProviderModels,
+  type ProviderCatalogEntry,
+} from "@/lib/admin-api";
 
 interface ModelTableRow {
   id: string;
   displayName: string;
   provider: string;
-  usageShare: number;
+  owner: string;
   contextWindow: string;
-  usageBars: number[];
-  sparklineValues: number[];
   modelId: string;
-  requestCount: number;
-  tokenTotal: number;
-  costUsd: number;
-  avgLatencyMs: number;
-  errorRate: number;
+  fetchedAt: string;
+  providerModelCount: number;
+  baseUrl: string;
 }
 
 function formatInteger(value: number): string {
   return value.toLocaleString("en-US");
 }
 
-function formatMillions(value: number): string {
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(1)}M`;
+function formatTimestamp(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Unknown";
   }
 
-  if (value >= 1_000) {
-    return `${Math.round(value / 1_000)}K`;
-  }
-
-  return value.toString();
-}
-
-function formatCost(value: number): string {
-  return `$${value.toFixed(2)}`;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
 }
 
 function formatModelLabel(modelSlug: string): string {
@@ -62,10 +53,11 @@ function formatModelLabel(modelSlug: string): string {
   }
 
   const cleaned = modelSlug
+    .replace(/:latest$/i, "")
     .replace(/-latest$/i, "")
     .replace(/-preview$/i, "")
     .replace(/-\d{8}$/i, "");
-  const parts = cleaned.split("-").filter(Boolean);
+  const parts = cleaned.split(/[-_:]/).filter(Boolean);
 
   if (parts.length === 0) {
     return modelSlug;
@@ -100,7 +92,11 @@ function formatModelLabel(modelSlug: string): string {
 }
 
 function getContextWindow(model: string): string {
-  if (model.includes("gpt-4.1") || model.includes("gemini-2.5") || model.includes("gemini-2.0")) {
+  if (
+    model.includes("gpt-4.1") ||
+    model.includes("gemini-2.5") ||
+    model.includes("gemini-2.0")
+  ) {
     return "1M";
   }
 
@@ -112,33 +108,25 @@ function getContextWindow(model: string): string {
     return "128K";
   }
 
-  return "200K";
+  return "Unknown";
 }
 
-function buildSparklinePoints(values: number[], width = 128, height = 24): string {
-  if (values.length === 0) {
-    return "";
+function largestCatalogProvider(
+  providers: ProviderCatalogEntry[],
+): ProviderCatalogEntry | null {
+  if (providers.length === 0) {
+    return null;
   }
 
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const range = Math.max(1, maxValue - minValue);
-  const stepX = values.length > 1 ? width / (values.length - 1) : width;
-
-  return values
-    .map((value, index) => {
-      const x = index * stepX;
-      const y = height - ((value - minValue) / range) * (height - 2) - 1;
-      return `${x},${y}`;
-    })
-    .join(" ");
+  return [...providers].sort(
+    (left, right) => right.available_model_count - left.available_model_count,
+  )[0];
 }
 
 export default function ModelsPage() {
-  const rowsPerPage = 8;
+  const rowsPerPage = 12;
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedModel, setSelectedModel] = useState<ModelTableRow | null>(null);
-  const [payload, setPayload] = useState<Awaited<ReturnType<typeof fetchModelsAnalytics>> | null>(null);
+  const [payload, setPayload] = useState<Awaited<ReturnType<typeof fetchProviderModels>> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -147,7 +135,7 @@ export default function ModelsPage() {
 
     void (async () => {
       try {
-        const nextPayload = await fetchModelsAnalytics();
+        const nextPayload = await fetchProviderModels();
         if (!active) {
           return;
         }
@@ -158,7 +146,7 @@ export default function ModelsPage() {
           return;
         }
         setErrorMessage(
-          error instanceof Error ? error.message : "Failed to load model analytics.",
+          error instanceof Error ? error.message : "Failed to load live provider models.",
         );
       } finally {
         if (active) {
@@ -172,46 +160,52 @@ export default function ModelsPage() {
     };
   }, []);
 
-  const rawModels = useMemo(() => payload?.models ?? [], [payload]);
-  const totalTokens = rawModels.reduce((sum, model) => sum + model.tokenTotal, 0);
+  const healthyProviders = useMemo(() => payload?.providers ?? [], [payload]);
 
   const modelRows: ModelTableRow[] = useMemo(() => {
-    return [...rawModels]
-      .sort((left, right) => right.tokenTotal - left.tokenTotal)
-      .map((model) => {
-        const usageBars = buildUsageBars(model.tokenTotal + model.requestCount);
-        const dailyUsageValues = buildDailyUsageValues(usageBars, model.tokenTotal);
-        const hourlyUsageValues = buildHourlyUsageValues(
-          dailyUsageValues,
-          model.tokenTotal + model.requestCount,
-        );
-
-        return {
-          id: model.id,
-          displayName: model.displayName ?? formatModelLabel(model.model),
-          provider: model.provider,
-          usageShare: Math.max(1, Math.round((model.tokenTotal / totalTokens) * 100)),
-          contextWindow: getContextWindow(model.model),
-          usageBars,
-          sparklineValues: downsampleSeries(hourlyUsageValues, 20),
-          modelId: model.model,
-          requestCount: model.requestCount,
-          tokenTotal: model.tokenTotal,
-          costUsd: model.costUsd,
-          avgLatencyMs: model.avgLatencyMs,
-          errorRate: model.errorRate,
-        };
+    return healthyProviders
+      .flatMap((provider) =>
+        provider.models.map((model) => ({
+          id: `${provider.provider_id}:${model.id}`,
+          displayName: model.display_name ?? formatModelLabel(model.id),
+          provider: provider.display_name,
+          owner: model.owned_by ?? provider.display_name,
+          contextWindow: getContextWindow(model.id),
+          modelId: model.id,
+          fetchedAt: provider.fetched_at,
+          providerModelCount: provider.available_model_count,
+          baseUrl: provider.base_url,
+        })),
+      )
+      .sort((left, right) => {
+        if (right.providerModelCount !== left.providerModelCount) {
+          return right.providerModelCount - left.providerModelCount;
+        }
+        return left.displayName.localeCompare(right.displayName);
       });
-  }, [rawModels, totalTokens]);
+  }, [healthyProviders]);
 
-  const topModel = modelRows[0];
+  const providerCount = healthyProviders.length;
   const totalRows = modelRows.length;
+  const largestProvider = useMemo(
+    () => largestCatalogProvider(healthyProviders),
+    [healthyProviders],
+  );
+  const latestFetch = useMemo(() => {
+    const latest = [...healthyProviders]
+      .map((provider) => provider.fetched_at)
+      .sort()
+      .at(-1);
+    return latest ? formatTimestamp(latest) : "Unknown";
+  }, [healthyProviders]);
+
   const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
 
   const pagedRows = useMemo(() => {
-    const startIndex = (currentPage - 1) * rowsPerPage;
+    const startIndex = (safeCurrentPage - 1) * rowsPerPage;
     return modelRows.slice(startIndex, startIndex + rowsPerPage);
-  }, [currentPage, modelRows]);
+  }, [modelRows, rowsPerPage, safeCurrentPage]);
 
   const pageButtons = useMemo(() => {
     if (totalPages <= 7) {
@@ -219,35 +213,35 @@ export default function ModelsPage() {
     }
 
     const pages = new Set<number>([1, totalPages]);
-    for (let page = currentPage - 1; page <= currentPage + 1; page += 1) {
+    for (let page = safeCurrentPage - 1; page <= safeCurrentPage + 1; page += 1) {
       if (page > 1 && page < totalPages) {
         pages.add(page);
       }
     }
 
-    if (currentPage <= 3) {
+    if (safeCurrentPage <= 3) {
       pages.add(2);
       pages.add(3);
       pages.add(4);
     }
 
-    if (currentPage >= totalPages - 2) {
+    if (safeCurrentPage >= totalPages - 2) {
       pages.add(totalPages - 1);
       pages.add(totalPages - 2);
       pages.add(totalPages - 3);
     }
 
     return [...pages].sort((left, right) => left - right);
-  }, [currentPage, totalPages]);
+  }, [safeCurrentPage, totalPages]);
 
-  const startRow = totalRows === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1;
-  const endRow = Math.min(currentPage * rowsPerPage, totalRows);
-  const canGoPrevious = currentPage > 1;
-  const canGoNext = currentPage < totalPages;
+  const startRow = totalRows === 0 ? 0 : (safeCurrentPage - 1) * rowsPerPage + 1;
+  const endRow = Math.min(safeCurrentPage * rowsPerPage, totalRows);
+  const canGoPrevious = safeCurrentPage > 1;
+  const canGoNext = safeCurrentPage < totalPages;
   const emptyRowCount = Math.max(0, rowsPerPage - pagedRows.length);
 
   if (isLoading) {
-    return <div className="text-sm text-text-secondary">Loading model analytics...</div>;
+    return <div className="text-sm text-text-secondary">Loading live provider models...</div>;
   }
 
   return (
@@ -257,109 +251,100 @@ export default function ModelsPage() {
           {errorMessage}
         </div>
       ) : null}
+
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <article className="card-surface p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex flex-col">
-              <p className="text-sm font-medium text-text-secondary">Active models</p>
-              <p className="mt-1 text-lg font-semibold text-text-primary">
-                {modelRows.length}
-              </p>
+              <p className="text-sm font-medium text-text-secondary">Live models</p>
+              <p className="mt-1 text-lg font-semibold text-text-primary">{formatInteger(totalRows)}</p>
             </div>
             <span className="card-surface-soft inline-flex h-10 w-10 items-center justify-center rounded-xl text-text-secondary">
               <CubeIcon size={20} />
             </span>
           </div>
-          <div className="mt-2 flex items-center gap-2 text-sm">
-            <span className="text-text-muted">Tracked models with request history</span>
+          <div className="mt-2 text-sm text-text-muted">
+            Fetched from healthy provider model catalogs
           </div>
         </article>
 
         <article className="card-surface p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex flex-col">
-              <p className="text-sm font-medium text-text-secondary">Total tokens this week</p>
-              <p className="mt-1 text-lg font-semibold text-text-primary">
-                {formatMillions(totalTokens)}
-              </p>
+              <p className="text-sm font-medium text-text-secondary">Healthy providers</p>
+              <p className="mt-1 text-lg font-semibold text-text-primary">{formatInteger(providerCount)}</p>
             </div>
             <span className="card-surface-soft inline-flex h-10 w-10 items-center justify-center rounded-xl text-text-secondary">
               <StackIcon size={20} />
             </span>
           </div>
-          <div className="mt-2 flex items-center gap-2 text-sm">
-            <span className="text-text-muted">Combined input and output tokens</span>
+          <div className="mt-2 text-sm text-text-muted">
+            Providers returning at least one model right now
           </div>
         </article>
 
         <article className="card-surface p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1 flex flex-col">
-              <p className="text-sm font-medium text-text-secondary">Most used model</p>
+              <p className="text-sm font-medium text-text-secondary">Largest catalog</p>
               <p className="mt-1 truncate text-lg font-semibold text-text-primary">
-                {topModel?.displayName}
+                {largestProvider?.display_name ?? "None"}
               </p>
             </div>
             <span className="card-surface-soft inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-text-secondary">
-              {topModel?.provider ? (
-                renderProviderIcon(topModel.provider)
-              ) : (
-                <RobotIcon size={20} />
-              )}
+              {largestProvider ? renderProviderIcon(largestProvider.display_name) : <RobotIcon size={20} />}
             </span>
           </div>
-          <div className="mt-2 flex items-center gap-2 text-sm">
-            <span className="text-text-muted">{topModel?.usageShare ?? 0}% of total tokens</span>
+          <div className="mt-2 text-sm text-text-muted">
+            {largestProvider ? `${largestProvider.available_model_count} live models` : "No healthy provider catalogs yet"}
           </div>
         </article>
 
         <article className="card-surface p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex flex-col">
-              <p className="text-sm font-medium text-text-secondary">Average latency</p>
-              <p className="mt-1 text-lg font-semibold text-text-primary">
-                {payload?.totals.avgLatencyMs ?? 0} ms
-              </p>
+              <p className="text-sm font-medium text-text-secondary">Latest refresh</p>
+              <p className="mt-1 text-lg font-semibold text-text-primary">{latestFetch}</p>
             </div>
             <span className="card-surface-soft inline-flex h-10 w-10 items-center justify-center rounded-xl text-text-secondary">
               <ClockIcon size={20} />
             </span>
           </div>
-          <div className="mt-2 flex items-center gap-2 text-sm">
-            <span className="text-text-muted">
-              {payload?.totals.errorRate ?? 0}% model-level error rate
-            </span>
+          <div className="mt-2 text-sm text-text-muted">
+            Last successful provider-model fetch timestamp
           </div>
         </article>
       </section>
 
       <section className="card-surface overflow-hidden">
+        <div className="border-b border-border-subtle px-5 py-4 text-sm text-text-secondary">
+          Live model discovery only. This table comes directly from healthy providers&apos; upstream model-list APIs.
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full table-fixed border-collapse text-left text-sm tabular-nums">
             <colgroup>
-              <col style={{ width: "28%" }} />
-              <col style={{ width: "13%" }} />
-              <col style={{ width: "23%" }} />
-              <col style={{ width: "9%" }} />
-              <col style={{ width: "12%" }} />
+              <col style={{ width: "22%" }} />
               <col style={{ width: "15%" }} />
+              <col style={{ width: "26%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "14%" }} />
             </colgroup>
             <thead>
               <tr className="bg-bg-card-muted text-text-secondary">
                 <th className="px-5 py-3 font-medium whitespace-nowrap">Model</th>
                 <th className="px-5 py-3 font-medium whitespace-nowrap">Provider</th>
-                <th className="px-5 py-3 font-medium whitespace-nowrap">Usage share</th>
-                <th className="px-5 py-3 font-medium whitespace-nowrap">Cost</th>
-                <th className="px-5 py-3 font-medium whitespace-nowrap">Context window</th>
-                <th className="px-5 py-3 font-medium whitespace-nowrap">Usage (7D)</th>
+                <th className="px-5 py-3 font-medium whitespace-nowrap">Model ID</th>
+                <th className="px-5 py-3 font-medium whitespace-nowrap">Owner</th>
+                <th className="px-5 py-3 font-medium whitespace-nowrap">Context</th>
+                <th className="px-5 py-3 font-medium whitespace-nowrap">Fetched</th>
               </tr>
             </thead>
             <tbody>
               {pagedRows.map((model) => (
                 <tr
                   key={model.id}
-                  onClick={() => setSelectedModel(model)}
-                  className="border-t border-border-subtle text-text-secondary hover:bg-bg-card-muted cursor-pointer"
+                  className="border-t border-border-subtle text-text-secondary hover:bg-bg-card-muted"
                 >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">
@@ -371,37 +356,18 @@ export default function ModelsPage() {
                       </span>
                     </div>
                   </td>
-                  <td className="px-5 py-3">{model.provider}</td>
+                  <td className="px-5 py-3 text-text-primary">{model.provider}</td>
                   <td className="px-5 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="w-9 text-sm text-text-primary">{model.usageShare}%</span>
-                      <div className="h-1.5 w-32 rounded-full bg-bg-card-muted">
-                        <div
-                          className="h-full rounded-full bg-accent-slate"
-                          style={{ width: `${model.usageShare}%` }}
-                        />
-                      </div>
+                    <div className="truncate text-text-primary" title={model.modelId}>
+                      {model.modelId}
+                    </div>
+                    <div className="mt-1 truncate text-xs text-text-muted" title={model.baseUrl}>
+                      {model.baseUrl}
                     </div>
                   </td>
-                  <td className="px-5 py-3 text-text-primary">{formatCost(model.costUsd)}</td>
+                  <td className="px-5 py-3 text-text-primary">{model.owner}</td>
                   <td className="px-5 py-3 text-text-primary">{model.contextWindow}</td>
-                  <td className="px-5 py-3">
-                    <svg
-                      viewBox="0 0 128 24"
-                      className="h-6 w-32 text-accent-slate"
-                      role="img"
-                      aria-label={`${model.displayName} seven day usage trend`}
-                    >
-                      <polyline
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        points={buildSparklinePoints(model.sparklineValues)}
-                      />
-                    </svg>
-                  </td>
+                  <td className="px-5 py-3 text-text-primary">{formatTimestamp(model.fetchedAt)}</td>
                 </tr>
               ))}
               {Array.from({ length: emptyRowCount }).map((_, index) => (
@@ -422,19 +388,17 @@ export default function ModelsPage() {
                     <span className="opacity-0">placeholder</span>
                   </td>
                   <td className="px-5 py-3">
-                    <div className="flex items-center gap-3 opacity-0">
-                      <span className="w-9 text-sm">00%</span>
-                      <div className="h-1.5 w-32 rounded-full" />
-                    </div>
+                    <div className="opacity-0">placeholder</div>
+                    <div className="mt-1 opacity-0">placeholder</div>
                   </td>
                   <td className="px-5 py-3">
-                    <span className="opacity-0">$0.00</span>
+                    <span className="opacity-0">placeholder</span>
                   </td>
                   <td className="px-5 py-3">
-                    <span className="opacity-0">000K</span>
+                    <span className="opacity-0">Unknown</span>
                   </td>
                   <td className="px-5 py-3">
-                    <div className="h-6 w-32 opacity-0" />
+                    <span className="opacity-0">Unknown</span>
                   </td>
                 </tr>
               ))}
@@ -469,11 +433,11 @@ export default function ModelsPage() {
                     type="button"
                     onClick={() => setCurrentPage(page)}
                     className={
-                      page === currentPage
+                      page === safeCurrentPage
                         ? "inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-text-primary px-2 text-text-primary"
                         : "inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-border-subtle px-2"
                     }
-                    aria-current={page === currentPage ? "page" : undefined}
+                    aria-current={page === safeCurrentPage ? "page" : undefined}
                   >
                     {page}
                   </button>
@@ -493,12 +457,6 @@ export default function ModelsPage() {
           </div>
         </div>
       </section>
-
-      <ModelDetailsModal
-        model={selectedModel}
-        onClose={() => setSelectedModel(null)}
-        renderProviderIcon={renderProviderIcon}
-      />
     </div>
   );
 }
