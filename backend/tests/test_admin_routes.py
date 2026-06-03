@@ -359,3 +359,66 @@ def test_provider_health_prefers_configured_enabled_credential(
     cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
     assert cards_by_id["openai"]["status"] == "operational"
     assert cards_by_id["openai"]["availableModelCount"] == 1
+
+
+def test_provider_models_endpoint_returns_live_models_for_healthy_providers_only(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    import httpx
+
+    class FakeResponse:
+        def __init__(self, payload: dict) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None):
+            headers = headers or {}
+            if "api.openai.com" in url:
+                assert headers.get("Authorization") == "Bearer sk-openai-seeded"
+                return FakeResponse(
+                    {
+                        "data": [
+                            {"id": "gpt-4.1", "owned_by": "openai"},
+                            {"id": "gpt-4.1-mini", "owned_by": "openai"},
+                        ]
+                    }
+                )
+            if "localhost:11434" in url:
+                return FakeResponse(
+                    {
+                        "data": [
+                            {"id": "qwen2.5-coder:latest", "owned_by": "ollama"},
+                        ]
+                    }
+                )
+            raise httpx.ConnectError("provider unavailable")
+
+    monkeypatch.setattr("app.api.admin.httpx.Client", FakeHttpClient)
+
+    response = client.get("/admin/providers/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    providers = {entry["provider_id"]: entry for entry in payload["providers"]}
+    assert set(providers) == {"openai", "ollama"}
+    assert providers["openai"]["available_model_count"] == 2
+    assert providers["openai"]["models"][0]["id"] == "gpt-4.1"
+    assert providers["openai"]["status"] == "operational"
+    assert providers["ollama"]["available_model_count"] == 1
+    assert providers["ollama"]["models"][0]["id"] == "qwen2.5-coder:latest"
