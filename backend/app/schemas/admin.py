@@ -168,3 +168,24 @@ class ProviderHealthCard(BaseModel):
 class ProviderHealthPayload(BaseModel):
     cards: list[ProviderHealthCard]
     details: list[dict]
+
+
+class ProviderModelSummary(BaseModel):
+    id: str
+    display_name: str | None = None
+    owned_by: str | None = None
+
+
+class ProviderModelsEntry(BaseModel):
+    provider_id: str
+    display_name: str
+    provider_type: ProviderType
+    base_url: str
+    status: Literal["operational", "degraded", "offline"]
+    available_model_count: int
+    fetched_at: str
+    models: list[ProviderModelSummary]
+
+
+class ProviderModelsPayload(BaseModel):
+    providers: list[ProviderModelsEntry]

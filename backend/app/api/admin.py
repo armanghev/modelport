@@ -28,6 +28,8 @@ from app.schemas.admin import (
     AppearanceSettings,
     CredentialSecretResponse,
     PricingOverrideCreate,
+    ProviderModelsEntry,
+    ProviderModelsPayload,
     PricingOverrideResponse,
     PricingOverrideUpdate,
     ProviderCreate,
@@ -175,6 +177,42 @@ def parse_model_count(payload: dict) -> int:
     return 0
 
 
+def parse_provider_models(payload: dict) -> list[dict]:
+    raw_models = payload.get("data")
+    if not isinstance(raw_models, list):
+        raw_models = payload.get("models")
+    if not isinstance(raw_models, list):
+        return []
+
+    models: list[dict] = []
+    for item in raw_models:
+        if isinstance(item, str):
+            models.append({"id": item, "display_name": None, "owned_by": None})
+            continue
+        if not isinstance(item, dict):
+            continue
+
+        model_id = item.get("id") or item.get("name")
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        display_name = item.get("display_name")
+        if not isinstance(display_name, str):
+            display_name = item.get("name") if isinstance(item.get("name"), str) else None
+        owned_by = item.get("owned_by")
+        if not isinstance(owned_by, str):
+            owned_by = item.get("provider") if isinstance(item.get("provider"), str) else None
+
+        models.append(
+            {
+                "id": model_id,
+                "display_name": display_name,
+                "owned_by": owned_by,
+            }
+        )
+
+    return models
+
+
 def record_provider_health_check(
     session: Session,
     provider_id: str,
@@ -193,6 +231,28 @@ def record_provider_health_check(
     session.add(record)
     session.flush()
     return record
+
+
+def fetch_provider_models_from_upstream(
+    provider: Provider,
+    secret: str | None,
+) -> tuple[list[dict], int]:
+    headers: dict[str, str] = {}
+    if provider.provider_type == "anthropic_compatible":
+        headers["anthropic-version"] = "2023-06-01"
+        if secret:
+            headers["x-api-key"] = secret
+    elif secret:
+        headers["Authorization"] = f"Bearer {secret}"
+
+    start = time.perf_counter()
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(build_health_check_url(provider), headers=headers)
+        response.raise_for_status()
+        payload = response.json()
+
+    latency_ms = max(1, round((time.perf_counter() - start) * 1000))
+    return parse_provider_models(payload), latency_ms
 
 
 def run_provider_health_check(session: Session, provider: Provider) -> ProviderHealthCheck:
@@ -230,22 +290,9 @@ def run_provider_health_check(session: Session, provider: Provider) -> ProviderH
             "No configured credential available.",
         )
 
-    headers: dict[str, str] = {}
-    if provider.provider_type == "anthropic_compatible":
-        headers["anthropic-version"] = "2023-06-01"
-        if secret:
-            headers["x-api-key"] = secret
-    elif secret:
-        headers["Authorization"] = f"Bearer {secret}"
-
-    start = time.perf_counter()
     try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(build_health_check_url(provider), headers=headers)
-            response.raise_for_status()
-            payload = response.json()
-        latency_ms = max(1, round((time.perf_counter() - start) * 1000))
-        available_model_count = parse_model_count(payload)
+        models, latency_ms = fetch_provider_models_from_upstream(provider, secret)
+        available_model_count = len(models)
         status_value = "operational" if available_model_count > 0 else "degraded"
         error_message = None if available_model_count > 0 else "Provider returned no available models."
         return record_provider_health_check(
@@ -389,6 +436,85 @@ def list_providers(session: Session = Depends(get_session)) -> list[ProviderResp
 @router.get("/providers/health", response_model=ProviderHealthPayload)
 def get_provider_health(session: Session = Depends(get_session)) -> ProviderHealthPayload:
     return ProviderHealthPayload.model_validate(collect_provider_health_payload(session))
+
+
+@router.get("/providers/models", response_model=ProviderModelsPayload)
+def list_provider_models(session: Session = Depends(get_session)) -> ProviderModelsPayload:
+    providers = session.scalars(select(Provider).order_by(Provider.id)).all()
+    results: list[ProviderModelsEntry] = []
+
+    for provider in providers:
+        if not provider.enabled:
+            continue
+
+        credential = get_default_credential(provider)
+        try:
+            secret = resolve_credential_secret(credential)
+        except EncryptionConfigurationError as exc:
+            record_provider_health_check(
+                session,
+                provider.id,
+                "offline",
+                0,
+                0,
+                str(exc),
+            )
+            continue
+
+        if not provider_supports_anonymous_health_check(provider) and not secret:
+            record_provider_health_check(
+                session,
+                provider.id,
+                "offline",
+                0,
+                0,
+                "No configured credential available.",
+            )
+            continue
+
+        try:
+            models, latency_ms = fetch_provider_models_from_upstream(provider, secret)
+        except (httpx.HTTPError, ValueError) as exc:
+            record_provider_health_check(
+                session,
+                provider.id,
+                "offline",
+                0,
+                0,
+                str(exc),
+            )
+            continue
+
+        available_model_count = len(models)
+        status_value = "operational" if available_model_count > 0 else "degraded"
+        error_message = None if available_model_count > 0 else "Provider returned no available models."
+        health_check = record_provider_health_check(
+            session,
+            provider.id,
+            status_value,
+            latency_ms,
+            available_model_count,
+            error_message,
+        )
+
+        if status_value != "operational":
+            continue
+
+        results.append(
+            ProviderModelsEntry(
+                provider_id=provider.id,
+                display_name=provider.display_name,
+                provider_type=provider.provider_type,
+                base_url=provider.base_url,
+                status=status_value,
+                available_model_count=available_model_count,
+                fetched_at=health_check.checked_at.isoformat(),
+                models=models,
+            )
+        )
+
+    session.commit()
+    return ProviderModelsPayload(providers=results)
 
 
 @router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
