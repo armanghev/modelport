@@ -89,6 +89,27 @@ export interface ProviderHealthPayload {
   details: ProviderDetail[];
 }
 
+export interface ProviderCatalogModel {
+  id: string;
+  display_name: string | null;
+  owned_by: string | null;
+}
+
+export interface ProviderCatalogEntry {
+  provider_id: string;
+  display_name: string;
+  provider_type: ProviderType;
+  base_url: string;
+  status: "operational" | "degraded" | "offline";
+  available_model_count: number;
+  fetched_at: string;
+  models: ProviderCatalogModel[];
+}
+
+export interface ProviderModelsPayload {
+  providers: ProviderCatalogEntry[];
+}
+
 const refreshIntervals = ["15s", "30s", "60s", "5m"] as const;
 const trackingLabelMap: Record<
   string,
@@ -237,6 +258,10 @@ export async function fetchAdminSettings() {
 
 export async function fetchProviderHealth() {
   return fetchJson<ProviderHealthPayload>("/admin/providers/health");
+}
+
+export async function fetchProviderModels() {
+  return fetchJson<ProviderModelsPayload>("/admin/providers/models");
 }
 
 export async function revealCredentialSecret(credentialId: string) {
