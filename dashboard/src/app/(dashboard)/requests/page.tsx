@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   CaretDownIcon,
@@ -23,7 +23,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { dashboardMockData, type RequestRow, type RequestStatus } from "@/lib/mock-dashboard-data";
+import { fetchRequestsAnalytics } from "@/lib/analytics-api";
+import { type RequestRow, type RequestStatus } from "@/lib/mock-dashboard-data";
 
 type RequestOutcome = RequestStatus;
 type SortDirection = "asc" | "desc";
@@ -144,14 +145,16 @@ function FilterSelect({
 }
 
 export default function RequestsPage() {
-  const allRows = dashboardMockData.requests.rows;
+  const [payload, setPayload] = useState<Awaited<ReturnType<typeof fetchRequestsAnalytics>> | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const rowsPerPage = 5;
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     key: "timestamp",
     direction: "desc",
   });
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedRowId, setSelectedRowId] = useState<string | null>(allRows[0]?.id ?? null);
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [clientFilter, setClientFilter] = useState<RequestRow["client"] | "all">("all");
   const [providerFilter, setProviderFilter] = useState<string>("all");
@@ -159,6 +162,38 @@ export default function RequestsPage() {
   const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("all");
   const [timeRangeFilter, setTimeRangeFilter] = useState<RequestTimeRange>("24h");
   const [referenceNow] = useState(() => Date.now());
+  const allRows = useMemo(() => payload?.rows ?? [], [payload]);
+
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      try {
+        const nextPayload = await fetchRequestsAnalytics();
+        if (!active) {
+          return;
+        }
+        setPayload(nextPayload);
+        setSelectedRowId(nextPayload.rows[0]?.id ?? null);
+        setErrorMessage(null);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to load request analytics.",
+        );
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filteredRows = useMemo(() => {
     const cutoffTimestamp = referenceNow - TIME_RANGE_IN_MS[timeRangeFilter];
@@ -281,21 +316,21 @@ export default function RequestsPage() {
   const filterOptions = {
     client: [
       { value: "all", label: "All Clients" },
-      ...dashboardMockData.requests.filters.clients.map((client) => ({
+      ...(payload?.filters.clients ?? []).map((client) => ({
         value: client,
         label: client,
       })),
     ],
     provider: [
       { value: "all", label: "All Providers" },
-      ...dashboardMockData.requests.filters.providers.map((provider) => ({
+      ...(payload?.filters.providers ?? []).map((provider) => ({
         value: provider,
         label: provider,
       })),
     ],
     model: [
       { value: "all", label: "All Models" },
-      ...dashboardMockData.requests.filters.models.map((model) => ({
+      ...(payload?.filters.models ?? []).map((model) => ({
         value: model,
         label: model,
       })),
@@ -314,8 +349,17 @@ export default function RequestsPage() {
     ],
   };
 
+  if (isLoading) {
+    return <div className="text-sm text-text-secondary">Loading request analytics...</div>;
+  }
+
   return (
     <div className="space-y-5">
+      {errorMessage ? (
+        <div className="rounded-xl border border-accent-red/20 bg-accent-red-bg px-4 py-3 text-sm text-accent-red">
+          {errorMessage}
+        </div>
+      ) : null}
       <section className="grid items-end gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.9fr)_repeat(4,minmax(0,1fr))_minmax(0,1.1fr)_auto]">
         <div className="relative min-w-0 xl:col-span-1">
           <MagnifyingGlassIcon

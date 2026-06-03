@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
-  ArrowDownIcon,
   CaretLeftIcon,
   CaretRightIcon,
   ClockIcon,
@@ -23,7 +22,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { dashboardMockData, type RequestRow } from "@/lib/mock-dashboard-data";
+import {
+  fetchCostsAnalytics,
+  fetchRequestsAnalytics,
+} from "@/lib/analytics-api";
+import { type RequestRow } from "@/lib/mock-dashboard-data";
 
 type CostBreakdownView = "provider" | "model";
 
@@ -34,47 +37,6 @@ interface CostBreakdownItem {
   provider?: string;
 }
 
-const costBreakdownByProvider: CostBreakdownItem[] = [
-  { id: "prov_anthropic", label: "Anthropic", amountUsd: 111.8, provider: "Anthropic" },
-  { id: "prov_openai", label: "OpenAI", amountUsd: 77.06, provider: "OpenAI" },
-  { id: "prov_google", label: "Google", amountUsd: 34.29, provider: "Google" },
-  { id: "prov_meta", label: "Meta", amountUsd: 17.36, provider: "Meta" },
-  { id: "prov_mistral", label: "Mistral AI", amountUsd: 7.85, provider: "Mistral AI" },
-];
-
-const costBreakdownByModel: CostBreakdownItem[] = [
-  {
-    id: "model_claude_35_sonnet",
-    label: "Claude 3.5 Sonnet",
-    amountUsd: 93.42,
-    provider: "Anthropic",
-  },
-  {
-    id: "model_gpt_41",
-    label: "GPT-4.1",
-    amountUsd: 71.15,
-    provider: "OpenAI",
-  },
-  {
-    id: "model_gemini_25_pro",
-    label: "Gemini 2.5 Pro",
-    amountUsd: 40.76,
-    provider: "Google",
-  },
-  {
-    id: "model_gpt_4o_mini",
-    label: "GPT-4o mini",
-    amountUsd: 24.54,
-    provider: "OpenAI",
-  },
-  {
-    id: "model_claude_3_haiku",
-    label: "Claude 3 Haiku",
-    amountUsd: 18.49,
-    provider: "Anthropic",
-  },
-];
-
 function formatCost(value: number, minimumFractionDigits = 2): string {
   return value.toLocaleString("en-US", {
     style: "currency",
@@ -82,10 +44,6 @@ function formatCost(value: number, minimumFractionDigits = 2): string {
     minimumFractionDigits,
     maximumFractionDigits: minimumFractionDigits,
   });
-}
-
-function formatPercentage(value: number): string {
-  return `${value.toFixed(1)}%`;
 }
 
 function formatLongTimestamp(value: string): string {
@@ -111,82 +69,30 @@ function getProviderDisplayName(provider: string): string {
   return provider;
 }
 
-function buildCostSeries(values: number[], stepMs: number, endDate: Date): InteractiveAreaChartPoint[] {
-  const startTime = endDate.getTime() - stepMs * (values.length - 1);
+function buildCostRangeSeries(
+  rows: RequestRow[],
+  hours: number,
+  buckets: number,
+  referenceDate: Date,
+): InteractiveAreaChartPoint[] {
+  const bucketMs = (hours * 60 * 60 * 1000) / buckets;
+  const startTime = referenceDate.getTime() - bucketMs * (buckets - 1);
 
-  return values.map((value, index) => ({
-    date: new Date(startTime + stepMs * index).toISOString(),
-    primary: value,
-    secondary: 0,
-  }));
-}
-
-function buildCostChartData(referenceDate: Date) {
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-
-  const oneHour = buildCostSeries(
-    [2.6, 2.9, 3.1, 3.4, 3.8, 4.2, 4.6, 5.1, 4.9, 4.5, 4.1, 3.7],
-    5 * minute,
-    referenceDate,
-  );
-
-  const sixHours = buildCostSeries(
-    [
-      4.2, 4.1, 4.3, 4.6, 4.8, 5.1, 5.4, 5.9, 6.3, 6.8, 7.2, 7.7, 8.1, 8.5, 8.2,
-      7.9, 7.4, 6.9, 6.5, 6.1, 5.7, 5.4, 5.1, 4.8,
-    ],
-    15 * minute,
-    referenceDate,
-  );
-
-  const oneDay = buildCostSeries(
-    [
-      4.8, 4.4, 4.0, 4.2, 5.0, 6.1, 7.5, 9.9, 10.4, 12.9, 11.3, 12.4, 14.5, 15.2,
-      17.1, 16.2, 14.7, 12.1, 13.6, 12.2, 11.4, 10.1, 8.8, 7.4, 6.5, 5.1,
-    ],
-    hour,
-    referenceDate,
-  );
-
-  const sevenDays = buildCostSeries([6.9, 7.3, 8.0, 6.1, 6.7, 8.1, 8.6], day, referenceDate);
-
-  const thirtyDays = buildCostSeries(
-    [
-      5.6, 5.9, 5.8, 6.1, 6.3, 6.5, 6.8, 7.2, 7.1, 7.4, 7.8, 8.0, 8.2, 8.1, 8.4,
-      8.7, 8.6, 8.9, 9.1, 9.0, 9.4, 9.6, 9.3, 9.7, 9.9, 10.1, 10.2, 10.4, 10.7,
-      10.9,
-    ],
-    day,
-    referenceDate,
-  );
-
-  return {
-    "1h": oneHour,
-    "6h": sixHours,
-    "1d": oneDay,
-    "7d": sevenDays,
-    "30d": thirtyDays,
-  };
-}
-
-function buildRecentHighCostRows(sourceRows: RequestRow[]): RequestRow[] {
-  const baseRows = sourceRows.slice(0, 5);
-  const referenceTime = new Date(baseRows[0]?.timestamp ?? dashboardMockData.generatedAt).getTime();
-
-  return Array.from({ length: 25 }, (_, index) => {
-    const baseRow = baseRows[index % baseRows.length];
-    const sequence = Math.floor(index / baseRows.length);
-    const tokenDecay = 1 - Math.min(0.28, sequence * 0.05);
-    const costDecay = 1 - Math.min(0.2, sequence * 0.04);
+  return Array.from({ length: buckets }, (_, index) => {
+    const bucketStart = startTime + bucketMs * index;
+    const bucketEnd = bucketStart + bucketMs;
+    const primary = rows.reduce((sum, row) => {
+      const timestamp = new Date(row.timestamp).getTime();
+      if (timestamp >= bucketStart && timestamp < bucketEnd) {
+        return sum + row.costUsd;
+      }
+      return sum;
+    }, 0);
 
     return {
-      ...baseRow,
-      id: `high_cost_${index + 1}`,
-      timestamp: new Date(referenceTime - index * 44_000).toISOString(),
-      totalTokens: Math.round(baseRow.totalTokens * tokenDecay),
-      costUsd: Number((baseRow.costUsd * costDecay).toFixed(4)),
+      date: new Date(bucketStart).toISOString(),
+      primary: Number(primary.toFixed(4)),
+      secondary: 0,
     };
   });
 }
@@ -202,14 +108,12 @@ function buildPageButtons(currentPage: number, totalPages: number): number[] {
 function CostMetricCard({
   label,
   value,
-  changePercent,
-  comparisonLabel,
+  subtext,
   icon,
 }: {
   label: string;
   value: string;
-  changePercent: number;
-  comparisonLabel: string;
+  subtext: string;
   icon: React.ComponentType<{ size?: string | number }>;
 }) {
   const Icon = icon;
@@ -226,11 +130,7 @@ function CostMetricCard({
         </span>
       </div>
       <div className="mt-2 flex items-center gap-2 text-sm">
-        <span className="inline-flex items-center gap-1 text-accent-green">
-          <ArrowDownIcon size={14} weight="bold" />
-          {formatPercentage(changePercent)}
-        </span>
-        <span className="text-text-muted">{comparisonLabel}</span>
+        <span className="text-text-muted">{subtext}</span>
       </div>
     </article>
   );
@@ -239,17 +139,61 @@ function CostMetricCard({
 export default function CostsPage() {
   const [breakdownView, setBreakdownView] = useState<CostBreakdownView>("provider");
   const [currentPage, setCurrentPage] = useState(1);
+  const [costsPayload, setCostsPayload] = useState<Awaited<ReturnType<typeof fetchCostsAnalytics>> | null>(null);
+  const [requestRows, setRequestRows] = useState<RequestRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const rowsPerPage = 5;
 
-  const chartDataByRange = useMemo(
-    () => buildCostChartData(new Date(dashboardMockData.generatedAt)),
-    [],
-  );
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      try {
+        const [nextCosts, nextRequests] = await Promise.all([
+          fetchCostsAnalytics(),
+          fetchRequestsAnalytics(),
+        ]);
+        if (!active) {
+          return;
+        }
+        setCostsPayload(nextCosts);
+        setRequestRows(nextRequests.rows);
+        setErrorMessage(null);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to load cost analytics.",
+        );
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const chartDataByRange = useMemo(() => {
+    const referenceDate = new Date();
+    return {
+      "1h": buildCostRangeSeries(requestRows, 1, 12, referenceDate),
+      "6h": buildCostRangeSeries(requestRows, 6, 24, referenceDate),
+      "1d": buildCostRangeSeries(requestRows, 24, 24, referenceDate),
+      "7d": buildCostRangeSeries(requestRows, 24 * 7, 7, referenceDate),
+      "30d": buildCostRangeSeries(requestRows, 24 * 30, 30, referenceDate),
+    };
+  }, [requestRows]);
 
   const highCostRows = useMemo(
-    () => buildRecentHighCostRows(dashboardMockData.requests.rows),
-    [],
+    () => costsPayload?.recentHighCostRequests ?? [],
+    [costsPayload],
   );
 
   const totalRows = highCostRows.length;
@@ -268,39 +212,59 @@ export default function CostsPage() {
     [safeCurrentPage, totalPages],
   );
 
-  const breakdownItems =
-    breakdownView === "provider" ? costBreakdownByProvider : costBreakdownByModel;
+  const breakdownItems: CostBreakdownItem[] =
+    breakdownView === "provider"
+      ? (costsPayload?.byProvider ?? []).map((item) => ({
+          id: `provider_${item.label}`,
+          label: item.label,
+          amountUsd: item.amountUsd,
+          provider: item.label,
+        }))
+      : (costsPayload?.byModel ?? []).map((item) => ({
+          id: `model_${item.label}`,
+          label: item.label,
+          amountUsd: item.amountUsd,
+        }));
   const breakdownTotal = breakdownItems.reduce((sum, item) => sum + item.amountUsd, 0);
+  const averageCostPerRequest =
+    requestRows.length > 0
+      ? requestRows.reduce((sum, row) => sum + row.costUsd, 0) / requestRows.length
+      : 0;
+
+  if (isLoading) {
+    return <div className="text-sm text-text-secondary">Loading cost analytics...</div>;
+  }
 
   return (
     <div className="space-y-6">
+      {errorMessage ? (
+        <div className="rounded-xl border border-accent-red/20 bg-accent-red-bg px-4 py-3 text-sm text-accent-red">
+          {errorMessage}
+        </div>
+      ) : null}
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <CostMetricCard
           label="Spend today"
-          value={formatCost(8.42)}
-          changePercent={12.7}
-          comparisonLabel="vs yesterday"
+          value={formatCost(costsPayload?.totals.todayUsd ?? 0)}
+          subtext="Tracked since UTC midnight"
           icon={CurrencyDollarIcon}
         />
         <CostMetricCard
           label="Spend this week"
-          value={formatCost(56.71)}
-          changePercent={8.9}
-          comparisonLabel="vs last week"
+          value={formatCost(costsPayload?.totals.weekUsd ?? 0)}
+          subtext="Last 7 days"
           icon={ClockIcon}
         />
         <CostMetricCard
-          label="Projected monthly cost"
-          value={formatCost(248.36)}
-          changePercent={6.3}
-          comparisonLabel="vs last month"
+          label="Spend this month"
+          value={formatCost(costsPayload?.totals.monthUsd ?? 0)}
+          subtext="Last 30 days"
           icon={GaugeIcon}
         />
         <CostMetricCard
           label="Average cost per request"
-          value={formatCost(0.0031, 4)}
-          changePercent={7.4}
-          comparisonLabel="vs yesterday"
+          value={formatCost(averageCostPerRequest, 4)}
+          subtext="Across tracked requests"
           icon={ReceiptIcon}
         />
       </section>

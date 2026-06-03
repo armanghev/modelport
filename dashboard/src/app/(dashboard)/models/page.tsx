@@ -1,10 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
-  ArrowDownIcon,
-  ArrowUpIcon,
   CaretLeftIcon,
   CaretRightIcon,
   ClockIcon,
@@ -20,7 +18,7 @@ import {
   buildUsageBars,
   downsampleSeries,
 } from "@/lib/model-usage";
-import { dashboardMockData } from "@/lib/mock-dashboard-data";
+import { fetchModelsAnalytics } from "@/lib/analytics-api";
 
 interface ModelTableRow {
   id: string;
@@ -140,8 +138,41 @@ export default function ModelsPage() {
   const rowsPerPage = 8;
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedModel, setSelectedModel] = useState<ModelTableRow | null>(null);
+  const [payload, setPayload] = useState<Awaited<ReturnType<typeof fetchModelsAnalytics>> | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const rawModels = dashboardMockData.models.models;
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      try {
+        const nextPayload = await fetchModelsAnalytics();
+        if (!active) {
+          return;
+        }
+        setPayload(nextPayload);
+        setErrorMessage(null);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to load model analytics.",
+        );
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const rawModels = useMemo(() => payload?.models ?? [], [payload]);
   const totalTokens = rawModels.reduce((sum, model) => sum + model.tokenTotal, 0);
 
   const modelRows: ModelTableRow[] = useMemo(() => {
@@ -215,8 +246,17 @@ export default function ModelsPage() {
   const canGoNext = currentPage < totalPages;
   const emptyRowCount = Math.max(0, rowsPerPage - pagedRows.length);
 
+  if (isLoading) {
+    return <div className="text-sm text-text-secondary">Loading model analytics...</div>;
+  }
+
   return (
     <div className="space-y-6">
+      {errorMessage ? (
+        <div className="rounded-xl border border-accent-red/20 bg-accent-red-bg px-4 py-3 text-sm text-accent-red">
+          {errorMessage}
+        </div>
+      ) : null}
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <article className="card-surface p-5">
           <div className="flex items-start justify-between gap-3">
@@ -231,10 +271,7 @@ export default function ModelsPage() {
             </span>
           </div>
           <div className="mt-2 flex items-center gap-2 text-sm">
-            <span className="inline-flex items-center gap-1 text-accent-green">
-              <ArrowUpIcon size={14} weight="bold" />1
-            </span>
-            <span className="text-text-muted">vs last week</span>
+            <span className="text-text-muted">Tracked models with request history</span>
           </div>
         </article>
 
@@ -251,10 +288,7 @@ export default function ModelsPage() {
             </span>
           </div>
           <div className="mt-2 flex items-center gap-2 text-sm">
-            <span className="inline-flex items-center gap-1 text-accent-green">
-              <ArrowUpIcon size={14} weight="bold" />22.7%
-            </span>
-            <span className="text-text-muted">vs last week</span>
+            <span className="text-text-muted">Combined input and output tokens</span>
           </div>
         </article>
 
@@ -284,7 +318,7 @@ export default function ModelsPage() {
             <div className="flex flex-col">
               <p className="text-sm font-medium text-text-secondary">Average latency</p>
               <p className="mt-1 text-lg font-semibold text-text-primary">
-                {dashboardMockData.models.totals.avgLatencyMs} ms
+                {payload?.totals.avgLatencyMs ?? 0} ms
               </p>
             </div>
             <span className="card-surface-soft inline-flex h-10 w-10 items-center justify-center rounded-xl text-text-secondary">
@@ -292,10 +326,9 @@ export default function ModelsPage() {
             </span>
           </div>
           <div className="mt-2 flex items-center gap-2 text-sm">
-            <span className="inline-flex items-center gap-1 text-accent-green">
-              <ArrowDownIcon size={14} weight="bold" />6.1%
+            <span className="text-text-muted">
+              {payload?.totals.errorRate ?? 0}% model-level error rate
             </span>
-            <span className="text-text-muted">vs last week</span>
           </div>
         </article>
       </section>

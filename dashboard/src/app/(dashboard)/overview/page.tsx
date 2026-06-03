@@ -8,13 +8,13 @@ import {
   RobotIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import {
-  dashboardMockData,
   type OverviewMetric,
   type RequestStatus,
   type UsagePoint,
 } from "@/lib/mock-dashboard-data";
 import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { InteractiveAreaChart } from "@/components/dashboard/interactive-area-chart";
+import { fetchOverviewAnalytics } from "@/lib/analytics-api";
 
 type MetricIcon = typeof LightningIcon;
 
@@ -86,25 +86,20 @@ function buildSeriesFromPoints(
   });
 }
 
-const tokenAreaChartDataByRange = (() => {
-  const usage = dashboardMockData.overview.tokenUsage;
-  const referenceDate = new Date(dashboardMockData.generatedAt);
+export default async function OverviewPage() {
+  const overview = await fetchOverviewAnalytics();
+  const referenceDate = new Date();
   const dayMs = 24 * 60 * 60 * 1000;
   const hourMs = 60 * 60 * 1000;
   const minuteMs = 60 * 1000;
-
-  return {
-    "30d": buildSeriesFromPoints(usage["30d"].points, referenceDate, dayMs),
-    "7d": buildSeriesFromPoints(usage["7d"].points, referenceDate, dayMs),
-    "1d": buildSeriesFromPoints(usage["24h"].points, referenceDate, hourMs),
-    "6h": buildSeriesFromPoints(usage["6h"].points, referenceDate, 15 * minuteMs),
-    "1h": buildSeriesFromPoints(usage["1h"].points, referenceDate, 5 * minuteMs),
+  const tokenAreaChartDataByRange = {
+    "30d": buildSeriesFromPoints(overview.tokenUsage["30d"].points, referenceDate, dayMs),
+    "7d": buildSeriesFromPoints(overview.tokenUsage["7d"].points, referenceDate, dayMs),
+    "1d": buildSeriesFromPoints(overview.tokenUsage["24h"].points, referenceDate, hourMs),
+    "6h": buildSeriesFromPoints(overview.tokenUsage["6h"].points, referenceDate, 15 * minuteMs),
+    "1h": buildSeriesFromPoints(overview.tokenUsage["1h"].points, referenceDate, 5 * minuteMs),
   };
-})();
-const tokenAreaChartData = tokenAreaChartDataByRange["30d"];
-
-export default function OverviewPage() {
-  const { overview } = dashboardMockData;
+  const tokenAreaChartData = tokenAreaChartDataByRange["30d"];
   const topMetricModelName = overview.metrics.find(
     (metric) => metric.id === "top_model",
   )?.value;
