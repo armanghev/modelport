@@ -88,6 +88,31 @@ class PricingOverride(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
+class ApiRequest(Base):
+    __tablename__ = "api_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    input_format: Mapped[str] = mapped_column(String(32), nullable=False)
+    output_format: Mapped[str] = mapped_column(String(32), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
+    client_name: Mapped[str | None] = mapped_column(String(255))
+    requested_model: Mapped[str | None] = mapped_column(String(255))
+    resolved_model: Mapped[str | None] = mapped_column(String(255))
+    provider: Mapped[str | None] = mapped_column(String(64))
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    token_source: Mapped[str | None] = mapped_column(String(64))
+    estimated_cost_usd: Mapped[float | None] = mapped_column(Float)
+    pricing_source: Mapped[str | None] = mapped_column(String(64))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    status_code: Mapped[int | None] = mapped_column(Integer)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    streamed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    request_id: Mapped[str | None] = mapped_column(String(255))
+
+
 class ProviderHealthCheck(Base):
     __tablename__ = "provider_health_checks"
 
