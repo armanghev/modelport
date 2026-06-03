@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
+
+from app.database import ProviderHealthCheck
 
 
 def test_messages_route_requires_proxy_token(client: TestClient) -> None:
@@ -460,3 +464,151 @@ def test_chat_completions_route_streams_openai_sse_chunks(
     assert '"content":"Hello"' in body
     assert '"content":" world"' in body
     assert "data: [DONE]" in body
+
+
+def test_messages_route_uses_fallback_provider_when_primary_is_degraded(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        session.add(
+            ProviderHealthCheck(
+                provider_id="openrouter",
+                status="degraded",
+                latency_ms=500,
+                available_model_count=3,
+                error_message="intermittent upstream errors",
+                checked_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            ProviderHealthCheck(
+                provider_id="openai",
+                status="operational",
+                latency_ms=120,
+                available_model_count=20,
+                error_message=None,
+                checked_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_failover_123",
+                "model": "gpt-4.1-mini",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Failover route"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://api.openai.com/v1/chat/completions"
+            assert headers is not None
+            assert headers["Authorization"] == "Bearer sk-openai-seeded"
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openrouter",
+            "fallback_providers": ["openai"],
+            "model": "gpt-4.1-mini",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"][0]["text"] == "Failover route"
+
+
+def test_chat_completions_route_falls_back_after_primary_upstream_failure(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    class FirstFailThenSucceedClient:
+        call_count = 0
+
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            from httpx import Request, Response, HTTPStatusError
+
+            type(self).call_count += 1
+            if "openrouter.ai" in url:
+                request = Request("POST", url)
+                response = Response(503, request=request, text="temporary outage")
+                raise HTTPStatusError("temporary outage", request=request, response=response)
+
+            assert url == "https://api.openai.com/v1/chat/completions"
+
+            class FakeResponse:
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict:
+                    return {
+                        "id": "chatcmpl_failover_openai_123",
+                        "object": "chat.completion",
+                        "created": 1_717_171_717,
+                        "model": "gpt-4.1-mini",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": "Fallback succeeded"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 6, "completion_tokens": 4, "total_tokens": 10},
+                    }
+
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FirstFailThenSucceedClient)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openrouter",
+            "fallback_providers": ["openai"],
+            "model": "gpt-4.1-mini",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Fallback succeeded"
+    assert FirstFailThenSucceedClient.call_count == 2

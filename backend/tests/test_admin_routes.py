@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
+
+from app.database import ProviderHealthCheck
 
 
 def test_provider_routes_list_create_and_patch(client: TestClient) -> None:
@@ -30,6 +34,30 @@ def test_provider_routes_list_create_and_patch(client: TestClient) -> None:
     assert patch_response.status_code == 200
     assert patch_response.json()["display_name"] == "Groq Cloud"
     assert patch_response.json()["enabled"] is False
+
+
+def test_provider_list_includes_latest_health_state(client: TestClient) -> None:
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        session.add(
+            ProviderHealthCheck(
+                provider_id="openai",
+                status="degraded",
+                latency_ms=321,
+                available_model_count=7,
+                error_message="rate limited",
+                checked_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    list_response = client.get("/admin/providers")
+
+    assert list_response.status_code == 200
+    openai_provider = next(provider for provider in list_response.json() if provider["id"] == "openai")
+    assert openai_provider["health_status"] == "degraded"
+    assert openai_provider["last_error"] == "rate limited"
+    assert openai_provider["last_checked_at"] is not None
 
 
 def test_credential_routes_mask_and_reveal(client: TestClient) -> None:
