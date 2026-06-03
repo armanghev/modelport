@@ -16,6 +16,7 @@ def test_startup_seeds_providers_and_credentials(client: TestClient) -> None:
     payload = settings_response.json()
 
     assert {provider["id"] for provider in payload["providers"]} == {
+        "gemini",
         "openai",
         "openrouter",
         "ollama",
@@ -34,9 +35,11 @@ def test_seed_is_idempotent(app_config: Path, encryption_key: str) -> None:
     previous_encryption = os.environ.get("PROXY_ENCRYPTION_KEY")
     previous_openai = os.environ.get("OPENAI_API_KEY")
     previous_openrouter = os.environ.get("OPENROUTER_API_KEY")
+    previous_gemini = os.environ.get("GEMINI_API_KEY")
     os.environ["PROXY_ENCRYPTION_KEY"] = encryption_key
     os.environ["OPENAI_API_KEY"] = "sk-openai-seeded"
     os.environ["OPENROUTER_API_KEY"] = "sk-openrouter-seeded"
+    os.environ["GEMINI_API_KEY"] = "sk-gemini-seeded"
 
     app = create_app(config_path=app_config)
     with TestClient(app):
@@ -46,8 +49,8 @@ def test_seed_is_idempotent(app_config: Path, encryption_key: str) -> None:
 
     session_factory = build_session_factory(f"sqlite:///{app_config.parent / 'test.db'}")
     with session_factory() as session:
-        assert session.query(Provider).count() == 3
-        assert session.query(ProviderCredential).count() == 2
+        assert session.query(Provider).count() == 4
+        assert session.query(ProviderCredential).count() == 3
 
     if previous_encryption is None:
         os.environ.pop("PROXY_ENCRYPTION_KEY", None)
@@ -61,6 +64,10 @@ def test_seed_is_idempotent(app_config: Path, encryption_key: str) -> None:
         os.environ.pop("OPENROUTER_API_KEY", None)
     else:
         os.environ["OPENROUTER_API_KEY"] = previous_openrouter
+    if previous_gemini is None:
+        os.environ.pop("GEMINI_API_KEY", None)
+    else:
+        os.environ["GEMINI_API_KEY"] = previous_gemini
 
 
 def test_database_credentials_are_encrypted_and_revealed_explicitly(client: TestClient, app_config: Path) -> None:

@@ -356,6 +356,88 @@ def test_messages_route_streams_anthropic_sse_events(
     assert "event: message_stop" in body
 
 
+def test_messages_route_retries_gemini_when_low_max_tokens_return_empty_completion(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    class RetryingGeminiClient:
+        call_payloads: list[dict] = []
+
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+            assert json is not None
+            type(self).call_payloads.append(json)
+
+            class FakeResponse:
+                def __init__(self, payload: dict) -> None:
+                    self._payload = payload
+
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict:
+                    return self._payload
+
+            if len(type(self).call_payloads) == 1:
+                return FakeResponse(
+                    {
+                        "id": "gemini_empty_1",
+                        "model": "models/gemini-2.5-pro",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant"},
+                                "finish_reason": "length",
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 7, "completion_tokens": 0, "total_tokens": 68},
+                    }
+                )
+
+            return FakeResponse(
+                {
+                    "id": "gemini_retry_2",
+                    "model": "models/gemini-2.5-pro",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "proxy ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 183},
+                }
+            )
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", RetryingGeminiClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "gemini",
+            "model": "models/gemini-2.5-pro",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "Reply with exactly: proxy ok"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"][0]["text"] == "proxy ok"
+    assert len(RetryingGeminiClient.call_payloads) == 2
+    assert RetryingGeminiClient.call_payloads[0]["max_tokens"] == 64
+    assert RetryingGeminiClient.call_payloads[1]["max_tokens"] == 512
+
+
 def test_chat_completions_route_returns_openai_compatible_response(
     client: TestClient,
     monkeypatch,
@@ -427,6 +509,88 @@ def test_chat_completions_route_returns_openai_compatible_response(
     assert response.json()["id"] == "chatcmpl_openai_123"
     assert response.json()["choices"][0]["message"]["content"] == "OpenAI route"
     assert response.json()["usage"]["total_tokens"] == 19
+
+
+def test_chat_completions_route_retries_gemini_when_low_max_tokens_return_empty_completion(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    class RetryingGeminiClient:
+        call_payloads: list[dict] = []
+
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+            assert json is not None
+            type(self).call_payloads.append(json)
+
+            class FakeResponse:
+                def __init__(self, payload: dict) -> None:
+                    self._payload = payload
+
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict:
+                    return self._payload
+
+            if len(type(self).call_payloads) == 1:
+                return FakeResponse(
+                    {
+                        "id": "gemini_empty_openai_1",
+                        "model": "models/gemini-2.5-pro",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant"},
+                                "finish_reason": "length",
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 7, "completion_tokens": 0, "total_tokens": 68},
+                    }
+                )
+
+            return FakeResponse(
+                {
+                    "id": "gemini_retry_openai_2",
+                    "model": "models/gemini-2.5-pro",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "proxy ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 183},
+                }
+            )
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", RetryingGeminiClient)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "gemini",
+            "model": "models/gemini-2.5-pro",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "Reply with exactly: proxy ok"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "proxy ok"
+    assert len(RetryingGeminiClient.call_payloads) == 2
+    assert RetryingGeminiClient.call_payloads[0]["max_tokens"] == 64
+    assert RetryingGeminiClient.call_payloads[1]["max_tokens"] == 512
 
 
 def test_chat_completions_route_streams_openai_sse_chunks(

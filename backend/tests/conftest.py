@@ -45,6 +45,11 @@ def app_config(tmp_path: Path) -> Path:
                 '    display_name: "OpenRouter"',
                 '    base_url: "https://openrouter.ai/api/v1"',
                 '    api_key_env: "OPENROUTER_API_KEY"',
+                '  gemini:',
+                '    type: "openai_compatible"',
+                '    display_name: "Gemini"',
+                '    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"',
+                '    api_key_env: "GEMINI_API_KEY"',
                 '  ollama:',
                 '    type: "local_openai_compatible"',
                 '    display_name: "Ollama"',
@@ -62,10 +67,12 @@ def client(app_config: Path, encryption_key: str) -> TestClient:
     previous_proxy_token = os.environ.get("MODELPORT_TOKEN")
     previous_openai = os.environ.get("OPENAI_API_KEY")
     previous_openrouter = os.environ.get("OPENROUTER_API_KEY")
+    previous_gemini = os.environ.get("GEMINI_API_KEY")
     previous_encryption = os.environ.get("PROXY_ENCRYPTION_KEY")
     os.environ["MODELPORT_TOKEN"] = "test-local-token"
     os.environ["OPENAI_API_KEY"] = "sk-openai-seeded"
     os.environ["OPENROUTER_API_KEY"] = "sk-openrouter-seeded"
+    os.environ["GEMINI_API_KEY"] = "sk-gemini-seeded"
     os.environ["PROXY_ENCRYPTION_KEY"] = encryption_key
 
     app = create_app(config_path=app_config)
@@ -87,6 +94,11 @@ def client(app_config: Path, encryption_key: str) -> TestClient:
         os.environ.pop("OPENROUTER_API_KEY", None)
     else:
         os.environ["OPENROUTER_API_KEY"] = previous_openrouter
+
+    if previous_gemini is None:
+        os.environ.pop("GEMINI_API_KEY", None)
+    else:
+        os.environ["GEMINI_API_KEY"] = previous_gemini
 
     if previous_encryption is None:
         os.environ.pop("PROXY_ENCRYPTION_KEY", None)
