@@ -13,6 +13,78 @@ def build_chat_completions_url(provider: Provider) -> str:
     return urljoin(normalized_base, "chat/completions")
 
 
+def is_gemini_openai_provider(provider: Provider) -> bool:
+    return "generativelanguage.googleapis.com" in provider.base_url
+
+
+def extract_message_content(payload: dict) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+
+    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = first_choice.get("message") if isinstance(first_choice, dict) else {}
+    if not isinstance(message, dict):
+        return ""
+
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+                text_parts.append(item["text"])
+        return "\n".join(text_parts)
+    return ""
+
+
+def should_retry_empty_gemini_completion(
+    provider: Provider,
+    request_payload: dict,
+    response_payload: dict,
+) -> bool:
+    if not is_gemini_openai_provider(provider):
+        return False
+
+    max_tokens = request_payload.get("max_tokens")
+    if not isinstance(max_tokens, int) or max_tokens >= 512:
+        return False
+
+    choices = response_payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return False
+
+    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+    finish_reason = first_choice.get("finish_reason") if isinstance(first_choice, dict) else None
+    usage = response_payload.get("usage") if isinstance(response_payload.get("usage"), dict) else {}
+    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+    content = extract_message_content(response_payload).strip()
+
+    return finish_reason == "length" and completion_tokens == 0 and not content
+
+
+def build_gemini_retry_payload(payload: dict) -> dict:
+    retried_payload = dict(payload)
+    retried_payload["max_tokens"] = 512
+    return retried_payload
+
+
+def post_chat_completion(
+    client: httpx.Client,
+    provider: Provider,
+    headers: dict[str, str],
+    payload: dict,
+) -> dict:
+    response = client.post(
+        build_chat_completions_url(provider),
+        headers=headers,
+        json=payload,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def create_chat_completion(
     provider: Provider,
     api_key: str | None,
@@ -24,13 +96,11 @@ def create_chat_completion(
 
     try:
         with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_chat_completions_url(provider),
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
+            response_payload = post_chat_completion(client, provider, headers, payload)
+            if should_retry_empty_gemini_completion(provider, payload, response_payload):
+                retry_payload = build_gemini_retry_payload(payload)
+                response_payload = post_chat_completion(client, provider, headers, retry_payload)
+            return response_payload
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip() or str(exc)
         raise HTTPException(
