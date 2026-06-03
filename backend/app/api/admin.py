@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.analytics_service import build_provider_details, list_requests, requests_today_count
 from app.database import (
     PricingOverride,
     Provider,
@@ -22,6 +23,7 @@ from app.database import (
     resolved_key_hint,
     set_setting,
 )
+from app.schemas.analytics import ProviderHealthPayload
 from app.schemas.admin import (
     AppearanceSettings,
     CredentialSecretResponse,
@@ -32,7 +34,6 @@ from app.schemas.admin import (
     ProviderCredentialCreate,
     ProviderCredentialResponse,
     ProviderCredentialUpdate,
-    ProviderHealthPayload,
     ProviderResponse,
     ProviderUpdate,
     SettingsEnvelope,
@@ -282,6 +283,7 @@ def serialize_provider_health_card(
     provider: Provider,
     latest_check: ProviderHealthCheck | None,
     recent_checks: list[ProviderHealthCheck],
+    requests_today: int,
 ) -> dict:
     if latest_check is None:
         last_checked_at = datetime.now(UTC).isoformat()
@@ -309,7 +311,7 @@ def serialize_provider_health_card(
         "type": provider.provider_type,
         "status": status_value,
         "baseUrl": provider.base_url,
-        "requestsToday": 0,
+        "requestsToday": requests_today,
         "successRate": success_rate,
         "errorRate": error_rate,
         "avgLatencyMs": avg_latency,
@@ -321,21 +323,39 @@ def serialize_provider_health_card(
 
 def collect_provider_health_payload(session: Session) -> dict:
     providers = session.scalars(select(Provider).order_by(Provider.id)).all()
+    all_requests = list_requests(session)
     cards: list[dict] = []
-    freshness_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=60)
+    details: list[dict] = []
+    now = datetime.now(UTC)
+    freshness_cutoff = datetime.now(UTC) - timedelta(seconds=60)
 
     for provider in providers:
         latest_check = get_latest_provider_health_check(session, provider.id)
-        if latest_check is None or latest_check.checked_at < freshness_cutoff:
+        latest_check_at = None
+        if latest_check is not None:
+            latest_check_at = (
+                latest_check.checked_at.replace(tzinfo=UTC)
+                if latest_check.checked_at.tzinfo is None
+                else latest_check.checked_at
+            )
+        if latest_check is None or latest_check_at < freshness_cutoff:
             latest_check = run_provider_health_check(session, provider)
             session.commit()
 
         recent_checks = get_recent_provider_health_checks(session, provider.id)
-        cards.append(serialize_provider_health_card(provider, latest_check, recent_checks))
+        cards.append(
+            serialize_provider_health_card(
+                provider,
+                latest_check,
+                recent_checks,
+                requests_today=requests_today_count(all_requests, provider.id, now),
+            )
+        )
+        details.append(build_provider_details(all_requests, provider, now))
 
     return {
         "cards": cards,
-        "details": [],
+        "details": details,
     }
 
 

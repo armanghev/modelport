@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from app.api.admin import router as admin_router
+from app.api.analytics import router as analytics_router
 from app.api.anthropic import router as anthropic_router
 from app.config import AppConfig, load_config
 from app.database import build_session_factory, initialize_database, seed_admin_data
@@ -41,6 +42,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(admin_router)
+    app.include_router(analytics_router)
     app.include_router(anthropic_router)
 
     @app.get("/health")
