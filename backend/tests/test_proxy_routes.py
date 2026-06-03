@@ -312,3 +312,41 @@ def test_messages_route_allows_localhost_openai_compatible_provider_without_key(
 
     assert response.status_code == 200
     assert response.json()["content"][0]["text"] == "Local provider route"
+
+
+def test_messages_route_streams_anthropic_sse_events(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_stream_chat_completion_chunks(provider, api_key, payload):
+        assert payload["stream"] is True
+        yield '{"id":"chatcmpl_stream_123","choices":[{"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}'
+        yield '{"id":"chatcmpl_stream_123","choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":7}}'
+        yield "[DONE]"
+
+    monkeypatch.setattr(
+        "app.api.anthropic.stream_chat_completion_chunks",
+        fake_stream_chat_completion_chunks,
+    )
+
+    with client.stream(
+        "POST",
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "max_tokens": 64,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: message_start" in body
+    assert '"text": "Hello"' in body
+    assert '"text": " world"' in body
+    assert '"stop_reason": "end_turn"' in body
+    assert "event: message_stop" in body

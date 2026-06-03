@@ -194,3 +194,64 @@ def test_messages_route_persists_failed_request(
         assert record.input_tokens == 0
         assert record.output_tokens == 0
         assert record.total_tokens == 0
+
+
+def test_messages_route_persists_stream_request_metadata(
+    client: TestClient,
+    app_config,
+    monkeypatch,
+) -> None:
+    pricing_response = client.post(
+        "/admin/pricing",
+        json={
+            "provider_id": "openai",
+            "model": "gpt-5.5",
+            "input_per_1m_usd": 2.0,
+            "output_per_1m_usd": 8.0,
+            "currency": "USD",
+            "enabled": True,
+        },
+    )
+    assert pricing_response.status_code == 201
+
+    def fake_stream_chat_completion_chunks(provider, api_key, payload):
+        yield '{"id":"chatcmpl_stream_456","choices":[{"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}'
+        yield '{"id":"chatcmpl_stream_456","choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":500}}'
+        yield "[DONE]"
+
+    monkeypatch.setattr(
+        "app.api.anthropic.stream_chat_completion_chunks",
+        fake_stream_chat_completion_chunks,
+    )
+
+    with client.stream(
+        "POST",
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "max_tokens": 128,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    ) as response:
+        _ = "".join(response.iter_text())
+
+    assert response.status_code == 200
+
+    session_factory = build_session_factory(f"sqlite:///{app_config.parent / 'test.db'}")
+    with session_factory() as session:
+        records = session.query(ApiRequest).all()
+        assert len(records) == 1
+        record = records[0]
+        assert record.provider == "openai"
+        assert record.streamed is True
+        assert record.request_id == "chatcmpl_stream_456"
+        assert record.input_tokens == 1000
+        assert record.output_tokens == 500
+        assert record.total_tokens == 1500
+        assert record.estimated_cost_usd == 0.006
+        assert record.status_code == 200
+        assert record.completion_reason == "stop"
+        assert record.ttfb_ms is not None
