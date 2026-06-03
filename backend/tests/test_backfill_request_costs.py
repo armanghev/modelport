@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+from sqlalchemy import select
+
+from app.backfill_request_costs import backfill_request_costs
+from app.database import ApiRequest
+
+
+def test_backfill_request_costs_updates_existing_rows(client) -> None:
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        session.add(
+            ApiRequest(
+                input_format="anthropic",
+                output_format="anthropic",
+                endpoint="/v1/messages",
+                client_name="curl/8.7.1",
+                requested_model="gpt-4.1",
+                resolved_model="gpt-4.1",
+                provider="openai",
+                input_tokens=1_000_000,
+                output_tokens=500_000,
+                total_tokens=1_500_000,
+                token_source="provider_reported",
+                estimated_cost_usd=None,
+                pricing_source=None,
+                duration_ms=100,
+                status_code=200,
+                streamed=False,
+            )
+        )
+        session.commit()
+
+    client.post(
+        "/admin/pricing",
+        json={
+            "provider_id": "openai",
+            "model": "gpt-4.1",
+            "input_per_1m_usd": 2.0,
+            "output_per_1m_usd": 8.0,
+        },
+    )
+
+    summary = backfill_request_costs(session_factory)
+    assert summary["updated"] >= 1
+
+    with session_factory() as session:
+        record = session.scalar(
+            select(ApiRequest).where(
+                ApiRequest.provider == "openai",
+                ApiRequest.input_tokens == 1_000_000,
+            )
+        )
+    assert record is not None
+    assert record.estimated_cost_usd == 6.0
+    assert record.pricing_source == "admin_override"
+
