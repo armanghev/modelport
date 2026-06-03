@@ -42,3 +42,45 @@ def create_chat_completion(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Upstream provider request failed: {exc}",
         ) from exc
+
+
+def stream_chat_completion_chunks(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+):
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            with client.stream(
+                "POST",
+                build_chat_completions_url(provider),
+                headers=headers,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    if isinstance(line, bytes):
+                        line = line.decode("utf-8")
+                    if not line.startswith("data:"):
+                        continue
+                    yield line.removeprefix("data:").strip()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text.strip() or str(exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Upstream provider request failed: {detail}",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Upstream provider request failed: {exc}",
+        ) from exc

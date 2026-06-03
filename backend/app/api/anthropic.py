@@ -1,22 +1,32 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import ProviderCredential, resolve_env_secret
-from app.providers.openai_compatible import create_chat_completion
+from app.providers.openai_compatible import create_chat_completion, stream_chat_completion_chunks
 from app.routing.provider_router import resolve_provider_route
 from app.schemas.anthropic import AnthropicMessageCreate, AnthropicMessageResponse
 from app.security import EncryptionConfigurationError, decrypt_secret
 from app.tracking.cost_service import calculate_estimated_cost_usd
 from app.tracking.log_service import create_api_request_log
 from app.tracking.pricing import find_pricing_override
-from app.tracking.usage_service import UsageSnapshot, extract_usage_snapshot
+from app.tracking.usage_service import (
+    UsageSnapshot,
+    build_stream_usage_snapshot,
+    estimate_request_tokens,
+    extract_usage_snapshot,
+)
 from app.translators.anthropic_to_openai import translate_anthropic_message_to_openai
-from app.translators.openai_to_anthropic import translate_openai_chat_completion_to_anthropic
+from app.translators.openai_to_anthropic import (
+    AnthropicStreamTranslator,
+    translate_openai_chat_completion_to_anthropic,
+)
 
 router = APIRouter(tags=["anthropic"])
 
@@ -86,7 +96,7 @@ def create_message(
     payload: AnthropicMessageCreate,
     session: Session = Depends(get_session),
     _: None = Depends(require_proxy_token),
-) -> AnthropicMessageResponse:
+) -> AnthropicMessageResponse | StreamingResponse:
     started_at = time.perf_counter()
     resolved_route = resolve_provider_route(
         session,
@@ -118,6 +128,120 @@ def create_message(
         payload,
         upstream_model=resolved_route.upstream_model,
     )
+    session_factory: sessionmaker[Session] = request.app.state.session_factory
+    client_name = resolve_client_name(request)
+
+    if payload.stream:
+        def event_stream():
+            translator = AnthropicStreamTranslator(
+                requested_model=payload.model,
+                input_tokens=estimate_request_tokens(openai_payload),
+            )
+            ttfb_ms: int | None = None
+            upstream_request_id: str | None = None
+            final_usage: dict | None = None
+
+            try:
+                for raw_chunk in stream_chat_completion_chunks(
+                    resolved_route.provider,
+                    api_key=provider_secret,
+                    payload=openai_payload,
+                ):
+                    if raw_chunk == "[DONE]":
+                        continue
+
+                    try:
+                        chunk = json.loads(raw_chunk)
+                    except ValueError:
+                        continue
+
+                    if ttfb_ms is None:
+                        ttfb_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                    if chunk.get("id"):
+                        upstream_request_id = str(chunk["id"])
+                    if isinstance(chunk.get("usage"), dict):
+                        final_usage = chunk["usage"]
+
+                    for event in translator.consume_chunk(chunk):
+                        yield event
+
+                for event in translator.finish_events():
+                    yield event
+
+                usage_snapshot = build_stream_usage_snapshot(
+                    openai_payload,
+                    "".join(translator.text_parts),
+                    final_usage,
+                )
+                duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+
+                with session_factory() as log_session:
+                    pricing_override = find_pricing_override(
+                        log_session,
+                        provider_id=resolved_route.provider.id,
+                        model=resolved_route.upstream_model,
+                    )
+                    estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
+                        pricing_override,
+                        input_tokens=usage_snapshot.input_tokens,
+                        output_tokens=usage_snapshot.output_tokens,
+                    )
+                    create_api_request_log(
+                        log_session,
+                        input_format="anthropic",
+                        output_format="anthropic",
+                        endpoint="/v1/messages",
+                        client_name=client_name,
+                        requested_model=payload.model,
+                        resolved_model=resolved_route.upstream_model,
+                        provider=resolved_route.provider.id,
+                        input_tokens=usage_snapshot.input_tokens,
+                        output_tokens=usage_snapshot.output_tokens,
+                        total_tokens=usage_snapshot.total_tokens,
+                        token_source=usage_snapshot.token_source,
+                        estimated_cost_usd=estimated_cost_usd,
+                        pricing_source=pricing_source,
+                        duration_ms=duration_ms,
+                        status_code=200,
+                        error_message=None,
+                        streamed=True,
+                        request_id=upstream_request_id,
+                        ttfb_ms=ttfb_ms,
+                        completion_reason=translator.completion_reason,
+                    )
+            except HTTPException as exc:
+                duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                with session_factory() as log_session:
+                    create_api_request_log(
+                        log_session,
+                        input_format="anthropic",
+                        output_format="anthropic",
+                        endpoint="/v1/messages",
+                        client_name=client_name,
+                        requested_model=payload.model,
+                        resolved_model=resolved_route.upstream_model,
+                        provider=resolved_route.provider.id,
+                        input_tokens=0,
+                        output_tokens=0,
+                        total_tokens=0,
+                        token_source=None,
+                        estimated_cost_usd=None,
+                        pricing_source=None,
+                        duration_ms=duration_ms,
+                        status_code=exc.status_code,
+                        error_message=str(exc.detail),
+                        streamed=True,
+                        request_id=upstream_request_id,
+                        ttfb_ms=ttfb_ms,
+                    )
+                yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'api_error', 'message': str(exc.detail)}})}\n\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     try:
         upstream_response = create_chat_completion(
             resolved_route.provider,
@@ -144,7 +268,7 @@ def create_message(
             duration_ms=duration_ms,
             status_code=exc.status_code,
             error_message=str(exc.detail),
-            streamed=payload.stream,
+            streamed=False,
             request_id=None,
         )
         raise
@@ -179,7 +303,7 @@ def create_message(
         duration_ms=duration_ms,
         status_code=200,
         error_message=None,
-        streamed=payload.stream,
+        streamed=False,
         request_id=str(upstream_response.get("id")) if upstream_response.get("id") else None,
     )
     return translate_openai_chat_completion_to_anthropic(

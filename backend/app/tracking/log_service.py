@@ -26,6 +26,8 @@ def create_api_request_log(
     error_message: str | None,
     streamed: bool,
     request_id: str | None,
+    ttfb_ms: int | None = None,
+    completion_reason: str | None = None,
 ) -> ApiRequest:
     record = ApiRequest(
         input_format=input_format,
@@ -41,8 +43,10 @@ def create_api_request_log(
         token_source=token_source,
         estimated_cost_usd=estimated_cost_usd,
         pricing_source=pricing_source,
+        ttfb_ms=ttfb_ms,
         duration_ms=duration_ms,
         status_code=status_code,
+        completion_reason=completion_reason,
         error_message=error_message,
         streamed=streamed,
         request_id=request_id,

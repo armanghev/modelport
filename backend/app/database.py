@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    inspect,
     select,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
@@ -106,8 +107,10 @@ class ApiRequest(Base):
     token_source: Mapped[str | None] = mapped_column(String(64))
     estimated_cost_usd: Mapped[float | None] = mapped_column(Float)
     pricing_source: Mapped[str | None] = mapped_column(String(64))
+    ttfb_ms: Mapped[int | None] = mapped_column(Integer)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     status_code: Mapped[int | None] = mapped_column(Integer)
+    completion_reason: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(Text)
     streamed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(255))
@@ -140,11 +143,32 @@ def build_session_factory(database_url: str) -> sessionmaker[Session]:
 def initialize_database(session_factory: sessionmaker[Session]) -> None:
     engine = session_factory.kw["bind"]
     Base.metadata.create_all(engine)
+    ensure_runtime_columns(engine)
 
     with session_factory() as session:
         if session.get(SchemaVersion, 1) is None:
             session.add(SchemaVersion(version=1))
             session.commit()
+
+
+def ensure_runtime_columns(engine) -> None:
+    inspector = inspect(engine)
+    if "api_requests" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("api_requests")}
+    statements: list[str] = []
+    if "ttfb_ms" not in existing_columns:
+        statements.append("ALTER TABLE api_requests ADD COLUMN ttfb_ms INTEGER")
+    if "completion_reason" not in existing_columns:
+        statements.append("ALTER TABLE api_requests ADD COLUMN completion_reason VARCHAR(64)")
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.exec_driver_sql(statement)
 
 
 def get_setting(session: Session, key: str, default: dict) -> dict:

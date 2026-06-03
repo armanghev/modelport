@@ -43,6 +43,31 @@ def estimate_response_tokens(payload: dict) -> int:
     return 0
 
 
+def build_stream_usage_snapshot(
+    request_payload: dict,
+    output_text: str,
+    usage: dict | None,
+) -> UsageSnapshot:
+    if isinstance(usage, dict):
+        input_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        output_tokens = int(usage.get("completion_tokens", 0) or 0)
+        return UsageSnapshot(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            token_source="provider_reported",
+        )
+
+    input_tokens = estimate_request_tokens(request_payload)
+    output_tokens = estimate_token_count(output_text)
+    return UsageSnapshot(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        token_source="estimated",
+    )
+
+
 def extract_usage_snapshot(
     request_payload: dict,
     response_payload: dict,
