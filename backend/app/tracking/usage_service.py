@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -43,20 +44,85 @@ def estimate_response_tokens(payload: dict) -> int:
     return 0
 
 
+def _coerce_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_reasoning_tokens(usage: dict[str, Any]) -> int:
+    completion_details = usage.get("completion_tokens_details")
+    if isinstance(completion_details, dict):
+        reasoning = _coerce_int(completion_details.get("reasoning_tokens"))
+        if reasoning > 0:
+            return reasoning
+
+    for key in ("thoughts_token_count", "thoughtsTokenCount", "thought_tokens"):
+        reasoning = _coerce_int(usage.get(key))
+        if reasoning > 0:
+            return reasoning
+
+    return 0
+
+
+def _extract_input_tokens(usage: dict[str, Any]) -> int:
+    for key in ("prompt_tokens", "promptTokenCount", "prompt_token_count", "input_tokens"):
+        value = _coerce_int(usage.get(key))
+        if value > 0:
+            return value
+    return 0
+
+
+def _extract_completion_tokens(usage: dict[str, Any]) -> int:
+    for key in ("completion_tokens", "candidatesTokenCount", "candidates_token_count", "output_tokens"):
+        value = _coerce_int(usage.get(key))
+        if value > 0:
+            return value
+    return 0
+
+
+def _extract_total_tokens(usage: dict[str, Any]) -> int:
+    for key in ("total_tokens", "totalTokenCount", "total_token_count"):
+        value = _coerce_int(usage.get(key))
+        if value > 0:
+            return value
+    return 0
+
+
+def normalize_provider_usage(usage: dict[str, Any]) -> UsageSnapshot:
+    input_tokens = _extract_input_tokens(usage)
+    completion_tokens = _extract_completion_tokens(usage)
+    reasoning_tokens = _extract_reasoning_tokens(usage)
+    provider_total = _extract_total_tokens(usage)
+
+    if reasoning_tokens > 0:
+        output_tokens = completion_tokens + reasoning_tokens
+    else:
+        output_tokens = completion_tokens
+
+    if provider_total > 0:
+        total_tokens = provider_total
+        if output_tokens == 0 and input_tokens > 0:
+            output_tokens = max(0, provider_total - input_tokens)
+    else:
+        total_tokens = input_tokens + output_tokens
+
+    return UsageSnapshot(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        token_source="provider_reported",
+    )
+
+
 def build_stream_usage_snapshot(
     request_payload: dict,
     output_text: str,
     usage: dict | None,
 ) -> UsageSnapshot:
     if isinstance(usage, dict):
-        input_tokens = int(usage.get("prompt_tokens", 0) or 0)
-        output_tokens = int(usage.get("completion_tokens", 0) or 0)
-        return UsageSnapshot(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=input_tokens + output_tokens,
-            token_source="provider_reported",
-        )
+        return normalize_provider_usage(usage)
 
     input_tokens = estimate_request_tokens(request_payload)
     output_tokens = estimate_token_count(output_text)
@@ -74,14 +140,7 @@ def extract_usage_snapshot(
 ) -> UsageSnapshot:
     usage = response_payload.get("usage")
     if isinstance(usage, dict):
-        input_tokens = int(usage.get("prompt_tokens", 0) or 0)
-        output_tokens = int(usage.get("completion_tokens", 0) or 0)
-        return UsageSnapshot(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=input_tokens + output_tokens,
-            token_source="provider_reported",
-        )
+        return normalize_provider_usage(usage)
 
     input_tokens = estimate_request_tokens(request_payload)
     output_tokens = estimate_response_tokens(response_payload)

@@ -168,6 +168,8 @@ def translate_anthropic_message_to_openai(
         "messages": translated_messages,
         "stream": payload.stream,
     }
+    if payload.stream:
+        translated_payload["stream_options"] = {"include_usage": True}
     if payload.max_tokens is not None:
         translated_payload["max_tokens"] = payload.max_tokens
     if payload.tools:

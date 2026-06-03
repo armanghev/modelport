@@ -23,6 +23,20 @@ from app.translators.openai_request_to_anthropic import translate_openai_chat_co
 from app.translators.openai_to_anthropic import AnthropicStreamTranslator, translate_openai_chat_completion_to_anthropic
 
 
+def test_translate_streaming_payload_requests_usage_in_final_chunk() -> None:
+    payload = AnthropicMessageCreate(
+        model="gemini-2.5-pro",
+        max_tokens=1024,
+        stream=True,
+        messages=[AnthropicMessage(role="user", content="hello")],
+    )
+
+    translated = translate_anthropic_message_to_openai(payload, upstream_model="models/gemini-2.5-pro")
+
+    assert translated["stream"] is True
+    assert translated["stream_options"] == {"include_usage": True}
+
+
 def test_translate_tools_and_tool_choice_to_openai_payload() -> None:
     payload = AnthropicMessageCreate(
         model="gemini-2.5-pro",

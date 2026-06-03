@@ -196,6 +196,72 @@ def test_messages_route_persists_failed_request(
         assert record.total_tokens == 0
 
 
+def test_messages_route_persists_stream_request_with_gemini_usage_and_reasoning(
+    client: TestClient,
+    app_config,
+    monkeypatch,
+) -> None:
+    pricing_response = client.post(
+        "/admin/pricing",
+        json={
+            "provider_id": "gemini",
+            "model": "models/gemini-2.5-pro",
+            "input_per_1m_usd": 1.25,
+            "output_per_1m_usd": 10.0,
+            "currency": "USD",
+            "enabled": True,
+        },
+    )
+    assert pricing_response.status_code == 201
+
+    def fake_stream_chat_completion_chunks(provider, api_key, payload):
+        assert payload.get("stream_options") == {"include_usage": True}
+        yield '{"id":"chatcmpl_gemini_stream","choices":[{"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}]}'
+        yield (
+            '{"id":"chatcmpl_gemini_stream","choices":[{"delta":{"content":"!"},"finish_reason":"stop"}],'
+            '"usage":{"prompt_tokens":102475,"completion_tokens":45,"total_tokens":102924,'
+            '"completion_tokens_details":{"reasoning_tokens":404}}}'
+        )
+        yield "[DONE]"
+
+    monkeypatch.setattr(
+        "app.api.anthropic.stream_chat_completion_chunks",
+        fake_stream_chat_completion_chunks,
+    )
+
+    with client.stream(
+        "POST",
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "gemini",
+            "model": "models/gemini-2.5-pro",
+            "max_tokens": 128,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    ) as response:
+        _ = "".join(response.iter_text())
+
+    assert response.status_code == 200
+
+    session_factory = build_session_factory(f"sqlite:///{app_config.parent / 'test.db'}")
+    with session_factory() as session:
+        records = session.query(ApiRequest).all()
+        assert len(records) == 1
+        record = records[0]
+        assert record.provider == "gemini"
+        assert record.streamed is True
+        assert record.token_source == "provider_reported"
+        assert record.input_tokens == 102_475
+        assert record.output_tokens == 449
+        assert record.total_tokens == 102_924
+        assert record.estimated_cost_usd == round(
+            (102_475 / 1_000_000) * 1.25 + (449 / 1_000_000) * 10.0,
+            6,
+        )
+
+
 def test_messages_route_persists_stream_request_metadata(
     client: TestClient,
     app_config,
