@@ -17,6 +17,7 @@ class OpenAIChatMessage(BaseModel):
 
 class OpenAIChatCompletionCreate(BaseModel):
     provider: str | None = None
+    fallback_providers: list[str] = []
     model: str
     max_tokens: int | None = None
     messages: list[OpenAIChatMessage]

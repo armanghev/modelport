@@ -37,6 +37,7 @@ def translate_openai_chat_completion_request_to_anthropic(
     system = "\n\n".join(system_messages) if system_messages else None
     return AnthropicMessageCreate(
         provider=payload.provider,
+        fallback_providers=payload.fallback_providers,
         model=payload.model,
         max_tokens=payload.max_tokens,
         system=system,

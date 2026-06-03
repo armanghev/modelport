@@ -5,7 +5,7 @@ import os
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.database import ProviderCredential, resolve_env_secret
+from app.database import ProviderCredential, ProviderHealthCheck, resolve_env_secret
 from app.security import EncryptionConfigurationError, decrypt_secret
 
 
@@ -68,10 +68,39 @@ def resolve_client_name(request: Request) -> str | None:
     return request.headers.get("User-Agent")
 
 
+def persist_provider_health_status(
+    session: Session,
+    *,
+    provider_id: str,
+    status_value: str,
+    error_message: str | None,
+    latency_ms: int = 0,
+    available_model_count: int = 0,
+) -> None:
+    session.add(
+        ProviderHealthCheck(
+            provider_id=provider_id,
+            status=status_value,
+            latency_ms=latency_ms,
+            available_model_count=available_model_count,
+            error_message=error_message,
+        )
+    )
+    session.commit()
+
+
+def classify_provider_failure_status(exc: HTTPException) -> str:
+    if exc.status_code == status.HTTP_502_BAD_GATEWAY:
+        return "degraded"
+    return "offline"
+
+
 __all__ = [
     "EncryptionConfigurationError",
     "get_session",
     "provider_supports_anonymous_access",
+    "persist_provider_health_status",
+    "classify_provider_failure_status",
     "require_proxy_token",
     "resolve_client_name",
     "resolve_credential_secret",

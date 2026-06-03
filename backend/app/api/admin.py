@@ -72,7 +72,10 @@ def require_pricing_override(session: Session, pricing_id: str) -> PricingOverri
     return record
 
 
-def serialize_provider(provider: Provider) -> ProviderResponse:
+def serialize_provider(
+    provider: Provider,
+    latest_check: ProviderHealthCheck | None = None,
+) -> ProviderResponse:
     default_credential = next((credential for credential in provider.credentials if credential.is_default), None)
     return ProviderResponse.model_validate(
         {
@@ -84,6 +87,9 @@ def serialize_provider(provider: Provider) -> ProviderResponse:
             "created_at": provider.created_at,
             "updated_at": provider.updated_at,
             "default_credential_id": default_credential.id if default_credential else None,
+            "health_status": latest_check.status if latest_check else None,
+            "last_checked_at": latest_check.checked_at if latest_check else None,
+            "last_error": latest_check.error_message if latest_check else None,
         }
     )
 
@@ -374,7 +380,10 @@ def apply_credential_secret(credential: ProviderCredential, api_key: str) -> Non
 @router.get("/providers", response_model=list[ProviderResponse])
 def list_providers(session: Session = Depends(get_session)) -> list[ProviderResponse]:
     providers = session.scalars(select(Provider).order_by(Provider.id)).all()
-    return [serialize_provider(provider) for provider in providers]
+    return [
+        serialize_provider(provider, get_latest_provider_health_check(session, provider.id))
+        for provider in providers
+    ]
 
 
 @router.get("/providers/health", response_model=ProviderHealthPayload)

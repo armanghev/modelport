@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database import Provider, ProviderCredential, is_credential_configured
+from app.database import Provider, ProviderCredential, ProviderHealthCheck, is_credential_configured
 
 
 @dataclass
@@ -14,6 +15,7 @@ class ResolvedProviderRoute:
     upstream_model: str
     provider: Provider
     credential: ProviderCredential | None
+    health_status: str | None = None
 
 
 def select_provider_credential(
@@ -49,16 +51,81 @@ def resolve_provider_route(
     provider_id: str,
     requested_model: str,
 ) -> ResolvedProviderRoute:
-    provider = session.get(Provider, provider_id)
-    if provider is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requested provider is not configured.")
-    if not provider.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Requested provider is disabled.")
-
-    credential = select_provider_credential(provider)
-    return ResolvedProviderRoute(
+    return resolve_provider_routes(
+        session,
+        provider_id=provider_id,
         requested_model=requested_model,
-        upstream_model=requested_model,
-        provider=provider,
-        credential=credential,
+        fallback_provider_ids=[],
+    )[0]
+
+
+def get_latest_provider_health_status(session: Session, provider_id: str) -> str | None:
+    latest_check = session.scalars(
+        select(ProviderHealthCheck.status)
+        .where(ProviderHealthCheck.provider_id == provider_id)
+        .order_by(ProviderHealthCheck.checked_at.desc())
+        .limit(1)
+    ).first()
+    return latest_check
+
+
+def resolve_provider_routes(
+    session: Session,
+    provider_id: str,
+    requested_model: str,
+    fallback_provider_ids: list[str] | None = None,
+) -> list[ResolvedProviderRoute]:
+    fallback_provider_ids = fallback_provider_ids or []
+    candidate_ids: list[str] = []
+    for candidate_id in [provider_id, *fallback_provider_ids]:
+        normalized = candidate_id.strip().lower()
+        if normalized and normalized not in candidate_ids:
+            candidate_ids.append(normalized)
+
+    operational_routes: list[ResolvedProviderRoute] = []
+    degraded_routes: list[ResolvedProviderRoute] = []
+    offline_routes: list[ResolvedProviderRoute] = []
+
+    for index, candidate_id in enumerate(candidate_ids):
+        provider = session.get(Provider, candidate_id)
+        if provider is None:
+            if index == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Requested provider is not configured.",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Fallback provider '{candidate_id}' is not configured.",
+            )
+        if not provider.enabled:
+            continue
+
+        route = ResolvedProviderRoute(
+            requested_model=requested_model,
+            upstream_model=requested_model,
+            provider=provider,
+            credential=select_provider_credential(provider),
+            health_status=get_latest_provider_health_status(session, candidate_id),
+        )
+        if route.health_status == "offline":
+            offline_routes.append(route)
+        elif route.health_status == "degraded":
+            degraded_routes.append(route)
+        else:
+            operational_routes.append(route)
+
+    ordered_routes = operational_routes + degraded_routes
+    if ordered_routes:
+        return ordered_routes
+
+    if offline_routes:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No healthy provider available. Requested provider and fallbacks are offline.",
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="No enabled provider available for the request.",
     )

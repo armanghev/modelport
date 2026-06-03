@@ -52,6 +52,9 @@ class ProviderResponse(ORMModel):
     created_at: datetime
     updated_at: datetime
     default_credential_id: str | None = None
+    health_status: Literal["operational", "degraded", "offline"] | None = None
+    last_checked_at: datetime | None = None
+    last_error: str | None = None
 
 
 class ProviderCredentialCreate(BaseModel):
