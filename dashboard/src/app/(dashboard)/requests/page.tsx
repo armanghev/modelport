@@ -86,6 +86,19 @@ function formatInteger(value: number): string {
   return value.toLocaleString("en-US");
 }
 
+function CopyIdButton({ value, label }: { value: string; label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Copy ${label}`}
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-bg-card-muted"
+      onClick={() => void navigator.clipboard.writeText(value)}
+    >
+      <CopyIcon size={13} />
+    </button>
+  );
+}
+
 function getOutcome(row: RequestRow): RequestOutcome {
   return row.status;
 }
@@ -636,15 +649,26 @@ export default function RequestsPage() {
 
               <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-sm">
                 <dt className="text-text-secondary">Request ID</dt>
-                <dd className="flex items-center gap-2 font-medium text-text-primary">
-                  {selectedRow.upstreamRequestId ?? selectedRow.id}
-                  <button
-                    type="button"
-                    aria-label="Copy request ID"
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-text-muted hover:bg-bg-card-muted"
-                  >
-                    <CopyIcon size={13} />
-                  </button>
+                <dd className="flex min-w-0 items-start gap-2 font-medium text-text-primary">
+                  <span className="font-mono text-xs break-all">{selectedRow.id}</span>
+                  <CopyIdButton value={selectedRow.id} label="gateway ID" />
+                </dd>
+
+                <dt className="text-text-secondary">Upstream ID</dt>
+                <dd className="flex min-w-0 items-start gap-2 font-medium text-text-primary">
+                  {selectedRow.upstreamRequestId ? (
+                    <>
+                      <span className="font-mono text-xs break-all">
+                        {selectedRow.upstreamRequestId}
+                      </span>
+                      <CopyIdButton
+                        value={selectedRow.upstreamRequestId}
+                        label="upstream ID"
+                      />
+                    </>
+                  ) : (
+                    <span className="text-text-muted">—</span>
+                  )}
                 </dd>
 
                 <dt className="text-text-secondary">Endpoint</dt>

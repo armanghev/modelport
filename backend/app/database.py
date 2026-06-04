@@ -20,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 from app.config import AppConfig
+from app.ids import generate_api_request_id
 from app.security import mask_secret
 
 
@@ -112,7 +113,7 @@ class ModelMetadata(Base):
 class ApiRequest(Base):
     __tablename__ = "api_requests"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_api_request_id)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     input_format: Mapped[str] = mapped_column(String(32), nullable=False)
     output_format: Mapped[str] = mapped_column(String(32), nullable=False)
