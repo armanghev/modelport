@@ -292,6 +292,36 @@ def test_enrich_provider_model_merges_metadata_pricing_and_usage(client) -> None
     assert enriched["display_name"] == "GPT-4.1"
 
 
+def test_filter_gemini_catalog_models_excludes_non_chat_and_retired() -> None:
+    from app.model_metadata_service import filter_gemini_catalog_models
+
+    models = [
+        {"id": "models/gemini-2.0-flash"},
+        {"id": "models/gemini-2.5-flash"},
+        {"id": "models/gemini-embedding-001"},
+    ]
+    native_index = {
+        # Retired models may still advertise generateContent in the catalog API.
+        "models/gemini-2.0-flash": {"supportedGenerationMethods": ["generateContent"]},
+        "models/gemini-2.5-flash": {
+            "supportedGenerationMethods": ["generateContent", "countTokens"],
+        },
+    }
+    filtered = filter_gemini_catalog_models(models, native_index)
+    assert [model["id"] for model in filtered] == ["models/gemini-2.5-flash"]
+
+
+def test_filter_gemini_catalog_models_without_native_index() -> None:
+    from app.model_metadata_service import filter_gemini_catalog_models
+
+    models = [
+        {"id": "models/gemini-2.0-flash"},
+        {"id": "models/gemini-2.5-flash"},
+    ]
+    filtered = filter_gemini_catalog_models(models, None)
+    assert [model["id"] for model in filtered] == ["models/gemini-2.5-flash"]
+
+
 def test_apply_gemini_native_model_fields_merges_description_and_context() -> None:
     native_index = {
         "models/gemini-2.5-pro": {

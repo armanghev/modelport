@@ -27,6 +27,7 @@ from app.database import (
 from app.schemas.analytics import ProviderHealthPayload
 from app.model_metadata_service import (
     apply_gemini_native_model_fields,
+    filter_gemini_catalog_models,
     build_pricing_index,
     build_usage_index,
     enrich_provider_model,
@@ -283,12 +284,15 @@ def fetch_provider_models_from_upstream(
 
     latency_ms = max(1, round((time.perf_counter() - start) * 1000))
     models = parse_provider_models(payload, provider)
+    native_index: dict | None = None
     if is_gemini_provider(provider) and secret:
         try:
             native_index = fetch_gemini_native_models_index(secret)
             models = apply_gemini_native_model_fields(models, native_index)
         except httpx.HTTPError:
-            pass
+            native_index = None
+    if is_gemini_provider(provider):
+        models = filter_gemini_catalog_models(models, native_index)
     return models, latency_ms
 
 

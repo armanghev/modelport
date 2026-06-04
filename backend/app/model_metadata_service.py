@@ -231,6 +231,67 @@ def fetch_gemini_native_models_index(api_key: str) -> dict[str, dict[str, Any]]:
     return index
 
 
+GEMINI_CHAT_GENERATION_METHODS = frozenset({"generateContent"})
+
+# Retired or non-chat Gemini ids still returned by some list endpoints.
+_GEMINI_CATALOG_ID_BLOCKLIST = (
+    "embed",
+    "embedding",
+    "tts",
+    "imagen",
+    "veo",
+    "native-audio",
+    "live-preview",
+    "flash-image",
+    "pro-image",
+    "preview-tts",
+    "gemini-2.0",
+    "lyria",
+)
+
+
+def _gemini_model_id_blocked(model_id: str) -> bool:
+    lower = model_id.lower()
+    return any(fragment in lower for fragment in _GEMINI_CATALOG_ID_BLOCKLIST)
+
+
+def gemini_native_supports_chat(native: dict[str, Any]) -> bool:
+    methods = native.get("supportedGenerationMethods")
+    if not isinstance(methods, list) or not methods:
+        return False
+    return any(
+        isinstance(method, str) and method in GEMINI_CHAT_GENERATION_METHODS
+        for method in methods
+    )
+
+
+def filter_gemini_catalog_models(
+    models: list[dict],
+    native_index: dict[str, dict[str, Any]] | None = None,
+) -> list[dict]:
+    """Drop Gemini models that cannot serve chat/completions (retired, embed, TTS, etc.)."""
+    filtered: list[dict] = []
+    for model in models:
+        model_id = model.get("id")
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        if _gemini_model_id_blocked(model_id):
+            continue
+
+        native: dict[str, Any] | None = None
+        if native_index is not None:
+            native = native_index.get(model_id)
+            if native is None:
+                native = native_index.get(model_id.removeprefix("models/"))
+
+        if native is not None:
+            if not gemini_native_supports_chat(native):
+                continue
+
+        filtered.append(model)
+    return filtered
+
+
 def apply_gemini_native_model_fields(
     models: list[dict],
     native_index: dict[str, dict[str, Any]],
@@ -256,6 +317,12 @@ def apply_gemini_native_model_fields(
         input_limit = native.get("inputTokenLimit")
         if isinstance(input_limit, int) and input_limit > 0:
             merged["context_length"] = input_limit
+
+        methods = native.get("supportedGenerationMethods")
+        if isinstance(methods, list):
+            merged["supported_generation_methods"] = [
+                str(method) for method in methods if isinstance(method, str) and method.strip()
+            ]
 
         enriched.append(merged)
     return enriched
