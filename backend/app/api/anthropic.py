@@ -16,7 +16,8 @@ from app.api.proxy_common import (
     require_proxy_token,
     resolve_client_name,
     resolve_credential_secret,
-    resolve_requested_provider,
+    get_known_provider_ids,
+    resolve_proxy_model_routing,
 )
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.openai_compatible import create_chat_completion, stream_chat_completion_chunks
@@ -49,10 +50,17 @@ def create_message(
     _: None = Depends(require_proxy_token),
 ) -> AnthropicMessageResponse | StreamingResponse:
     started_at = time.perf_counter()
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=payload.provider,
+        requested_model=payload.model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
     resolved_routes = resolve_provider_routes(
         session,
-        provider_id=resolve_requested_provider(request, payload.provider),
+        provider_id=model_routing.provider_id,
         requested_model=payload.model,
+        upstream_model=model_routing.upstream_model,
         fallback_provider_ids=payload.fallback_providers,
     )
     session_factory: sessionmaker[Session] = request.app.state.session_factory

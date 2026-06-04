@@ -134,10 +134,17 @@ All proxy endpoints require:
 Authorization: Bearer <MODELPORT_TOKEN>
 ```
 
-Provider selection is required. Pass either:
+Provider selection is required unless the model id includes a recognized provider or native prefix. Pass either:
 
 - Header: `X-ModelPort-Provider: openrouter`
 - Request body: `"provider": "openrouter"`
+
+When provider is omitted, ModelPort infers routing from the model id:
+
+- ModelPort provider prefix: `openrouter/google/gemini-2.5-flash`, `gemini/models/gemini-2.5-flash`, `openai/gpt-4.1`
+- OpenRouter-owned models: `openrouter/auto` (sent upstream as `openrouter/auto`, not `openrouter/openrouter/auto`)
+- Native prefixes: `google/gemini-2.5-flash` routes to OpenRouter; any other `vendor/model` id routes to OpenRouter when the vendor is not a configured ModelPort provider (e.g. `nvidia/nemotron-3.5-content-safety:free`); `models/gemini-2.5-flash` routes to Gemini
+- Bare model ids such as `gpt-4.1` still require an explicit provider
 
 Fallback routing can be passed with:
 

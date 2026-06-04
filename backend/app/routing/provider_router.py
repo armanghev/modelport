@@ -74,8 +74,10 @@ def resolve_provider_routes(
     provider_id: str,
     requested_model: str,
     fallback_provider_ids: list[str] | None = None,
+    upstream_model: str | None = None,
 ) -> list[ResolvedProviderRoute]:
     fallback_provider_ids = fallback_provider_ids or []
+    resolved_upstream_model = upstream_model if upstream_model is not None else requested_model
     candidate_ids: list[str] = []
     for candidate_id in [provider_id, *fallback_provider_ids]:
         normalized = candidate_id.strip().lower()
@@ -103,7 +105,7 @@ def resolve_provider_routes(
 
         route = ResolvedProviderRoute(
             requested_model=requested_model,
-            upstream_model=requested_model,
+            upstream_model=resolved_upstream_model,
             provider=provider,
             credential=select_provider_credential(provider),
             health_status=get_latest_provider_health_status(session, candidate_id),

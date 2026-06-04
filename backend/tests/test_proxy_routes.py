@@ -194,6 +194,286 @@ def test_messages_route_uses_database_backed_default_credential(
     assert response.json()["content"][0]["text"] == "Using database credential"
 
 
+def test_messages_route_infers_openrouter_from_provider_prefixed_vendor_model(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured_payload: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_or_123",
+                "model": "google/gemini-2.5-flash",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "OpenRouter vendor route"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://openrouter.ai/api/v1/chat/completions"
+            assert json is not None
+            captured_payload.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "openrouter/google/gemini-2.5-flash",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_payload["model"] == "google/gemini-2.5-flash"
+
+
+def test_messages_route_infers_openrouter_owned_model_without_double_prefix(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured_payload: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_or_auto_123",
+                "model": "openrouter/auto",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "OpenRouter auto route"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://openrouter.ai/api/v1/chat/completions"
+            assert json is not None
+            captured_payload.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "openrouter/auto",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_payload["model"] == "openrouter/auto"
+
+
+def test_messages_route_infers_gemini_from_models_prefix(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured_payload: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_gemini_123",
+                "model": "models/gemini-2.5-flash",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Gemini route"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+            assert json is not None
+            captured_payload.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "models/gemini-2.5-flash",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_payload["model"] == "models/gemini-2.5-flash"
+
+
+def test_messages_route_infers_openrouter_from_native_vendor_prefix(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured_payload: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_or_native_123",
+                "model": "google/gemini-2.5-flash",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Native vendor route"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://openrouter.ai/api/v1/chat/completions"
+            assert json is not None
+            captured_payload.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "google/gemini-2.5-flash",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_payload["model"] == "google/gemini-2.5-flash"
+
+
+def test_messages_route_infers_direct_provider_from_provider_prefixed_model(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured_payload: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_openai_123",
+                "model": "gpt-4.1",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Direct OpenAI route"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            assert url == "https://api.openai.com/v1/chat/completions"
+            assert json is not None
+            captured_payload.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "model": "openai/gpt-4.1",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_payload["model"] == "gpt-4.1"
+
+
 def test_messages_route_supports_provider_header_override(
     client: TestClient,
     monkeypatch,

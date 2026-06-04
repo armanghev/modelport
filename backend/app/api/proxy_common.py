@@ -5,7 +5,14 @@ import os
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.database import ProviderCredential, ProviderHealthCheck, resolve_env_secret
+from sqlalchemy import select
+
+from app.database import Provider, ProviderCredential, ProviderHealthCheck, resolve_env_secret
+from app.routing.model_prefixes import (
+    ResolvedModelSelection,
+    infer_provider_from_model,
+    normalize_upstream_for_provider,
+)
 from app.security import EncryptionConfigurationError, decrypt_secret
 
 
@@ -53,6 +60,11 @@ def provider_supports_anonymous_access(base_url: str, provider_type: str) -> boo
     return provider_type == "local_openai_compatible" or "localhost" in base_url or "127.0.0.1" in base_url
 
 
+def get_known_provider_ids(session: Session) -> set[str]:
+    provider_ids = session.scalars(select(Provider.id)).all()
+    return {provider_id.strip().lower() for provider_id in provider_ids if provider_id}
+
+
 def resolve_requested_provider(request: Request, provider_id: str | None) -> str:
     header_provider = request.headers.get("X-ModelPort-Provider")
     resolved_provider_id = header_provider or provider_id
@@ -62,6 +74,37 @@ def resolve_requested_provider(request: Request, provider_id: str | None) -> str
             detail="Provider selection is required. Pass X-ModelPort-Provider or provider in the request body.",
         )
     return resolved_provider_id.strip().lower()
+
+
+def resolve_proxy_model_routing(
+    request: Request,
+    *,
+    provider_id: str | None,
+    requested_model: str,
+    known_provider_ids: set[str],
+) -> ResolvedModelSelection:
+    explicit_provider = request.headers.get("X-ModelPort-Provider") or provider_id
+    if explicit_provider:
+        normalized_provider = explicit_provider.strip().lower()
+        return ResolvedModelSelection(
+            provider_id=normalized_provider,
+            upstream_model=normalize_upstream_for_provider(
+                normalized_provider,
+                requested_model,
+                known_provider_ids,
+            ),
+        )
+
+    inferred = infer_provider_from_model(requested_model, known_provider_ids)
+    if inferred is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Provider selection is required. Pass X-ModelPort-Provider, provider in the request body, "
+                "or use a model id with a recognized provider or native prefix."
+            ),
+        )
+    return inferred
 
 
 def resolve_client_name(request: Request) -> str | None:
@@ -104,5 +147,7 @@ __all__ = [
     "require_proxy_token",
     "resolve_client_name",
     "resolve_credential_secret",
+    "get_known_provider_ids",
+    "resolve_proxy_model_routing",
     "resolve_requested_provider",
 ]
