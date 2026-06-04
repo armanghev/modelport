@@ -1,6 +1,6 @@
 # ModelPort agent configure
 
-Interactive CLI that points coding agents at your local ModelPort proxy (API URL, bearer token, routing headers, and default models).
+Interactive CLI that points coding agents at your local ModelPort proxy (API URL, bearer token, and default models).
 
 Today it configures **Claude Code**. The layout is agent-pluggable so Cursor CLI, Codex, and others can be added later without changing the core flow.
 
@@ -27,10 +27,11 @@ For Claude Code, the tool merges into `settings.json`:
 
 - `env.ANTHROPIC_BASE_URL` — your ModelPort proxy URL
 - `env.ANTHROPIC_AUTH_TOKEN` — `MODELPORT_TOKEN` value
-- `env.ANTHROPIC_CUSTOM_HEADERS` — includes `X-ModelPort-Provider`
 - `env.ANTHROPIC_MODEL` and/or `ANTHROPIC_DEFAULT_*_MODEL` when you pick models
 - `env.ENABLE_TOOL_SEARCH=true` — recommended for third-party proxies
 - `model` — default model id for the session picker
+
+ModelPort infers provider routing from each model id (for example `gemini/models/gemini-2.5-flash`, `openai/gpt-4.1`, or OpenRouter vendor ids like `anthropic/claude-sonnet-4`). No `X-ModelPort-Provider` custom header is written.
 
 Scopes:
 
@@ -40,9 +41,13 @@ Scopes:
 | Project | `.claude/settings.json` in the chosen directory |
 | Local | `.claude/settings.local.json` in the chosen directory |
 
-Existing keys in those files are preserved; only ModelPort-related `env` entries are updated.
+Existing keys in those files are preserved; only ModelPort-related `env` entries are updated. Old `ANTHROPIC_CUSTOM_HEADERS` entries are removed on apply.
 
-When the backend is running, the model picker only lists **chat-capable** models for coding agents (text output, no embedding/TTS/image-gen/live variants). You can still type a custom model id if needed.
+## Model picker
+
+When the backend is running, the interactive flow shows **provider tabs** (openrouter, gemini, openai, etc.). Use `←`/`→` or `Tab` to switch providers; the model list filters to that provider. Type to search within the active tab. You can assign different providers per tier—for example a Gemini model for Sonnet and an OpenAI model for Opus.
+
+The picker only lists **chat-capable** models for coding agents (text output, no embedding/TTS/image-gen/live variants). You can still type a custom model id.
 
 ## Non-interactive
 
@@ -52,10 +57,12 @@ modelport-configure \
   --scope global \
   --base-url http://127.0.0.1:13243 \
   --token "$MODELPORT_TOKEN" \
-  --provider openrouter \
   --model anthropic/claude-sonnet-4 \
+  --sonnet-model models/gemini-2.5-flash \
   --yes
 ```
+
+`--provider` is optional and deprecated; routing comes from the model ids you pass.
 
 Run `modelport-configure --help` for all flags.
 

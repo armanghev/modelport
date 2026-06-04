@@ -196,7 +196,7 @@ export ANTHROPIC_AUTH_TOKEN=$MODELPORT_TOKEN
 
 ### Configure Claude Code with `modelport-configure`
 
-`modelport-configure` is an interactive CLI that writes Claude Code settings so requests go through ModelPort (proxy URL, bearer token, `X-ModelPort-Provider`, and optional default models). The package is agent-pluggable; more clients can be added under `cli/modelport_agent_config/agents/`.
+`modelport-configure` is an interactive CLI that writes Claude Code settings so requests go through ModelPort (proxy URL, bearer token, and optional default models). Provider routing is inferred from model ids—no `X-ModelPort-Provider` header is required. The package is agent-pluggable; more clients can be added under `cli/modelport_agent_config/agents/`.
 
 Run from the repository root (uses `cli/.venv` when it exists):
 
@@ -216,10 +216,8 @@ modelport-configure
 
 1. **Scope** — global (`~/.claude/settings.json`), project (`.claude/settings.json`), or local (`.claude/settings.local.json`).
 2. **Proxy** — base URL (defaults from `config.yaml`) and `MODELPORT_TOKEN` (from `.env` when set). The tool probes the proxy when possible.
-3. **Provider** — default `X-ModelPort-Provider` (lists chat-capable models from the backend when it is running).
-4. **Default model** — optional `ANTHROPIC_MODEL` / settings `model`.
-5. **Tier overrides** — optional Sonnet / Opus / Haiku env overrides (`ANTHROPIC_DEFAULT_*_MODEL`).
-6. **Summary** — review and confirm; existing non-ModelPort keys in the settings file are preserved.
+3. **Models** — provider-tabbed picker (switch tabs to browse openrouter, gemini, openai, etc.; search within the active tab). Pick default and optional Sonnet / Opus / Haiku overrides from different providers.
+4. **Summary** — review routed model ids and confirm; existing non-ModelPort keys are preserved.
 
 Restart Claude Code after applying changes.
 
@@ -232,8 +230,8 @@ modelport-configure \
   --project-dir . \
   --base-url http://127.0.0.1:13243 \
   --token "$MODELPORT_TOKEN" \
-  --provider openrouter \
   --model anthropic/claude-sonnet-4 \
+  --sonnet-model models/gemini-2.5-flash \
   --yes
 ```
 

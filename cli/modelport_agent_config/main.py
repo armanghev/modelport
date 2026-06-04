@@ -21,13 +21,13 @@ from modelport_agent_config.modelport import (
     resolve_token,
     resolve_token_with_source,
 )
+from modelport_agent_config.model_picker import select_provider_model_optional
 from modelport_agent_config.prompts import (
     print_banner,
     print_step,
     prompt_text,
     prompt_yes_no,
     select_option,
-    select_optional,
 )
 
 
@@ -51,7 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", type=Path, help="ModelPort repo root (auto-detected by default).")
     parser.add_argument("--base-url", help="ModelPort proxy base URL.")
     parser.add_argument("--token", help="MODELPORT_TOKEN value (overrides env and .env).")
-    parser.add_argument("--provider", help="X-ModelPort-Provider value.")
+    parser.add_argument(
+        "--provider",
+        help="Deprecated; routing is inferred from model ids. Ignored when writing settings.",
+    )
     parser.add_argument("--model", help="Default model id (ANTHROPIC_MODEL and settings model).")
     parser.add_argument("--sonnet-model", help="ANTHROPIC_DEFAULT_SONNET_MODEL override.")
     parser.add_argument("--opus-model", help="ANTHROPIC_DEFAULT_OPUS_MODEL override.")
@@ -76,49 +79,6 @@ def normalize_argv(argv: list[str] | None) -> list[str]:
     if len(argv) == 1 and argv[0] in _HELP_ALIASES:
         return ["--help"]
     return argv
-
-
-def _provider_options(runtime: ModelPortRuntime, catalog: dict[str, list[ProviderModel]]) -> list[tuple[str, str]]:
-    ids = list(runtime.provider_ids) or list(catalog.keys())
-    options: list[tuple[str, str]] = []
-    for provider_id in ids:
-        models = catalog.get(provider_id, [])
-        suffix = f" — {len(models)} chat models" if models else ""
-        options.append((provider_id, f"{provider_id}{suffix}"))
-    if not options:
-        options.append(("openrouter", "openrouter"))
-    return options
-
-
-def _model_options(
-    provider_id: str,
-    catalog: dict[str, list[ProviderModel]],
-    *,
-    limit: int = 60,
-) -> list[tuple[str, str]]:
-    models = catalog.get(provider_id, [])
-    options: list[tuple[str, str]] = []
-    for model in models[:limit]:
-        label = model.display_name or model.id
-        options.append((model.id, label))
-    return options
-
-
-def _suggested_models(provider_id: str, catalog: dict[str, list[ProviderModel]]) -> list[str]:
-    options = [model_id for model_id, _ in _model_options(provider_id, catalog)]
-    if options:
-        return options
-    if provider_id == "openrouter":
-        return [
-            "anthropic/claude-sonnet-4",
-            "anthropic/claude-opus-4",
-            "openai/gpt-4o-mini",
-        ]
-    if provider_id == "anthropic":
-        return ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022"]
-    if provider_id == "ollama":
-        return ["qwen2.5-coder:latest"]
-    return []
 
 
 def collect_profile_interactive(
@@ -183,35 +143,36 @@ def collect_profile_interactive(
     else:
         print("  Backend model catalog unavailable — you can type model ids manually.")
 
-    provider_id = select_option(
-        "Default provider (sent as X-ModelPort-Provider)",
-        _provider_options(runtime, catalog),
-        allow_custom=True,
-        custom_label="Type another provider id",
-    )
+    provider_ids = runtime.provider_ids or tuple(catalog.keys()) or ("openrouter",)
 
-    model_choices = _model_options(provider_id, catalog)
-    if not model_choices:
-        for suggestion in _suggested_models(provider_id, catalog):
-            model_choices.append((suggestion, suggestion))
-
-    model = select_optional(
+    model = select_provider_model_optional(
         "Default model",
-        model_choices,
+        catalog,
+        provider_ids,
     )
 
     configure_tiers = prompt_yes_no("Override Sonnet / Opus / Haiku default models?")
     sonnet_model = opus_model = haiku_model = None
     if configure_tiers:
-        tier_options = model_choices or [(m, m) for m in _suggested_models(provider_id, catalog)]
-        sonnet_model = select_optional("Sonnet tier (ANTHROPIC_DEFAULT_SONNET_MODEL)", tier_options)
-        opus_model = select_optional("Opus tier (ANTHROPIC_DEFAULT_OPUS_MODEL)", tier_options)
-        haiku_model = select_optional("Haiku tier (ANTHROPIC_DEFAULT_HAIKU_MODEL)", tier_options)
+        sonnet_model = select_provider_model_optional(
+            "\nSonnet tier (ANTHROPIC_DEFAULT_SONNET_MODEL)",
+            catalog,
+            provider_ids,
+        )
+        opus_model = select_provider_model_optional(
+            "\nOpus tier (ANTHROPIC_DEFAULT_OPUS_MODEL)",
+            catalog,
+            provider_ids,
+        )
+        haiku_model = select_provider_model_optional(
+            "\nHaiku tier (ANTHROPIC_DEFAULT_HAIKU_MODEL)",
+            catalog,
+            provider_ids,
+        )
 
     profile = ModelPortProfile(
         base_url=base_url,
         token=token,
-        provider_id=provider_id.strip().lower(),
         model=model,
         sonnet_model=sonnet_model,
         opus_model=opus_model,
@@ -230,8 +191,6 @@ def collect_profile_from_args(
         missing.append("--base-url")
     if not args.token and not resolve_token(runtime):
         missing.append("--token")
-    if not args.provider:
-        missing.append("--provider")
     if missing:
         raise SystemExit(f"Non-interactive mode requires: {', '.join(missing)}")
 
@@ -241,10 +200,11 @@ def collect_profile_from_args(
         raise SystemExit(f"{runtime.token_env} is required.")
 
     scope = ConfigScope(args.scope or ConfigScope.GLOBAL.value)
+    provider_id = str(args.provider).strip().lower() if args.provider else None
     profile = ModelPortProfile(
         base_url=base_url,
         token=token,
-        provider_id=str(args.provider).strip().lower(),
+        provider_id=provider_id,
         model=args.model,
         sonnet_model=args.sonnet_model,
         opus_model=args.opus_model,
@@ -272,7 +232,7 @@ def _run(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
 
     interactive = sys.stdin.isatty() and not args.json_output and not (
-        args.base_url and args.token and args.provider
+        args.base_url and (args.token or resolve_token(runtime))
     )
 
     if interactive and not args.scope:
@@ -304,11 +264,10 @@ def _run(argv: list[str] | None = None) -> int:
     print(f"  Scope:     {scope.value}")
     print(f"  File:      {settings_path}")
     print(f"  Base URL:  {profile.base_url}")
-    print(f"  Provider:  {profile.provider_id}")
     print(f"  Model:     {profile.model or '(agent default)'}")
     for label, model_id in profile.anthropic_tier_overrides():
         print(f"  {label + ':':<11}{model_id}")
-    print(f"  Headers:\n    {profile.format_custom_headers().replace(chr(10), chr(10) + '    ')}")
+    print("  Routing:   inferred from model ids (no X-ModelPort-Provider header)")
 
     if args.dry_run:
         print("\nDry run — settings patch:")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -15,7 +15,6 @@ import yaml
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 13243
 DEFAULT_TOKEN_ENV = "MODELPORT_TOKEN"
-PROVIDER_HEADER = "X-ModelPort-Provider"
 
 
 @dataclass(frozen=True)
@@ -40,22 +39,12 @@ class ModelPortProfile:
 
     base_url: str
     token: str
-    provider_id: str
+    provider_id: str | None = None
     model: str | None = None
     sonnet_model: str | None = None
     opus_model: str | None = None
     haiku_model: str | None = None
-    extra_headers: dict[str, str] = field(default_factory=dict)
     enable_tool_search: bool = True
-
-    def routing_headers(self) -> dict[str, str]:
-        headers = {PROVIDER_HEADER: self.provider_id}
-        headers.update(self.extra_headers)
-        return headers
-
-    def format_custom_headers(self) -> str:
-        lines = [f"{name}: {value}" for name, value in self.routing_headers().items()]
-        return "\n".join(lines)
 
     def anthropic_tier_overrides(self) -> list[tuple[str, str]]:
         """Sonnet / Opus / Haiku overrides configured for Claude Code."""

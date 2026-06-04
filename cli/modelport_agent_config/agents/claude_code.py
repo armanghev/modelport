@@ -74,7 +74,6 @@ class ClaudeCodeAdapter(AgentAdapter):
         env: dict[str, str] = {
             "ANTHROPIC_BASE_URL": profile.base_url,
             "ANTHROPIC_AUTH_TOKEN": profile.token,
-            "ANTHROPIC_CUSTOM_HEADERS": profile.format_custom_headers(),
             "ENABLE_TOOL_SEARCH": "true" if profile.enable_tool_search else "false",
         }
         if profile.model:
@@ -127,7 +126,6 @@ class ClaudeCodeAdapter(AgentAdapter):
         print("\nShell exports (optional, for terminals outside Claude Code):")
         print(f'  export ANTHROPIC_BASE_URL="{profile.base_url}"')
         print(f'  export ANTHROPIC_AUTH_TOKEN="{profile.token}"')
-        print(f'  export ANTHROPIC_CUSTOM_HEADERS="{profile.format_custom_headers().replace(chr(10), "\\n")}"')
         if profile.model:
             print(f'  export ANTHROPIC_MODEL="{profile.model}"')
         for _label, attr, env_key in _TIER_SHELL_EXPORTS:

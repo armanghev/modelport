@@ -53,7 +53,6 @@ class AgentAdapter(ABC):
         if result.backup_path:
             print(f"Previous file backed up to {result.backup_path}")
         print("\nRestart Claude Code so env changes take effect.")
-        print(f"Default provider header: X-ModelPort-Provider: {profile.provider_id}")
         if profile.model:
             print(f"Default model: {profile.model}")
         for label, model_id in profile.anthropic_tier_overrides():
