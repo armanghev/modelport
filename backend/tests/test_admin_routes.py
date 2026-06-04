@@ -141,6 +141,20 @@ def test_invalid_provider_references_return_client_errors(client: TestClient) ->
     assert pricing_response.status_code == 404
 
 
+def test_pricing_create_rejects_negative_rates(client: TestClient) -> None:
+    response = client.post(
+        "/admin/pricing",
+        json={
+            "provider_id": "openrouter",
+            "model": "openrouter/auto",
+            "input_per_1m_usd": -1.0,
+            "output_per_1m_usd": 8.0,
+            "currency": "USD",
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_provider_health_endpoint_returns_dashboard_ready_cards(
     client: TestClient,
     monkeypatch,

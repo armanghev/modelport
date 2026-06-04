@@ -10,6 +10,8 @@ def calculate_estimated_cost_usd(
 ) -> tuple[float | None, str | None]:
     if pricing is None:
         return None, None
+    if pricing.input_per_1m_usd < 0 or pricing.output_per_1m_usd < 0:
+        return None, None
 
     estimated_cost = (
         (input_tokens / 1_000_000) * pricing.input_per_1m_usd

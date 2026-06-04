@@ -92,13 +92,22 @@ def backfill_request_costs(session_factory: sessionmaker[Session]) -> dict[str, 
                 output_tokens=record.output_tokens,
             )
             if estimated_cost_usd is None:
-                skipped_no_pricing += 1
+                if record.estimated_cost_usd is not None or record.pricing_source is not None:
+                    record.estimated_cost_usd = None
+                    record.pricing_source = None
+                    updated += 1
+                else:
+                    skipped_no_pricing += 1
                 continue
 
-            record.estimated_cost_usd = estimated_cost_usd
-            record.pricing_source = pricing_source
-            updated += 1
-            total_cost += estimated_cost_usd
+            if (
+                record.estimated_cost_usd != estimated_cost_usd
+                or record.pricing_source != pricing_source
+            ):
+                record.estimated_cost_usd = estimated_cost_usd
+                record.pricing_source = pricing_source
+                updated += 1
+                total_cost += estimated_cost_usd
 
         session.commit()
 
@@ -113,7 +122,7 @@ def backfill_request_costs(session_factory: sessionmaker[Session]) -> dict[str, 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="One-time backfill of api_requests.estimated_cost_usd.")
-    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--config", default="../config.yaml")
     args = parser.parse_args()
 
     config = load_config(args.config)

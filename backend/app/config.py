@@ -41,7 +41,26 @@ class AppConfig(BaseModel):
     providers: dict[str, ProviderSeedConfig] = Field(default_factory=dict)
 
 
+def resolve_database_url(database_url: str, *, config_dir: Path) -> str:
+    """Resolve relative SQLite paths against the config file directory, not cwd."""
+    prefix = "sqlite:///"
+    if not database_url.startswith(prefix):
+        return database_url
+
+    path_part = database_url[len(prefix) :]
+    if not path_part or path_part == ":memory:" or path_part.startswith("/"):
+        return database_url
+
+    resolved = (config_dir / path_part).resolve()
+    return f"{prefix}{resolved.as_posix()}"
+
+
 def load_config(config_path: str | Path | None = None) -> AppConfig:
     resolved_path = Path(config_path or "config.yaml").expanduser().resolve()
     raw_config = yaml.safe_load(resolved_path.read_text(encoding="utf-8")) or {}
-    return AppConfig.model_validate(raw_config)
+    config = AppConfig.model_validate(raw_config)
+    config.database.url = resolve_database_url(
+        config.database.url,
+        config_dir=resolved_path.parent,
+    )
+    return config

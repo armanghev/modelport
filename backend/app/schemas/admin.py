@@ -100,8 +100,8 @@ class CredentialSecretResponse(BaseModel):
 class PricingOverrideCreate(BaseModel):
     provider_id: str
     model: str
-    input_per_1m_usd: float
-    output_per_1m_usd: float
+    input_per_1m_usd: float = Field(ge=0)
+    output_per_1m_usd: float = Field(ge=0)
     currency: str = "USD"
     enabled: bool = True
 
@@ -109,8 +109,8 @@ class PricingOverrideCreate(BaseModel):
 class PricingOverrideUpdate(BaseModel):
     provider_id: str | None = None
     model: str | None = None
-    input_per_1m_usd: float | None = None
-    output_per_1m_usd: float | None = None
+    input_per_1m_usd: float | None = Field(default=None, ge=0)
+    output_per_1m_usd: float | None = Field(default=None, ge=0)
     currency: str | None = None
     enabled: bool | None = None
 

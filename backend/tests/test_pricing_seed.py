@@ -48,3 +48,30 @@ def test_load_pricing_catalog_parses_provider_models() -> None:
     catalog = load_pricing_catalog(repo_root / "pricing_catalog.yaml")
     assert "openai" in catalog
     assert catalog["openai"]["gpt-4.1"]["input_per_1m_usd"] == 2.0
+
+
+def test_fetch_openrouter_pricing_skips_negative_sentinel_prices(monkeypatch) -> None:
+    from app.pricing_seed import fetch_openrouter_pricing
+
+    def fake_fetch_openrouter_models_api_payload() -> dict:
+        return {
+            "data": [
+                {
+                    "id": "openrouter/auto",
+                    "pricing": {"prompt": "-1", "completion": "-1"},
+                },
+                {
+                    "id": "openai/gpt-4.1",
+                    "pricing": {"prompt": "0.000002", "completion": "0.000008"},
+                },
+            ]
+        }
+
+    monkeypatch.setattr(
+        "app.pricing_seed.fetch_openrouter_models_api_payload",
+        fake_fetch_openrouter_models_api_payload,
+    )
+
+    rows = fetch_openrouter_pricing()
+
+    assert rows == [("openai/gpt-4.1", 2.0, 8.0)]

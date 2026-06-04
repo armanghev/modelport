@@ -5,13 +5,17 @@ from pathlib import Path
 
 import httpx
 import yaml
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig, load_config
 from app.database import PricingOverride, Provider, build_session_factory
-from app.model_metadata_service import fetch_openrouter_models_api_payload, sync_openrouter_metadata
-DEFAULT_CATALOG_PATH = Path("pricing_catalog.yaml")
+from app.model_metadata_service import (
+    fetch_openrouter_models_api_payload,
+    parse_openrouter_model,
+    sync_openrouter_metadata,
+)
+DEFAULT_CATALOG_PATH = Path("../pricing_catalog.yaml")
 
 
 def load_pricing_catalog(catalog_path: Path) -> dict[str, dict[str, dict[str, float]]]:
@@ -83,21 +87,31 @@ def fetch_openrouter_pricing() -> list[tuple[str, float, float]]:
     for item in payload.get("data", []):
         if not isinstance(item, dict):
             continue
-        model_id = item.get("id")
-        pricing = item.get("pricing")
-        if not isinstance(model_id, str) or not isinstance(pricing, dict):
+        record = parse_openrouter_model(item)
+        if record is None:
             continue
-        prompt = pricing.get("prompt")
-        completion = pricing.get("completion")
-        if prompt is None or completion is None:
+        input_per_1m = record.get("input_per_1m_usd")
+        output_per_1m = record.get("output_per_1m_usd")
+        if input_per_1m is None or output_per_1m is None:
             continue
-        try:
-            input_per_1m = float(prompt) * 1_000_000
-            output_per_1m = float(completion) * 1_000_000
-        except (TypeError, ValueError):
-            continue
-        rows.append((model_id, input_per_1m, output_per_1m))
+        rows.append((record["id"], input_per_1m, output_per_1m))
     return rows
+
+
+def disable_invalid_pricing_overrides(session: Session) -> int:
+    """Disable overrides seeded before unknown-price handling (e.g. OpenRouter -1)."""
+    rows = session.scalars(
+        select(PricingOverride).where(
+            PricingOverride.enabled.is_(True),
+            or_(
+                PricingOverride.input_per_1m_usd < 0,
+                PricingOverride.output_per_1m_usd < 0,
+            ),
+        )
+    ).all()
+    for row in rows:
+        row.enabled = False
+    return len(rows)
 
 
 def seed_openrouter_pricing(session: Session, *, configured_provider_ids: set[str]) -> int:
@@ -206,6 +220,7 @@ def seed_pricing_overrides(
                 metadata_count = sync_openrouter_metadata(session)
             except Exception:
                 metadata_count = 0
+        disabled_invalid = disable_invalid_pricing_overrides(session)
         session.commit()
 
     return {
@@ -213,12 +228,13 @@ def seed_pricing_overrides(
         "openrouter": openrouter_count,
         "ollama_discovered": ollama_count,
         "metadata": metadata_count,
+        "disabled_invalid": disabled_invalid,
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed ModelPort pricing overrides.")
-    parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
+    parser.add_argument("--config", default="../config.yaml", help="Path to config.yaml")
     parser.add_argument(
         "--catalog",
         default=str(DEFAULT_CATALOG_PATH),
@@ -242,6 +258,7 @@ def main() -> None:
         f"catalog={counts['catalog']}",
         f"openrouter={counts['openrouter']}",
         f"ollama_discovered={counts['ollama_discovered']}",
+        f"disabled_invalid={counts['disabled_invalid']}",
     )
 
 

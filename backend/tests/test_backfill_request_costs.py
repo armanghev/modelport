@@ -55,3 +55,55 @@ def test_backfill_request_costs_updates_existing_rows(client) -> None:
     assert record.estimated_cost_usd == 6.0
     assert record.pricing_source == "admin_override"
 
+
+def test_backfill_clears_stale_negative_estimated_cost(client) -> None:
+    from app.database import PricingOverride
+
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        session.add(
+            ApiRequest(
+                input_format="openai",
+                output_format="openai",
+                endpoint="/v1/chat/completions",
+                client_name="curl/8.7.1",
+                requested_model="openrouter/auto",
+                resolved_model="openrouter/auto",
+                provider="openrouter",
+                input_tokens=41,
+                output_tokens=0,
+                total_tokens=41,
+                token_source="provider_reported",
+                estimated_cost_usd=-41.0,
+                pricing_source="admin_override",
+                duration_ms=100,
+                status_code=200,
+                streamed=False,
+            )
+        )
+        session.add(
+            PricingOverride(
+                provider_id="openrouter",
+                model="openrouter/auto",
+                input_per_1m_usd=-1_000_000.0,
+                output_per_1m_usd=-1_000_000.0,
+                currency="USD",
+                enabled=True,
+            )
+        )
+        session.commit()
+
+    summary = backfill_request_costs(session_factory)
+    assert summary["updated"] >= 1
+
+    with session_factory() as session:
+        record = session.scalar(
+            select(ApiRequest).where(
+                ApiRequest.provider == "openrouter",
+                ApiRequest.requested_model == "openrouter/auto",
+            )
+        )
+    assert record is not None
+    assert record.estimated_cost_usd is None
+    assert record.pricing_source is None
+
