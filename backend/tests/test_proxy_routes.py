@@ -511,6 +511,65 @@ def test_chat_completions_route_returns_openai_compatible_response(
     assert response.json()["usage"]["total_tokens"] == 19
 
 
+def test_models_route_returns_openai_compatible_models_for_selected_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "object": "list",
+                "data": [
+                    {
+                        "id": "openrouter/auto",
+                        "object": "model",
+                        "owned_by": "openrouter",
+                    }
+                ],
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None):
+            assert url == "https://openrouter.ai/api/v1/models"
+            assert headers is not None
+            assert headers["Authorization"] == "Bearer sk-openrouter-seeded"
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.get(
+        "/v1/models",
+        headers={
+            "Authorization": "Bearer test-local-token",
+            "X-ModelPort-Provider": "openrouter",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "object": "list",
+        "data": [
+            {
+                "id": "openrouter/auto",
+                "object": "model",
+                "owned_by": "openrouter",
+            }
+        ],
+    }
+
+
 def test_chat_completions_route_retries_gemini_when_low_max_tokens_return_empty_completion(
     client: TestClient,
     monkeypatch,

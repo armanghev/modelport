@@ -89,6 +89,26 @@ class PricingOverride(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
+class ModelMetadata(Base):
+    __tablename__ = "model_metadata"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    canonical_slug: Mapped[str | None] = mapped_column(String(255), index=True)
+    name: Mapped[str | None] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text)
+    context_length: Mapped[int | None] = mapped_column(Integer)
+    architecture_json: Mapped[str | None] = mapped_column(Text)
+    input_modalities_json: Mapped[str | None] = mapped_column(Text)
+    output_modalities_json: Mapped[str | None] = mapped_column(Text)
+    supported_parameters_json: Mapped[str | None] = mapped_column(Text)
+    input_per_1m_usd: Mapped[float | None] = mapped_column(Float)
+    output_per_1m_usd: Mapped[float | None] = mapped_column(Float)
+    top_provider_json: Mapped[str | None] = mapped_column(Text)
+    expiration_date: Mapped[str | None] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="openrouter")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class ApiRequest(Base):
     __tablename__ = "api_requests"
 

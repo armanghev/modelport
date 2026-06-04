@@ -18,7 +18,7 @@ from app.api.proxy_common import (
     resolve_credential_secret,
     resolve_requested_provider,
 )
-from app.providers.openai_compatible import create_chat_completion, stream_chat_completion_chunks
+from app.providers.openai_compatible import create_chat_completion, list_models, stream_chat_completion_chunks
 from app.routing.provider_router import resolve_provider_routes
 from app.schemas.openai import OpenAIChatCompletionCreate, OpenAIChatCompletionResponse
 from app.tracking.cost_service import calculate_estimated_cost_usd
@@ -35,6 +35,41 @@ from app.translators.openai_request_to_anthropic import (
 )
 
 router = APIRouter(tags=["openai"])
+
+
+@router.get("/v1/models")
+def get_models(
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+) -> dict:
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=resolve_requested_provider(request, None),
+        requested_model="",
+        fallback_provider_ids=[],
+    )[0]
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Anthropic-compatible upstream providers are not implemented yet.",
+        )
+
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+    return list_models(resolved_route.provider, api_key=provider_secret)
 
 
 def extract_openai_stream_delta_text(chunk: dict) -> str:

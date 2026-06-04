@@ -10,8 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig, load_config
 from app.database import PricingOverride, Provider, build_session_factory
-
-OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+from app.model_metadata_service import fetch_openrouter_models_api_payload, sync_openrouter_metadata
 DEFAULT_CATALOG_PATH = Path("pricing_catalog.yaml")
 
 
@@ -78,10 +77,7 @@ def seed_catalog_pricing(
 
 
 def fetch_openrouter_pricing() -> list[tuple[str, float, float]]:
-    with httpx.Client(timeout=30.0) as client:
-        response = client.get(OPENROUTER_MODELS_URL)
-        response.raise_for_status()
-        payload = response.json()
+    payload = fetch_openrouter_models_api_payload()
 
     rows: list[tuple[str, float, float]] = []
     for item in payload.get("data", []):
@@ -179,6 +175,7 @@ def seed_pricing_overrides(
     catalog_path: Path = DEFAULT_CATALOG_PATH,
     sync_openrouter: bool = True,
     discover_ollama: bool = True,
+    sync_metadata: bool = True,
 ) -> dict[str, int]:
     catalog = load_pricing_catalog(catalog_path)
     configured_provider_ids = set(config.providers.keys())
@@ -203,12 +200,19 @@ def seed_pricing_overrides(
             if discover_ollama
             else 0
         )
+        metadata_count = 0
+        if sync_metadata and sync_openrouter:
+            try:
+                metadata_count = sync_openrouter_metadata(session)
+            except Exception:
+                metadata_count = 0
         session.commit()
 
     return {
         "catalog": catalog_count,
         "openrouter": openrouter_count,
         "ollama_discovered": ollama_count,
+        "metadata": metadata_count,
     }
 
 

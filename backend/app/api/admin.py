@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.analytics_service import build_provider_details, list_requests, requests_today_count
 from app.database import (
+    ModelMetadata,
     PricingOverride,
     Provider,
     ProviderCredential,
@@ -24,12 +25,26 @@ from app.database import (
     set_setting,
 )
 from app.schemas.analytics import ProviderHealthPayload
+from app.model_metadata_service import (
+    apply_gemini_native_model_fields,
+    build_pricing_index,
+    build_usage_index,
+    enrich_provider_model,
+    ensure_openrouter_metadata_fresh,
+    fetch_gemini_native_models_index,
+    is_gemini_provider,
+    is_openrouter_provider,
+    openrouter_models_request_kwargs,
+    load_metadata_index,
+    parse_openrouter_upstream_models,
+)
 from app.schemas.admin import (
     AppearanceSettings,
     CredentialSecretResponse,
     PricingOverrideCreate,
     ProviderModelsEntry,
     ProviderModelsPayload,
+    ProviderModelsTotals,
     PricingOverrideResponse,
     PricingOverrideUpdate,
     ProviderCreate,
@@ -177,7 +192,10 @@ def parse_model_count(payload: dict) -> int:
     return 0
 
 
-def parse_provider_models(payload: dict) -> list[dict]:
+def parse_provider_models(payload: dict, provider: Provider | None = None) -> list[dict]:
+    if provider is not None and is_openrouter_provider(provider):
+        return parse_openrouter_upstream_models(payload)
+
     raw_models = payload.get("data")
     if not isinstance(raw_models, list):
         raw_models = payload.get("models")
@@ -202,11 +220,16 @@ def parse_provider_models(payload: dict) -> list[dict]:
         if not isinstance(owned_by, str):
             owned_by = item.get("provider") if isinstance(item.get("provider"), str) else None
 
+        description = item.get("description")
+        if not isinstance(description, str):
+            description = None
+
         models.append(
             {
                 "id": model_id,
                 "display_name": display_name,
                 "owned_by": owned_by,
+                "description": description,
             }
         )
 
@@ -246,13 +269,27 @@ def fetch_provider_models_from_upstream(
         headers["Authorization"] = f"Bearer {secret}"
 
     start = time.perf_counter()
+    request_kwargs: dict = {}
+    if is_openrouter_provider(provider):
+        request_kwargs.update(openrouter_models_request_kwargs())
     with httpx.Client(timeout=10.0) as client:
-        response = client.get(build_health_check_url(provider), headers=headers)
+        response = client.get(
+            build_health_check_url(provider),
+            headers=headers,
+            **request_kwargs,
+        )
         response.raise_for_status()
         payload = response.json()
 
     latency_ms = max(1, round((time.perf_counter() - start) * 1000))
-    return parse_provider_models(payload), latency_ms
+    models = parse_provider_models(payload, provider)
+    if is_gemini_provider(provider) and secret:
+        try:
+            native_index = fetch_gemini_native_models_index(secret)
+            models = apply_gemini_native_model_fields(models, native_index)
+        except httpx.HTTPError:
+            pass
+    return models, latency_ms
 
 
 def run_provider_health_check(session: Session, provider: Provider) -> ProviderHealthCheck:
@@ -442,6 +479,13 @@ def get_provider_health(session: Session = Depends(get_session)) -> ProviderHeal
 def list_provider_models(session: Session = Depends(get_session)) -> ProviderModelsPayload:
     providers = session.scalars(select(Provider).order_by(Provider.id)).all()
     results: list[ProviderModelsEntry] = []
+    ensure_openrouter_metadata_fresh(session)
+    metadata_index = load_metadata_index(session)
+    pricing_index = build_pricing_index(session)
+    usage_index = build_usage_index(session)
+    latest_metadata = session.scalars(
+        select(ModelMetadata).order_by(ModelMetadata.fetched_at.desc()).limit(1)
+    ).first()
 
     for provider in providers:
         if not provider.enabled:
@@ -500,6 +544,17 @@ def list_provider_models(session: Session = Depends(get_session)) -> ProviderMod
         if status_value != "operational":
             continue
 
+        enriched_models = [
+            enrich_provider_model(
+                provider=provider,
+                raw_model=model,
+                metadata_index=metadata_index,
+                pricing_index=pricing_index,
+                usage_index=usage_index,
+            )
+            for model in models
+        ]
+
         results.append(
             ProviderModelsEntry(
                 provider_id=provider.id,
@@ -509,12 +564,36 @@ def list_provider_models(session: Session = Depends(get_session)) -> ProviderMod
                 status=status_value,
                 available_model_count=available_model_count,
                 fetched_at=health_check.checked_at.isoformat(),
-                models=models,
+                models=enriched_models,
             )
         )
 
     session.commit()
-    return ProviderModelsPayload(providers=results)
+
+    live_model_count = sum(entry.available_model_count for entry in results)
+    priced_model_count = sum(
+        1
+        for entry in results
+        for model in entry.models
+        if (model.input_per_1m_usd is not None and model.input_per_1m_usd >= 0)
+        or (model.output_per_1m_usd is not None and model.output_per_1m_usd >= 0)
+    )
+    used_model_count = sum(
+        1
+        for entry in results
+        for model in entry.models
+        if model.usage is not None and model.usage.requestCount > 0
+    )
+
+    totals = ProviderModelsTotals(
+        live_model_count=live_model_count,
+        provider_count=len(results),
+        priced_model_count=priced_model_count,
+        used_model_count=used_model_count,
+        metadata_synced_at=latest_metadata.fetched_at.isoformat() if latest_metadata else None,
+    )
+
+    return ProviderModelsPayload(totals=totals, providers=results)
 
 
 @router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)

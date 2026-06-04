@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ProviderType = Literal[
     "openai_compatible",
@@ -170,10 +170,32 @@ class ProviderHealthPayload(BaseModel):
     details: list[dict]
 
 
+class ModelUsageSummary(BaseModel):
+    requestCount: int = 0
+    tokenTotal: int = 0
+    costUsd: float = 0.0
+    avgLatencyMs: int = 0
+    errorRate: float = 0.0
+
+
 class ProviderModelSummary(BaseModel):
     id: str
     display_name: str | None = None
     owned_by: str | None = None
+    metadata_source: Literal["openrouter", "local", "pricing", "unknown"] = "unknown"
+    canonical_slug: str | None = None
+    description: str | None = None
+    context_length: int | None = None
+    architecture: dict = Field(default_factory=dict)
+    input_modalities: list[str] = Field(default_factory=list)
+    output_modalities: list[str] = Field(default_factory=list)
+    supported_parameters: list[str] = Field(default_factory=list)
+    input_per_1m_usd: float | None = None
+    output_per_1m_usd: float | None = None
+    top_provider: dict | None = None
+    expiration_date: str | None = None
+    openrouter_id: str | None = None
+    usage: ModelUsageSummary | None = None
 
 
 class ProviderModelsEntry(BaseModel):
@@ -187,5 +209,14 @@ class ProviderModelsEntry(BaseModel):
     models: list[ProviderModelSummary]
 
 
+class ProviderModelsTotals(BaseModel):
+    live_model_count: int = 0
+    provider_count: int = 0
+    priced_model_count: int = 0
+    used_model_count: int = 0
+    metadata_synced_at: str | None = None
+
+
 class ProviderModelsPayload(BaseModel):
+    totals: ProviderModelsTotals = ProviderModelsTotals()
     providers: list[ProviderModelsEntry]

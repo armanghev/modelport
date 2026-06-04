@@ -419,6 +419,13 @@ def test_provider_models_endpoint_returns_live_models_for_healthy_providers_only
     assert set(providers) == {"openai", "ollama"}
     assert providers["openai"]["available_model_count"] == 2
     assert providers["openai"]["models"][0]["id"] == "gpt-4.1"
+    assert providers["openai"]["models"][0]["metadata_source"] in {
+        "openrouter",
+        "pricing",
+        "unknown",
+    }
     assert providers["openai"]["status"] == "operational"
+    assert "totals" in payload
+    assert payload["totals"]["live_model_count"] == 3
     assert providers["ollama"]["available_model_count"] == 1
     assert providers["ollama"]["models"][0]["id"] == "qwen2.5-coder:latest"
