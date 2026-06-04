@@ -89,10 +89,42 @@ export interface ProviderHealthPayload {
   details: ProviderDetail[];
 }
 
+export interface ModelUsageSnippet {
+  requestCount: number;
+  tokenTotal: number;
+  costUsd: number;
+  avgLatencyMs: number;
+  errorRate: number;
+}
+
+export type ModelMetadataSource = "openrouter" | "local" | "pricing" | "unknown";
+
 export interface ProviderCatalogModel {
   id: string;
-  display_name: string | null;
+  display_name: string;
   owned_by: string | null;
+  metadata_source: ModelMetadataSource;
+  canonical_slug: string | null;
+  description: string | null;
+  context_length: number | null;
+  architecture: Record<string, unknown>;
+  input_modalities: string[];
+  output_modalities: string[];
+  supported_parameters: string[];
+  input_per_1m_usd: number | null;
+  output_per_1m_usd: number | null;
+  top_provider: Record<string, unknown> | null;
+  expiration_date: string | null;
+  openrouter_id: string | null;
+  usage: ModelUsageSnippet | null;
+}
+
+export interface ProviderModelsTotals {
+  live_model_count: number;
+  provider_count: number;
+  priced_model_count: number;
+  used_model_count: number;
+  metadata_synced_at: string | null;
 }
 
 export interface ProviderCatalogEntry {
@@ -107,6 +139,7 @@ export interface ProviderCatalogEntry {
 }
 
 export interface ProviderModelsPayload {
+  totals: ProviderModelsTotals;
   providers: ProviderCatalogEntry[];
 }
 

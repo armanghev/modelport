@@ -7,7 +7,7 @@ import { useTheme } from "next-themes";
 const pages = {
   overview: { title: "Overview", description: "Usage and routing overview" },
   requests: { title: "Requests", description: "Search and inspect proxy activity" },
-  models: { title: "Models", description: "Manage model catalog and usage" },
+  models: { title: "Models", description: "Browse enriched model catalogs, pricing, and usage" },
   providers: { title: "Providers", description: "Monitor provider health and routing" },
   costs: { title: "Costs", description: "Track spending across providers and models" },
   settings: { title: "Settings", description: "Configure clients, defaults, and more" },
@@ -18,8 +18,12 @@ const DEFAULT_PAGE = pages.overview;
 export function PageHeader() {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
-  const currentPage = pathname.split("/").filter(Boolean).pop() as keyof typeof pages | undefined;
-  const currentPageData = (currentPage && pages[currentPage]) || DEFAULT_PAGE;
+  const segments = pathname.split("/").filter(Boolean);
+  const currentPage = segments.at(-1) as keyof typeof pages | undefined;
+  const currentPageData =
+    segments[0] === "models" && segments.length >= 3
+      ? { title: "Model details", description: "Pricing, capabilities, and proxy usage" }
+      : (currentPage && pages[currentPage]) || DEFAULT_PAGE;
   const activeTheme = theme ?? "system";
 
   const themeIcon =
