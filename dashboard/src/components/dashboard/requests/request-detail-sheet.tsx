@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 
-import { CopyIcon } from "@phosphor-icons/react";
-
+import { CopyButton } from "@/components/ui/copy-button";
+import { RequestIoModal } from "@/components/dashboard/requests/request-io-modal";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -15,7 +15,6 @@ import {
 import type { RequestRow, RequestStatus } from "@/lib/mock-dashboard-data";
 
 type RequestOutcome = RequestStatus;
-type IoTab = "input" | "output";
 
 interface RequestDetailSheetProps {
   row: RequestRow | null;
@@ -62,14 +61,12 @@ function formatInteger(value: number): string {
 
 function CopyIdButton({ value, label }: { value: string; label: string }) {
   return (
-    <button
-      type="button"
+    <CopyButton
+      value={value}
       aria-label={`Copy ${label}`}
-      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-bg-card-muted"
-      onClick={() => void navigator.clipboard.writeText(value)}
-    >
-      <CopyIcon size={13} />
-    </button>
+      iconSize={13}
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-bg-card-muted"
+    />
   );
 }
 
@@ -91,17 +88,9 @@ function DetailMetric({
   );
 }
 
-function formatPayload(value: string): string {
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch {
-    return value;
-  }
-}
-
 function IoPanelShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border-subtle bg-bg-card-muted/60 px-6 py-10 text-center">
+    <div className="flex min-h-36 flex-col items-center justify-center rounded-xl border border-dashed border-border-subtle bg-bg-card-muted/60 px-6 py-8 text-center">
       {children}
     </div>
   );
@@ -137,117 +126,75 @@ function IoLoggingDisabledState({
   );
 }
 
-function IoNotCapturedState({ tab }: { tab: IoTab }) {
-  const label = tab === "input" ? "request body" : "response body";
-
+function IoNotCapturedState() {
   return (
     <IoPanelShell>
-      <p className="text-sm font-medium text-text-primary">No {label} stored</p>
+      <p className="text-sm font-medium text-text-primary">No I/O payloads stored</p>
       <p className="mt-2 max-w-sm text-sm text-text-secondary">
-        I/O logging was not enabled when this request was made, so the {label} was not captured.
+        I/O logging was not enabled when this request was made, so request and response bodies were
+        not captured.
       </p>
     </IoPanelShell>
   );
 }
 
-function IoPayloadPanel({
-  label,
-  payload,
-}: {
-  label: string;
-  payload: string;
-}) {
-  const formatted = formatPayload(payload);
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">{label}</p>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle px-2.5 py-1 text-xs text-text-secondary hover:bg-bg-card-muted hover:text-text-primary"
-          onClick={() => void navigator.clipboard.writeText(formatted)}
-        >
-          <CopyIcon size={12} />
-          Copy
-        </button>
-      </div>
-      <pre className="max-h-80 overflow-auto rounded-xl border border-border-subtle bg-[#1f2328] p-4 font-mono text-xs leading-relaxed text-[#e6edf3]">
-        {formatted}
-      </pre>
-    </div>
-  );
-}
-
 function IoSection({
+  row,
   ioLoggingEnabled,
   isEnablingIoLogging,
   ioEnableError,
   onEnableIoLogging,
-  inputPayload,
-  outputPayload,
+  onOpenInspector,
 }: {
+  row: RequestRow;
   ioLoggingEnabled: boolean;
   isEnablingIoLogging: boolean;
   ioEnableError: string | null;
   onEnableIoLogging: () => void;
-  inputPayload: string | null;
-  outputPayload: string | null;
+  onOpenInspector: () => void;
 }) {
-  const [activeIoTab, setActiveIoTab] = useState<IoTab>("input");
-  const showIoTabs = ioLoggingEnabled || Boolean(inputPayload || outputPayload);
+  const inputPayload = row.io?.input ?? null;
+  const outputPayload = row.io?.output ?? null;
+  const hasIoPayload = Boolean(inputPayload || outputPayload);
 
-  const renderIoContent = () => {
-    if (!ioLoggingEnabled) {
-      return (
-        <IoLoggingDisabledState
-          isEnabling={isEnablingIoLogging}
-          errorMessage={ioEnableError}
-          onEnable={onEnableIoLogging}
-        />
-      );
-    }
+  if (!ioLoggingEnabled) {
+    return (
+      <IoLoggingDisabledState
+        isEnabling={isEnablingIoLogging}
+        errorMessage={ioEnableError}
+        onEnable={onEnableIoLogging}
+      />
+    );
+  }
 
-    const activePayload = activeIoTab === "input" ? inputPayload : outputPayload;
-
-    if (activePayload) {
-      return (
-        <IoPayloadPanel
-          label={activeIoTab === "input" ? "Request body" : "Response body"}
-          payload={activePayload}
-        />
-      );
-    }
-
-    return <IoNotCapturedState tab={activeIoTab} />;
-  };
+  if (!hasIoPayload) {
+    return <IoNotCapturedState />;
+  }
 
   return (
-    <section>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h4 className="text-sm font-semibold text-text-primary">Input / output</h4>
-        {showIoTabs ? (
-          <div className="inline-flex rounded-lg border border-border-subtle bg-bg-card-muted p-0.5">
-            {(["input", "output"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveIoTab(tab)}
-                className={
-                  activeIoTab === tab
-                    ? "rounded-md bg-bg-card px-3 py-1 text-xs font-medium text-text-primary shadow-sm"
-                    : "rounded-md px-3 py-1 text-xs text-text-secondary hover:text-text-primary"
-                }
-              >
-                {tab === "input" ? "Input" : "Output"}
-              </button>
-            ))}
-          </div>
-        ) : null}
+    <div className="rounded-xl border border-border-subtle bg-bg-card-muted/40 p-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-text-primary">Captured I/O available</p>
+          <p className="text-sm text-text-secondary">
+            {formatInteger(row.inputTokens)} prompt tokens · {formatInteger(row.outputTokens)}{" "}
+            completion tokens
+          </p>
+          <p className="text-xs text-text-muted">
+            {inputPayload ? "Request body stored" : "Request body missing"} ·{" "}
+            {outputPayload ? "Response body stored" : "Response body missing"}
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="lg"
+          className="h-10 shrink-0 rounded-lg px-5 text-sm"
+          onClick={onOpenInspector}
+        >
+          View I/O details
+        </Button>
       </div>
-
-      {renderIoContent()}
-    </section>
+    </div>
   );
 }
 
@@ -260,121 +207,133 @@ export function RequestDetailSheet({
   ioEnableError,
   onEnableIoLogging,
 }: RequestDetailSheetProps) {
+  const [ioModalOpen, setIoModalOpen] = useState(false);
   const outcome: RequestOutcome = row?.status ?? "success";
   const outcomeLabel = outcome.charAt(0).toUpperCase() + outcome.slice(1);
 
+  const handleSheetOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setIoModalOpen(false);
+    }
+    onOpenChange(nextOpen);
+  };
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={handleSheetOpenChange}>
       <SheetContent
         side="right"
         className="w-full gap-0 overflow-y-auto border-border-subtle bg-bg-card p-0 sm:max-w-2xl"
       >
+        <SheetHeader className="border-b border-border-subtle px-5 py-4 text-left">
+          <div className="flex flex-wrap items-center gap-3 pr-8">
+            <SheetTitle className="text-lg font-semibold text-text-primary">
+              Request details
+            </SheetTitle>
+            {row ? (
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${requestOutcomeStyles[outcome]}`}
+              >
+                <span className="status-dot bg-current" />
+                {outcomeLabel}
+              </span>
+            ) : null}
+          </div>
+          {row ? (
+            <SheetDescription className="text-sm text-text-secondary">
+              {formatTimestamp(row.timestamp)} · {row.endpoint}
+            </SheetDescription>
+          ) : null}
+        </SheetHeader>
+
         {row ? (
-          <>
-            <SheetHeader className="border-b border-border-subtle px-5 py-4 text-left">
-              <div className="flex flex-wrap items-center gap-3 pr-8">
-                <SheetTitle className="text-lg font-semibold text-text-primary">
-                  Request details
-                </SheetTitle>
-                <span
-                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${requestOutcomeStyles[outcome]}`}
-                >
-                  <span className="status-dot bg-current" />
-                  {outcomeLabel}
-                </span>
-              </div>
-              <SheetDescription className="text-sm text-text-secondary">
-                {formatTimestamp(row.timestamp)} · {row.endpoint}
-              </SheetDescription>
-            </SheetHeader>
+          <div className="space-y-6 px-5 py-5">
+            <section>
+              <h4 className="mb-3 text-sm font-semibold text-text-primary">Metadata</h4>
+              <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-sm">
+                <dt className="text-text-secondary">Request ID</dt>
+                <dd className="flex min-w-0 items-start gap-2 font-medium text-text-primary">
+                  <span className="font-mono text-xs break-all">{row.id}</span>
+                  <CopyIdButton value={row.id} label="gateway ID" />
+                </dd>
 
-            <div className="space-y-6 px-5 py-5">
-              <section>
-                <h4 className="mb-3 text-sm font-semibold text-text-primary">Metadata</h4>
-                <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-sm">
-                  <dt className="text-text-secondary">Request ID</dt>
-                  <dd className="flex min-w-0 items-start gap-2 font-medium text-text-primary">
-                    <span className="font-mono text-xs break-all">{row.id}</span>
-                    <CopyIdButton value={row.id} label="gateway ID" />
-                  </dd>
+                <dt className="text-text-secondary">Upstream ID</dt>
+                <dd className="flex min-w-0 items-start gap-2 font-medium text-text-primary">
+                  {row.upstreamRequestId ? (
+                    <>
+                      <span className="font-mono text-xs break-all">{row.upstreamRequestId}</span>
+                      <CopyIdButton value={row.upstreamRequestId} label="upstream ID" />
+                    </>
+                  ) : (
+                    <span className="text-text-muted">—</span>
+                  )}
+                </dd>
 
-                  <dt className="text-text-secondary">Upstream ID</dt>
-                  <dd className="flex min-w-0 items-start gap-2 font-medium text-text-primary">
-                    {row.upstreamRequestId ? (
-                      <>
-                        <span className="font-mono text-xs break-all">{row.upstreamRequestId}</span>
-                        <CopyIdButton value={row.upstreamRequestId} label="upstream ID" />
-                      </>
-                    ) : (
-                      <span className="text-text-muted">—</span>
-                    )}
-                  </dd>
+                <dt className="text-text-secondary">Client</dt>
+                <dd className="font-medium text-text-primary">{row.client}</dd>
 
-                  <dt className="text-text-secondary">Client</dt>
-                  <dd className="font-medium text-text-primary">{row.client}</dd>
+                <dt className="text-text-secondary">Provider</dt>
+                <dd className="font-medium text-text-primary">{row.provider}</dd>
 
-                  <dt className="text-text-secondary">Provider</dt>
-                  <dd className="font-medium text-text-primary">{row.provider}</dd>
+                <dt className="text-text-secondary">Model</dt>
+                <dd className="font-medium text-text-primary">{row.model}</dd>
 
-                  <dt className="text-text-secondary">Model</dt>
-                  <dd className="font-medium text-text-primary">{row.model}</dd>
+                <dt className="text-text-secondary">Streaming</dt>
+                <dd className="font-medium text-text-primary">{row.streaming ? "Yes" : "No"}</dd>
+              </dl>
+            </section>
 
-                  <dt className="text-text-secondary">Streaming</dt>
-                  <dd className="font-medium text-text-primary">{row.streaming ? "Yes" : "No"}</dd>
-                </dl>
-              </section>
-
-              <section>
-                <h4 className="mb-3 text-sm font-semibold text-text-primary">Metrics</h4>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <DetailMetric
-                    label="Tokens"
-                    value={formatInteger(row.totalTokens)}
-                    subtext={
-                      <>
-                        <p>
-                          <span className="font-medium text-text-primary">
-                            {formatInteger(row.inputTokens)}
-                          </span>{" "}
-                          input
-                        </p>
-                        <p>
-                          <span className="font-medium text-text-primary">
-                            {formatInteger(row.outputTokens)}
-                          </span>{" "}
-                          output
-                        </p>
-                      </>
-                    }
-                  />
-                  <DetailMetric
-                    label="Latency"
-                    value={formatDuration(row.latencyMs)}
-                    subtext={
+            <section>
+              <h4 className="mb-3 text-sm font-semibold text-text-primary">Metrics</h4>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DetailMetric
+                  label="Tokens"
+                  value={formatInteger(row.totalTokens)}
+                  subtext={
+                    <>
                       <p>
-                        <span className="font-medium text-text-primary">{row.latencyMs} ms</span> total
+                        <span className="font-medium text-text-primary">
+                          {formatInteger(row.inputTokens)}
+                        </span>{" "}
+                        input
                       </p>
-                    }
-                  />
-                  <DetailMetric
-                    label="Estimated cost"
-                    value={formatCost(row.costUsd)}
-                  />
-                  <DetailMetric label="Status" value={outcomeLabel} />
-                </div>
-              </section>
+                      <p>
+                        <span className="font-medium text-text-primary">
+                          {formatInteger(row.outputTokens)}
+                        </span>{" "}
+                        output
+                      </p>
+                    </>
+                  }
+                />
+                <DetailMetric
+                  label="Latency"
+                  value={formatDuration(row.latencyMs)}
+                  subtext={
+                    <p>
+                      <span className="font-medium text-text-primary">{row.latencyMs} ms</span> total
+                    </p>
+                  }
+                />
+                <DetailMetric label="Estimated cost" value={formatCost(row.costUsd)} />
+                <DetailMetric label="Status" value={outcomeLabel} />
+              </div>
+            </section>
 
+            <section>
+              <h4 className="mb-3 text-sm font-semibold text-text-primary">Input / output</h4>
               <IoSection
+                row={row}
                 ioLoggingEnabled={ioLoggingEnabled}
                 isEnablingIoLogging={isEnablingIoLogging}
                 ioEnableError={ioEnableError}
                 onEnableIoLogging={onEnableIoLogging}
-                inputPayload={row.io?.input ?? null}
-                outputPayload={row.io?.output ?? null}
+                onOpenInspector={() => setIoModalOpen(true)}
               />
-            </div>
-          </>
+            </section>
+          </div>
         ) : null}
+
+        <RequestIoModal row={row} open={ioModalOpen} onClose={() => setIoModalOpen(false)} />
       </SheetContent>
     </Sheet>
   );
