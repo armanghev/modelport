@@ -28,6 +28,8 @@ def create_api_request_log(
     request_id: str | None,
     ttfb_ms: int | None = None,
     completion_reason: str | None = None,
+    request_body: str | None = None,
+    response_body: str | None = None,
 ) -> ApiRequest:
     record = ApiRequest(
         input_format=input_format,
@@ -50,6 +52,8 @@ def create_api_request_log(
         error_message=error_message,
         streamed=streamed,
         request_id=request_id,
+        request_body=request_body,
+        response_body=response_body,
     )
     session.add(record)
     session.commit()

@@ -39,6 +39,11 @@ export interface TopModelShare {
   tokenTotal: number;
 }
 
+export interface RequestIoPayload {
+  input?: string | null;
+  output?: string | null;
+}
+
 export interface RequestRow {
   id: string;
   upstreamRequestId?: string | null;
@@ -54,6 +59,7 @@ export interface RequestRow {
   latencyMs: number;
   streaming: boolean;
   status: RequestStatus;
+  io?: RequestIoPayload | null;
 }
 
 export interface ModelUsageSummary {

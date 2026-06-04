@@ -461,3 +461,138 @@ def test_chat_completions_route_persists_stream_request_metadata(
         assert record.status_code == 200
         assert record.completion_reason == "stop"
         assert record.ttfb_ms is not None
+
+
+def test_messages_route_stores_io_when_logging_enabled(
+    client: TestClient,
+    app_config,
+    monkeypatch,
+) -> None:
+    enable_io = client.patch("/admin/settings/tracking", json={"io_logging": True})
+    assert enable_io.status_code == 200
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_io_123",
+                "model": "gpt-5.5",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Tracked response"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1000, "completion_tokens": 500},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+
+    session_factory = build_session_factory(f"sqlite:///{app_config.parent / 'test.db'}")
+    with session_factory() as session:
+        record = session.query(ApiRequest).one()
+        assert record.request_body is not None
+        assert '"hello"' in record.request_body
+        assert record.response_body is not None
+        assert "Tracked response" in record.response_body
+
+    analytics = client.get("/analytics/requests")
+    assert analytics.status_code == 200
+    row = analytics.json()["rows"][0]
+    assert row["io"]["input"] == record.request_body
+    assert row["io"]["output"] == record.response_body
+
+
+def test_messages_route_does_not_store_io_when_logging_disabled(
+    client: TestClient,
+    app_config,
+    monkeypatch,
+) -> None:
+    disable_io = client.patch("/admin/settings/tracking", json={"io_logging": False})
+    assert disable_io.status_code == 200
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_no_io_123",
+                "model": "gpt-5.5",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "No io"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+
+    session_factory = build_session_factory(f"sqlite:///{app_config.parent / 'test.db'}")
+    with session_factory() as session:
+        record = session.query(ApiRequest).one()
+        assert record.request_body is None
+        assert record.response_body is None
+
+    analytics = client.get("/analytics/requests")
+    assert analytics.status_code == 200
+    row = analytics.json()["rows"][0]
+    assert not row.get("io") or (not row["io"].get("input") and not row["io"].get("output"))

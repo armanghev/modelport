@@ -44,6 +44,11 @@ class TopModelShare(BaseModel):
     tokenTotal: int
 
 
+class RequestIoPayload(BaseModel):
+    input: str | None = None
+    output: str | None = None
+
+
 class RequestRow(BaseModel):
     id: str
     upstreamRequestId: str | None = None
@@ -59,6 +64,7 @@ class RequestRow(BaseModel):
     latencyMs: int
     streaming: bool
     status: RequestStatus
+    io: RequestIoPayload | None = None
 
 
 class RequestTotals(BaseModel):

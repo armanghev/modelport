@@ -110,6 +110,8 @@ function formatTrackingPayload(
       tracking.find((item) => item.id === "request_logging")?.enabled ?? true,
     cost_tracking:
       tracking.find((item) => item.id === "cost_tracking")?.enabled ?? true,
+    io_logging:
+      tracking.find((item) => item.id === "io_logging")?.enabled ?? false,
     retention_days:
       tracking.find((item) => item.id === "retention_days")?.enabled ? 30 : 0,
   };

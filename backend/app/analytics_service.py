@@ -145,6 +145,16 @@ def serialize_request_rows(
                 "latencyMs": record.duration_ms or 0,
                 "streaming": record.streamed,
                 "status": request_status(record),
+                **(
+                    {
+                        "io": {
+                            "input": record.request_body,
+                            "output": record.response_body,
+                        }
+                    }
+                    if record.request_body or record.response_body
+                    else {}
+                ),
             }
         )
     return rows

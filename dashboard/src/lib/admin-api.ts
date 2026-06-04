@@ -49,6 +49,7 @@ export interface AdminSettingsPayload {
     tracking: {
       request_logging?: boolean;
       cost_tracking?: boolean;
+      io_logging?: boolean;
       retention_days?: number;
     };
     appearance: {
@@ -155,6 +156,10 @@ const trackingLabelMap: Record<
   cost_tracking: {
     label: "Cost tracking",
     description: "Estimate and track provider costs for requests.",
+  },
+  io_logging: {
+    label: "I/O logging",
+    description: "Store request and response bodies for debugging.",
   },
   retention_days: {
     label: "Retention window",
@@ -362,15 +367,25 @@ export async function updateProviderCredential(
   });
 }
 
-export async function updateTrackingSettings(payload: {
-  request_logging: boolean;
-  cost_tracking: boolean;
-  retention_days: number;
+export async function patchTrackingSettings(payload: {
+  request_logging?: boolean;
+  cost_tracking?: boolean;
+  io_logging?: boolean;
+  retention_days?: number;
 }) {
-  return fetchJson("/admin/settings/tracking", {
+  return fetchJson<AdminSettingsPayload["settings"]["tracking"]>("/admin/settings/tracking", {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export async function updateTrackingSettings(payload: {
+  request_logging: boolean;
+  cost_tracking: boolean;
+  io_logging: boolean;
+  retention_days: number;
+}) {
+  return patchTrackingSettings(payload);
 }
 
 export async function updateAppearanceSettings(payload: {

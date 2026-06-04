@@ -22,6 +22,7 @@ from app.providers.openai_compatible import create_chat_completion, list_models,
 from app.routing.provider_router import resolve_provider_routes
 from app.schemas.openai import OpenAIChatCompletionCreate, OpenAIChatCompletionResponse
 from app.tracking.cost_service import calculate_estimated_cost_usd
+from app.tracking.io_logging import io_log_kwargs
 from app.tracking.log_service import create_api_request_log
 from app.tracking.pricing import find_pricing_override
 from app.tracking.usage_service import (
@@ -227,6 +228,26 @@ def create_chat_completions(
                             request_id=upstream_request_id,
                             ttfb_ms=ttfb_ms,
                             completion_reason=completion_reason,
+                            **io_log_kwargs(
+                                log_session,
+                                request_payload=payload,
+                                response_payload={
+                                    "streamed": True,
+                                    "id": upstream_request_id,
+                                    "model": resolved_route.upstream_model,
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "message": {
+                                                "role": "assistant",
+                                                "content": "".join(text_parts),
+                                            },
+                                            "finish_reason": completion_reason,
+                                        }
+                                    ],
+                                    "usage": final_usage,
+                                },
+                            ),
                         )
                     return
                 except HTTPException as exc:
@@ -269,6 +290,16 @@ def create_chat_completions(
                             streamed=True,
                             request_id=upstream_request_id,
                             ttfb_ms=ttfb_ms,
+                            **io_log_kwargs(
+                                log_session,
+                                request_payload=payload,
+                                response_payload={
+                                    "error": {
+                                        "message": str(exc.detail),
+                                        "status_code": exc.status_code,
+                                    }
+                                },
+                            ),
                         )
                     error_payload = {
                         "error": {
@@ -360,6 +391,16 @@ def create_chat_completions(
                 error_message=str(exc.detail),
                 streamed=False,
                 request_id=None,
+                **io_log_kwargs(
+                    session,
+                    request_payload=payload,
+                    response_payload={
+                        "error": {
+                            "message": str(exc.detail),
+                            "status_code": exc.status_code,
+                        }
+                    },
+                ),
             )
             raise
 
@@ -397,6 +438,11 @@ def create_chat_completions(
             streamed=False,
             request_id=str(upstream_response.get("id")) if upstream_response.get("id") else None,
             completion_reason=completion_reason,
+            **io_log_kwargs(
+                session,
+                request_payload=payload,
+                response_payload=upstream_response,
+            ),
         )
         return OpenAIChatCompletionResponse.model_validate(upstream_response)
 

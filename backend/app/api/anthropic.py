@@ -22,6 +22,7 @@ from app.providers.openai_compatible import create_chat_completion, stream_chat_
 from app.routing.provider_router import resolve_provider_routes
 from app.schemas.anthropic import AnthropicMessageCreate, AnthropicMessageResponse
 from app.tracking.cost_service import calculate_estimated_cost_usd
+from app.tracking.io_logging import io_log_kwargs
 from app.tracking.log_service import create_api_request_log
 from app.tracking.pricing import find_pricing_override
 from app.tracking.usage_service import (
@@ -161,6 +162,21 @@ def create_message(
                             request_id=upstream_request_id,
                             ttfb_ms=ttfb_ms,
                             completion_reason=translator.completion_reason,
+                            **io_log_kwargs(
+                                log_session,
+                                request_payload=payload,
+                                response_payload={
+                                    "streamed": True,
+                                    "model": payload.model,
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "".join(translator.text_parts),
+                                        }
+                                    ],
+                                    "stop_reason": translator.completion_reason,
+                                },
+                            ),
                         )
                     return
                 except HTTPException as exc:
@@ -203,6 +219,16 @@ def create_message(
                             streamed=True,
                             request_id=upstream_request_id,
                             ttfb_ms=ttfb_ms,
+                            **io_log_kwargs(
+                                log_session,
+                                request_payload=payload,
+                                response_payload={
+                                    "error": {
+                                        "message": str(exc.detail),
+                                        "status_code": exc.status_code,
+                                    }
+                                },
+                            ),
                         )
                     yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'api_error', 'message': str(exc.detail)}})}\n\n"
                     return
@@ -287,6 +313,16 @@ def create_message(
                 error_message=str(exc.detail),
                 streamed=False,
                 request_id=None,
+                **io_log_kwargs(
+                    session,
+                    request_payload=payload,
+                    response_payload={
+                        "error": {
+                            "message": str(exc.detail),
+                            "status_code": exc.status_code,
+                        }
+                    },
+                ),
             )
             raise
 
@@ -302,6 +338,10 @@ def create_message(
             output_tokens=usage_snapshot.output_tokens,
         )
         duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+        anthropic_response = translate_openai_chat_completion_to_anthropic(
+            upstream_response,
+            requested_model=payload.model,
+        )
         create_api_request_log(
             session,
             input_format="anthropic",
@@ -322,11 +362,13 @@ def create_message(
             error_message=None,
             streamed=False,
             request_id=str(upstream_response.get("id")) if upstream_response.get("id") else None,
+            **io_log_kwargs(
+                session,
+                request_payload=payload,
+                response_payload=anthropic_response,
+            ),
         )
-        return translate_openai_chat_completion_to_anthropic(
-            upstream_response,
-            requested_model=payload.model,
-        )
+        return anthropic_response
 
     if last_error is not None:
         raise last_error

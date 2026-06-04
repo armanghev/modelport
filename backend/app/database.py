@@ -135,6 +135,8 @@ class ApiRequest(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     streamed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(255))
+    request_body: Mapped[str | None] = mapped_column(Text)
+    response_body: Mapped[str | None] = mapped_column(Text)
 
 
 class ProviderHealthCheck(Base):
@@ -183,6 +185,10 @@ def ensure_runtime_columns(engine) -> None:
         statements.append("ALTER TABLE api_requests ADD COLUMN ttfb_ms INTEGER")
     if "completion_reason" not in existing_columns:
         statements.append("ALTER TABLE api_requests ADD COLUMN completion_reason VARCHAR(64)")
+    if "request_body" not in existing_columns:
+        statements.append("ALTER TABLE api_requests ADD COLUMN request_body TEXT")
+    if "response_body" not in existing_columns:
+        statements.append("ALTER TABLE api_requests ADD COLUMN response_body TEXT")
 
     if not statements:
         return
@@ -275,6 +281,7 @@ def seed_admin_data(session_factory: sessionmaker[Session], config: AppConfig) -
             {
                 "request_logging": True,
                 "cost_tracking": True,
+                "io_logging": False,
                 "retention_days": 30,
             },
         )

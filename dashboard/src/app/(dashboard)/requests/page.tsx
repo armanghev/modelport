@@ -7,14 +7,15 @@ import {
   CaretLeftIcon,
   CaretRightIcon,
   CaretUpIcon,
-  CopyIcon,
   DownloadSimpleIcon,
   MagnifyingGlassIcon,
 } from "@phosphor-icons/react";
 import { ClaudeCode, GeminiCLI, Codex, Cursor, OpenAI } from "@lobehub/icons";
 
 import { renderProviderIcon } from "@/components/brand/render-provider-icon";
+import { RequestDetailSheet } from "@/components/dashboard/requests/request-detail-sheet";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -24,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { fetchRequestsAnalytics } from "@/lib/analytics-api";
+import { fetchAdminSettings, patchTrackingSettings } from "@/lib/admin-api";
 import { type RequestRow, type RequestStatus } from "@/lib/mock-dashboard-data";
 
 type RequestOutcome = RequestStatus;
@@ -84,19 +86,6 @@ function formatCost(value: number): string {
 
 function formatInteger(value: number): string {
   return value.toLocaleString("en-US");
-}
-
-function CopyIdButton({ value, label }: { value: string; label: string }) {
-  return (
-    <button
-      type="button"
-      aria-label={`Copy ${label}`}
-      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-bg-card-muted"
-      onClick={() => void navigator.clipboard.writeText(value)}
-    >
-      <CopyIcon size={13} />
-    </button>
-  );
 }
 
 function getOutcome(row: RequestRow): RequestOutcome {
@@ -168,12 +157,16 @@ export default function RequestsPage() {
   });
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [clientFilter, setClientFilter] = useState<RequestRow["client"] | "all">("all");
   const [providerFilter, setProviderFilter] = useState<string>("all");
   const [modelFilter, setModelFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("all");
   const [timeRangeFilter, setTimeRangeFilter] = useState<RequestTimeRange>("24h");
+  const [ioLoggingEnabled, setIoLoggingEnabled] = useState(false);
+  const [isEnablingIoLogging, setIsEnablingIoLogging] = useState(false);
+  const [ioEnableError, setIoEnableError] = useState<string | null>(null);
   const [referenceNow] = useState(() => Date.now());
   const allRows = useMemo(() => payload?.rows ?? [], [payload]);
 
@@ -190,12 +183,9 @@ export default function RequestsPage() {
           return;
         }
         setPayload(nextPayload);
-        setSelectedRowId((currentId) => {
-          if (currentId && nextPayload.rows.some((row) => row.id === currentId)) {
-            return currentId;
-          }
-          return nextPayload.rows[0]?.id ?? null;
-        });
+        setSelectedRowId((currentId) =>
+          currentId && nextPayload.rows.some((row) => row.id === currentId) ? currentId : null,
+        );
         setClientFilter((current) =>
           current === "all" || nextPayload.filters.clients.includes(current) ? current : "all",
         );
@@ -233,6 +223,44 @@ export default function RequestsPage() {
       window.clearInterval(intervalId);
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    void fetchAdminSettings()
+      .then((payload) => {
+        if (!active) {
+          return;
+        }
+        setIoLoggingEnabled(payload.settings.tracking.io_logging ?? false);
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setIoLoggingEnabled(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleEnableIoLogging = async () => {
+    setIsEnablingIoLogging(true);
+    setIoEnableError(null);
+
+    try {
+      const tracking = await patchTrackingSettings({ io_logging: true });
+      setIoLoggingEnabled(tracking.io_logging ?? true);
+    } catch (error) {
+      setIoEnableError(
+        error instanceof Error ? error.message : "Failed to enable I/O logging.",
+      );
+    } finally {
+      setIsEnablingIoLogging(false);
+    }
+  };
 
   const filteredRows = useMemo(() => {
     const cutoffTimestamp = referenceNow - TIME_RANGE_IN_MS[timeRangeFilter];
@@ -312,16 +340,17 @@ export default function RequestsPage() {
   }, [currentPage, sortedRows]);
 
   const selectedRow = useMemo(() => {
-    if (sortedRows.length === 0) {
+    if (!selectedRowId) {
       return null;
     }
-    if (!selectedRowId) {
-      return sortedRows[0];
-    }
 
-    return sortedRows.find((row) => row.id === selectedRowId) ?? sortedRows[0];
+    return sortedRows.find((row) => row.id === selectedRowId) ?? null;
   }, [selectedRowId, sortedRows]);
-  const selectedOutcome: RequestOutcome = selectedRow ? getOutcome(selectedRow) : "success";
+
+  const openRequestDetails = (rowId: string) => {
+    setSelectedRowId(rowId);
+    setDetailOpen(true);
+  };
 
   const startRow = totalRows === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1;
   const endRow = totalRows === 0 ? 0 : Math.min(currentPage * rowsPerPage, totalRows);
@@ -537,8 +566,11 @@ export default function RequestsPage() {
               return (
                 <tr
                   key={row.id}
-                  onClick={() => setSelectedRowId(row.id)}
-                  className="border-b border-border-subtle hover:bg-bg-card-muted text-sm text-text-secondary last:border-b-0"
+                  onClick={() => openRequestDetails(row.id)}
+                  className={cn(
+                    "cursor-pointer border-b border-border-subtle text-sm text-text-secondary last:border-b-0 hover:bg-bg-card-muted",
+                    selectedRowId === row.id && detailOpen && "bg-bg-card-muted",
+                  )}
                 >
                   <td className="px-5 py-3.5 whitespace-nowrap">{formatTimestamp(row.timestamp)}</td>
                   <td className="px-5 py-3.5">
@@ -633,145 +665,21 @@ export default function RequestsPage() {
         </div>
       </section>
 
-      <section className="card-surface overflow-hidden">
-        {selectedRow ? (
-          <div className="grid lg:grid-cols-[1fr_2fr]">
-            <div className="p-5 lg:border-r lg:border-border-subtle">
-              <div className="mb-4 flex items-center gap-3">
-                <h3>Request details</h3>
-                <span
-                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${requestOutcomeStyles[selectedOutcome]}`}
-                >
-                  <span className="status-dot bg-current" />
-                  {selectedOutcome.charAt(0).toUpperCase() + selectedOutcome.slice(1)}
-                </span>
-              </div>
-
-              <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-sm">
-                <dt className="text-text-secondary">Request ID</dt>
-                <dd className="flex min-w-0 items-start gap-2 font-medium text-text-primary">
-                  <span className="font-mono text-xs break-all">{selectedRow.id}</span>
-                  <CopyIdButton value={selectedRow.id} label="gateway ID" />
-                </dd>
-
-                <dt className="text-text-secondary">Upstream ID</dt>
-                <dd className="flex min-w-0 items-start gap-2 font-medium text-text-primary">
-                  {selectedRow.upstreamRequestId ? (
-                    <>
-                      <span className="font-mono text-xs break-all">
-                        {selectedRow.upstreamRequestId}
-                      </span>
-                      <CopyIdButton
-                        value={selectedRow.upstreamRequestId}
-                        label="upstream ID"
-                      />
-                    </>
-                  ) : (
-                    <span className="text-text-muted">—</span>
-                  )}
-                </dd>
-
-                <dt className="text-text-secondary">Endpoint</dt>
-                <dd className="font-medium text-text-primary">{selectedRow.endpoint}</dd>
-
-                <dt className="text-text-secondary">Client</dt>
-                <dd className="font-medium text-text-primary">{selectedRow.client}</dd>
-
-                <dt className="text-text-secondary">Provider</dt>
-                <dd className="font-medium text-text-primary">{selectedRow.provider}</dd>
-
-                <dt className="text-text-secondary">Model</dt>
-                <dd className="font-medium text-text-primary">{selectedRow.model}</dd>
-              </dl>
-            </div>
-
-            <div className="p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <h3>Metrics</h3>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <article className="card-surface-soft p-4">
-                  <p className="text-xs text-text-secondary">Tokens</p>
-                  <p className="mt-2 text-xl leading-none font-semibold text-text-primary">
-                    {formatInteger(selectedRow.totalTokens)}
-                  </p>
-                  <div className="mt-3 space-y-1 text-sm text-text-secondary">
-                    <p>
-                      <span className="font-medium text-sm text-text-primary">
-                        {formatInteger(selectedRow.inputTokens)}
-                      </span>{" "}
-                      Input
-                    </p>
-                    <p>
-                      <span className="font-medium text-sm text-text-primary">
-                        {formatInteger(selectedRow.outputTokens)}
-                      </span>{" "}
-                      Output
-                    </p>
-                  </div>
-                </article>
-
-                <article className="card-surface-soft p-4">
-                  <p className="text-xs text-text-secondary">Latency</p>
-                  <p className="mt-2 text-xl leading-none font-semibold text-text-primary">
-                    {formatDuration(selectedRow.latencyMs)}
-                  </p>
-                  <div className="mt-3 space-y-1 text-sm text-text-secondary">
-                    <p>
-                      <span className="font-medium text-sm text-text-primary">
-                        {Math.round(selectedRow.latencyMs * 0.42)} ms
-                      </span>{" "}
-                      TTFB
-                    </p>
-                    <p>
-                      <span className="font-medium text-sm text-text-primary">
-                        {selectedRow.latencyMs} ms
-                      </span>{" "}
-                      Total
-                    </p>
-                  </div>
-                </article>
-
-                <article className="card-surface-soft p-4">
-                  <p className="text-xs text-text-secondary">Estimated cost</p>
-                  <p className="mt-2 text-xl leading-none font-semibold text-text-primary">
-                    {formatCost(selectedRow.costUsd)}
-                  </p>
-                  <div className="mt-3 space-y-1 text-sm text-text-secondary">
-                    <p>
-                      <span className="font-medium text-sm text-text-primary">
-                        {formatCost(selectedRow.costUsd * 0.71)}
-                      </span>{" "}
-                      Input
-                    </p>
-                    <p>
-                      <span className="font-medium text-sm text-text-primary">
-                        {formatCost(selectedRow.costUsd * 0.29)}
-                      </span>{" "}
-                      Output
-                    </p>
-                  </div>
-                </article>
-
-                <article className="card-surface-soft p-4">
-                  <p className="text-xs text-text-secondary">Status</p>
-                  <p className={`mt-2 text-xl leading-none font-semibold ${requestOutcomeStyles[selectedOutcome]} bg-transparent!`}>
-                    {selectedOutcome.charAt(0).toUpperCase() + selectedOutcome.slice(1)}
-                  </p>
-                  <div className="mt-3 space-y-1 text-sm text-text-secondary">
-                    <p>{formatTimestamp(selectedRow.timestamp)}</p>
-                  </div>
-                </article>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="p-8 text-sm text-text-secondary">
-            No requests match the current search and filters.
-          </div>
-        )}
-      </section>
+      <RequestDetailSheet
+        row={selectedRow}
+        open={detailOpen && selectedRow !== null}
+        onOpenChange={(open) => {
+          setDetailOpen(open);
+          if (!open) {
+            setSelectedRowId(null);
+            setIoEnableError(null);
+          }
+        }}
+        ioLoggingEnabled={ioLoggingEnabled}
+        isEnablingIoLogging={isEnablingIoLogging}
+        ioEnableError={ioEnableError}
+        onEnableIoLogging={() => void handleEnableIoLogging()}
+      />
     </div>
   );
 }

@@ -130,6 +130,7 @@ class PricingOverrideResponse(ORMModel):
 class TrackingSettings(BaseModel):
     request_logging: bool | None = None
     cost_tracking: bool | None = None
+    io_logging: bool | None = None
     retention_days: int | None = None
 
 
