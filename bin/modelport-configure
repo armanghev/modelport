@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CLI_DIR="${ROOT}/cli"
+
+if [[ -x "${CLI_DIR}/.venv/bin/python" ]]; then
+  exec "${CLI_DIR}/.venv/bin/python" -m modelport_agent_config "$@"
+fi
+
+if command -v modelport-configure >/dev/null 2>&1; then
+  exec modelport-configure "$@"
+fi
+
+exec python3 "${CLI_DIR}/modelport_agent_config" "$@"

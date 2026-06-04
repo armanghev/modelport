@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "modelport-agent-config"
+version = "0.1.0"
+description = "Interactive CLI to wire CLI coding agents through ModelPort"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0.2",
+]
+
+[project.scripts]
+modelport-configure = "modelport_agent_config.main:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["modelport_agent_config*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
