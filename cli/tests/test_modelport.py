@@ -74,3 +74,22 @@ def test_main_handles_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch, capsys
     monkeypatch.setattr(main_module, "select_option", _interrupt)
     assert main_module.main([]) == 130
     assert "Cancelled." in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["help"], ["-help"], ["-h"]])
+def test_help_aliases_show_usage(argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main_module.main(argv)
+    assert exc_info.value.code == 0
+
+
+def test_normalize_argv_maps_help_aliases() -> None:
+    assert main_module.normalize_argv(["help"]) == ["--help"]
+    assert main_module.normalize_argv(["-help"]) == ["--help"]
+    assert main_module.normalize_argv(["-h"]) == ["--help"]
+    assert main_module.normalize_argv(["--agent", "claude-code"]) == ["--agent", "claude-code"]
+
+
+def test_normalize_argv_maps_help_when_argv_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main_module.sys, "argv", ["modelport-configure", "help"])
+    assert main_module.normalize_argv(None) == ["--help"]

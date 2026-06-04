@@ -67,6 +67,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_HELP_ALIASES = frozenset({"help", "-help", "-h"})
+
+
+def normalize_argv(argv: list[str] | None) -> list[str]:
+    if argv is None:
+        argv = sys.argv[1:]
+    if len(argv) == 1 and argv[0] in _HELP_ALIASES:
+        return ["--help"]
+    return argv
+
+
 def _provider_options(runtime: ModelPortRuntime, catalog: dict[str, list[ProviderModel]]) -> list[tuple[str, str]]:
     ids = list(runtime.provider_ids) or list(catalog.keys())
     options: list[tuple[str, str]] = []
@@ -249,7 +260,7 @@ def preview_patch(adapter: AgentAdapter, profile: ModelPortProfile) -> dict:
 
 def _run(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(normalize_argv(argv))
 
     repo_root = args.repo_root or find_repo_root()
     runtime = load_modelport_runtime(repo_root)
