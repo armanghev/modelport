@@ -29,6 +29,7 @@ Working today:
 - Model directory metadata from OpenRouter, Gemini native model listing, local providers, pricing catalog entries, and observed usage.
 - Pricing seed from `pricing_catalog.yaml`.
 - Backend pytest coverage for proxy routes, analytics, admin settings, request tracking, model metadata, pricing seed, tool translation, and ID generation.
+- Interactive `modelport-configure` CLI for wiring Claude Code (and future agents) through the proxy.
 
 Still in progress:
 
@@ -70,6 +71,8 @@ Repository layout:
 - `config.yaml`: local provider defaults and database location.
 - `.env.example`: required local environment variables.
 - `pricing_catalog.yaml`: model pricing seed data.
+- `cli/`: interactive agent configuration package (`modelport-configure`).
+- `bin/`: repository convenience scripts (including `./bin/modelport-configure`).
 - `docs/`: planning notes for larger implementation tracks.
 
 ## Quick Start
@@ -184,6 +187,51 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:13243
 export ANTHROPIC_AUTH_TOKEN=$MODELPORT_TOKEN
 ```
 
+### Configure Claude Code with `modelport-configure`
+
+`modelport-configure` is an interactive CLI that writes Claude Code settings so requests go through ModelPort (proxy URL, bearer token, `X-ModelPort-Provider`, and optional default models). The package is agent-pluggable; more clients can be added under `cli/modelport_agent_config/agents/`.
+
+Run from the repository root (uses `cli/.venv` when it exists):
+
+```bash
+./bin/modelport-configure
+```
+
+Or install the CLI and run it from anywhere:
+
+```bash
+python -m venv cli/.venv && source cli/.venv/bin/activate
+pip install -e cli/
+modelport-configure
+```
+
+**Interactive flow**
+
+1. **Scope** — global (`~/.claude/settings.json`), project (`.claude/settings.json`), or local (`.claude/settings.local.json`).
+2. **Proxy** — base URL (defaults from `config.yaml`) and `MODELPORT_TOKEN` (from `.env` when set). The tool probes the proxy when possible.
+3. **Provider** — default `X-ModelPort-Provider` (lists chat-capable models from the backend when it is running).
+4. **Default model** — optional `ANTHROPIC_MODEL` / settings `model`.
+5. **Tier overrides** — optional Sonnet / Opus / Haiku env overrides (`ANTHROPIC_DEFAULT_*_MODEL`).
+6. **Summary** — review and confirm; existing non-ModelPort keys in the settings file are preserved.
+
+Restart Claude Code after applying changes.
+
+**Non-interactive example**
+
+```bash
+modelport-configure \
+  --agent claude-code \
+  --scope project \
+  --project-dir . \
+  --base-url http://127.0.0.1:13243 \
+  --token "$MODELPORT_TOKEN" \
+  --provider openrouter \
+  --model anthropic/claude-sonnet-4 \
+  --yes
+```
+
+`modelport-configure --help` lists all flags (`--dry-run`, `--json`, tier model overrides, etc.). See `cli/README.md` for file layout and adding another agent adapter.
+
 ## Dashboard
 
 The dashboard reads live data from the backend through:
@@ -247,6 +295,15 @@ Run dashboard lint:
 ```bash
 cd dashboard
 pnpm lint
+```
+
+Run agent-configure CLI tests:
+
+```bash
+cd cli
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+pytest
 ```
 
 Useful backend modules:
