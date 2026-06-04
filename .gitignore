@@ -10,3 +10,5 @@ data/
 TASKS.md
 taskman/
 DESIGN.md
+/.claude/
+/.cursor/
