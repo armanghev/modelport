@@ -143,18 +143,34 @@ def default_base_url(runtime: ModelPortRuntime) -> str:
     return f"http://{host}:{runtime.server.port}"
 
 
-def resolve_token(runtime: ModelPortRuntime, override: str | None = None) -> str | None:
+@dataclass(frozen=True)
+class TokenResolution:
+    token: str
+    source: str
+
+
+def resolve_token_with_source(
+    runtime: ModelPortRuntime,
+    override: str | None = None,
+) -> TokenResolution | None:
     if override:
-        return override.strip() or None
+        value = override.strip()
+        if value:
+            return TokenResolution(value, "command-line --token")
     env_value = os.environ.get(runtime.token_env, "").strip()
     if env_value:
-        return env_value
+        return TokenResolution(env_value, f"environment variable {runtime.token_env}")
     if runtime.env_path:
         dotenv = load_dotenv_values(runtime.env_path)
         value = dotenv.get(runtime.token_env, "").strip()
         if value:
-            return value
+            return TokenResolution(value, str(runtime.env_path))
     return None
+
+
+def resolve_token(runtime: ModelPortRuntime, override: str | None = None) -> str | None:
+    resolved = resolve_token_with_source(runtime, override)
+    return resolved.token if resolved else None
 
 
 def normalize_base_url(value: str) -> str:

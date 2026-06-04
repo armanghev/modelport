@@ -19,6 +19,7 @@ from modelport_agent_config.modelport import (
     normalize_base_url,
     probe_proxy,
     resolve_token,
+    resolve_token_with_source,
 )
 from modelport_agent_config.prompts import (
     print_banner,
@@ -140,8 +141,11 @@ def collect_profile_interactive(
     default_url = default_base_url(runtime)
     base_url = normalize_base_url(prompt_text("ModelPort base URL", default_url))
 
-    token = resolve_token(runtime)
-    if not token:
+    token_resolution = resolve_token_with_source(runtime)
+    if token_resolution:
+        print(f"  Token: using value from {token_resolution.source}.")
+        token = token_resolution.token
+    else:
         token = prompt_text(f"{runtime.token_env}", secret=True)
     if not token:
         raise SystemExit(f"{runtime.token_env} is required.")
@@ -149,7 +153,7 @@ def collect_profile_interactive(
     ok, message = probe_proxy(base_url, token)
     print(f"  Proxy check: {message}")
     if not ok:
-        if not prompt_yes_no("Continue anyway?", default=False):
+        if not prompt_yes_no("Continue anyway?"):
             raise SystemExit(1)
 
     raw_catalog = fetch_provider_models(base_url)
@@ -185,7 +189,7 @@ def collect_profile_interactive(
         model_choices,
     )
 
-    configure_tiers = prompt_yes_no("Override Sonnet / Opus / Haiku default models?", default=False)
+    configure_tiers = prompt_yes_no("Override Sonnet / Opus / Haiku default models?")
     sonnet_model = opus_model = haiku_model = None
     if configure_tiers:
         tier_options = model_choices or [(m, m) for m in _suggested_models(provider_id, catalog)]
@@ -243,7 +247,7 @@ def preview_patch(adapter: AgentAdapter, profile: ModelPortProfile) -> dict:
     return adapter.build_settings_patch(profile)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _run(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -301,13 +305,24 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not args.yes and sys.stdin.isatty():
-        if not prompt_yes_no("Write these settings?", default=True):
+        if not prompt_yes_no("Write these settings?"):
             print("Cancelled.")
             return 0
 
     result = adapter.apply(profile, scope, project_dir)
     adapter.print_post_apply_hints(profile, result)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        return _run(argv)
+    except KeyboardInterrupt:
+        print("\nCancelled.", file=sys.stderr)
+        return 130
+    except EOFError:
+        print("\nCancelled.", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":
