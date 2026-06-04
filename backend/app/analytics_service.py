@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database import ApiRequest, Provider
+from app.database import ApiRequest, ModelMetadata, Provider
 
 KNOWN_CLIENTS = (
     "Claude Code",
@@ -19,6 +19,20 @@ KNOWN_CLIENTS = (
 )
 
 REQUEST_ENDPOINTS = ("/v1/messages", "/v1/chat/completions")
+
+PROVIDER_METADATA_PREFIXES: dict[str, tuple[str, ...]] = {
+    "anthropic": ("anthropic",),
+    "gemini": ("google", "gemini"),
+    "google": ("google",),
+    "openai": ("openai",),
+}
+
+PROVIDER_DISPLAY_PREFIXES: dict[str, tuple[str, ...]] = {
+    "anthropic": ("Anthropic",),
+    "gemini": ("Google", "Gemini"),
+    "google": ("Google",),
+    "openai": ("OpenAI",),
+}
 
 
 @dataclass(slots=True)
@@ -116,6 +130,58 @@ def provider_display_name(provider_id: str | None, providers_by_id: dict[str, Pr
 
 def model_name(record: ApiRequest) -> str:
     return record.resolved_model or record.requested_model or "unknown"
+
+
+def load_model_display_names(session: Session) -> dict[str, str]:
+    rows = session.scalars(select(ModelMetadata)).all()
+    display_names: dict[str, str] = {}
+    for row in rows:
+        display_name = row.name
+        if not display_name:
+            continue
+        for value in (row.id, row.canonical_slug):
+            if not value:
+                continue
+            display_names[value.lower()] = display_name
+            if "/" in value:
+                display_names[value.split("/", 1)[-1].lower()] = display_name
+    return display_names
+
+
+def model_display_name(
+    provider_id: str | None,
+    model_id: str,
+    display_names_by_key: dict[str, str],
+) -> str:
+    if not model_id:
+        return "unknown"
+
+    candidates = [model_id]
+    if provider_id:
+        provider_key = provider_id.lower()
+        candidates.append(f"{provider_key}/{model_id}")
+        for prefix in PROVIDER_METADATA_PREFIXES.get(provider_key, ()):
+            candidates.append(f"{prefix}/{model_id}")
+
+    if "/" in model_id:
+        candidates.append(model_id.split("/", 1)[-1])
+
+    for candidate in candidates:
+        display_name = display_names_by_key.get(candidate.lower())
+        if display_name:
+            return strip_provider_display_prefix(provider_id, display_name)
+    return model_id
+
+
+def strip_provider_display_prefix(provider_id: str | None, display_name: str) -> str:
+    if not provider_id:
+        return display_name
+
+    for prefix in PROVIDER_DISPLAY_PREFIXES.get(provider_id.lower(), ()):
+        redundant_prefix = f"{prefix}: "
+        if display_name.startswith(redundant_prefix):
+            return display_name.removeprefix(redundant_prefix)
+    return display_name
 
 
 def serialize_request_rows(
@@ -231,6 +297,7 @@ def build_overview_payload(session: Session) -> dict:
     now = datetime.now(UTC)
     requests = list_requests(session)
     providers_by_id = list_providers(session)
+    display_names_by_key = load_model_display_names(session)
     serialized_rows = serialize_request_rows(requests, providers_by_id)
 
     total_tokens = sum(record.total_tokens for record in requests)
@@ -239,22 +306,28 @@ def build_overview_payload(session: Session) -> dict:
         sum((record.duration_ms or 0) for record in requests) / max(1, len(requests))
     )
 
-    model_totals: dict[tuple[str, str], int] = defaultdict(int)
+    model_totals: dict[tuple[str | None, str, str], int] = defaultdict(int)
     for record in requests:
-        model_totals[(provider_display_name(record.provider, providers_by_id), model_name(record))] += (
+        model_totals[(record.provider, provider_display_name(record.provider, providers_by_id), model_name(record))] += (
             record.total_tokens
         )
 
     sorted_models = sorted(model_totals.items(), key=lambda item: item[1], reverse=True)
-    top_model_name = sorted_models[0][0][1] if sorted_models else "None"
+    top_model_name = (
+        model_display_name(sorted_models[0][0][0], sorted_models[0][0][2], display_names_by_key)
+        if sorted_models
+        else "None"
+    )
 
     top_models = []
-    for index, ((provider_name, model), token_total) in enumerate(sorted_models[:5], start=1):
+    for index, ((provider_id, provider_name, model), token_total) in enumerate(sorted_models[:5], start=1):
+        display_name = model_display_name(provider_id, model, display_names_by_key)
         percent = round((token_total / max(1, total_tokens)) * 100)
         top_models.append(
             {
                 "id": f"top_model_{index}",
                 "model": model,
+                "displayName": display_name,
                 "provider": provider_name,
                 "percent": percent,
                 "tokenTotal": token_total,

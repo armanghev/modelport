@@ -104,7 +104,11 @@ export default async function OverviewPage() {
     (metric) => metric.id === "top_model",
   )?.value;
   const topMetricProvider =
-    overview.topModels.find((model) => model.model === topMetricModelName)?.provider ??
+    overview.topModels.find(
+      (model) =>
+        model.displayName === topMetricModelName ||
+        model.model === topMetricModelName,
+    )?.provider ??
     overview.topModels[0]?.provider;
 
   return (
@@ -199,7 +203,7 @@ export default async function OverviewPage() {
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-base font-semibold text-text-primary">
-                      {model.model}
+                      {model.displayName ?? model.model}
                     </p>
                     <p className="text-sm text-text-secondary">
                       {model.provider}

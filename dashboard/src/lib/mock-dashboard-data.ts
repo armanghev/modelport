@@ -34,6 +34,7 @@ export interface TimeRangeUsage {
 export interface TopModelShare {
   id: string;
   model: string;
+  displayName?: string;
   provider: string;
   percent: number;
   tokenTotal: number;

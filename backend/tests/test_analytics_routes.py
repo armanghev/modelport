@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from app.database import ApiRequest, ProviderHealthCheck
+from app.database import ApiRequest, ModelMetadata, ProviderHealthCheck
 
 
 def seed_analytics_data(client: TestClient) -> None:
@@ -15,6 +15,16 @@ def seed_analytics_data(client: TestClient) -> None:
     with session_factory() as session:
         session.add_all(
             [
+                ModelMetadata(
+                    id="openai/gpt-4.1",
+                    canonical_slug="openai/gpt-4.1",
+                    name="GPT-4.1",
+                    architecture_json="{}",
+                    input_modalities_json="[]",
+                    output_modalities_json="[]",
+                    supported_parameters_json="[]",
+                    source="openrouter",
+                ),
                 ApiRequest(
                     created_at=max(now - timedelta(minutes=20), start_of_day),
                     input_format="anthropic",
@@ -188,8 +198,9 @@ def test_overview_analytics_endpoint_returns_aggregates(client: TestClient) -> N
         "average_latency",
     }
     top_model_metric = next(metric for metric in payload["metrics"] if metric["id"] == "top_model")
-    assert top_model_metric["value"] == "gpt-4.1"
+    assert top_model_metric["value"] == "GPT-4.1"
     assert payload["topModels"][0]["model"] == "gpt-4.1"
+    assert payload["topModels"][0]["displayName"] == "GPT-4.1"
     assert payload["topModels"][0]["provider"] == "OpenAI"
     assert payload["recentRequests"][0]["upstreamRequestId"] == "req_analytics_01"
     assert payload["recentRequests"][1]["status"] == "error"

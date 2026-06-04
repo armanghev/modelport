@@ -54,13 +54,6 @@ export function PageHeader() {
         >
           {themeIcon}
         </button>
-        <button
-          type="button"
-          className="card-surface-soft inline-flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold"
-          aria-label="Open profile"
-        >
-          A
-        </button>
       </div>
     </header>
   );

@@ -39,6 +39,7 @@ class TimeRangeUsage(BaseModel):
 class TopModelShare(BaseModel):
     id: str
     model: str
+    displayName: str | None = None
     provider: str
     percent: int
     tokenTotal: int
