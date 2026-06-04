@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { MoonIcon, SunIcon } from "@phosphor-icons/react";
 import { useTheme } from "next-themes";
@@ -18,13 +19,19 @@ const DEFAULT_PAGE = pages.overview;
 export function PageHeader() {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
   const segments = pathname.split("/").filter(Boolean);
   const currentPage = segments.at(-1) as keyof typeof pages | undefined;
   const currentPageData =
     segments[0] === "models" && segments.length >= 3
       ? { title: "Model details", description: "Pricing, capabilities, and proxy usage" }
       : (currentPage && pages[currentPage]) || DEFAULT_PAGE;
-  const activeTheme = theme ?? "system";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const activeTheme = mounted ? (theme ?? "system") : "system";
 
   const themeIcon =
     activeTheme === "dark" ? <MoonIcon size={18} /> : <SunIcon size={18} />;
