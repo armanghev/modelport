@@ -174,7 +174,6 @@ function TokenDistributionBar({
 function InspectorTokenStats({
   messageCount,
   promptTokens,
-  inputTotal,
   costUsd,
   model,
   promptMessages,
@@ -182,9 +181,6 @@ function InspectorTokenStats({
 }: {
   messageCount: number;
   promptTokens: number;
-  totalTokens: number;
-  inputTotal: number;
-  outputTotal: number;
   costUsd: number;
   model: string;
   promptMessages: ParsedIoMessage[];
@@ -228,7 +224,7 @@ function InspectorTokenStats({
           <div className="flex items-center justify-between gap-4">
             <span className="text-text-secondary">Prompt</span>
             <span className="tabular-nums text-text-primary">
-              {formatInteger(inputTotal)} (100.0%)
+              {formatInteger(promptTokens)} (100.0%)
             </span>
           </div>
           <div className="flex items-center justify-between gap-4">
@@ -471,9 +467,6 @@ export function RequestIoModal({ row, open, onClose }: RequestIoModalProps) {
     <InspectorTokenStats
       messageCount={messageCount}
       promptTokens={promptTokens}
-      totalTokens={totalTokens}
-      inputTotal={inspector.inputTotal}
-      outputTotal={inspector.outputTotal}
       costUsd={row.costUsd}
       model={row.model}
       promptMessages={promptMessages}

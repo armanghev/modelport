@@ -547,8 +547,29 @@ export function buildIoInspectorData(row: RequestRow): IoInspectorData {
     parseWarnings,
     rawInput,
     rawOutput,
-    hasStructuredMessages: allMessages.length > 0,
+    hasStructuredMessages: inputMessages.length > 0,
   };
+}
+
+function stripRedundantUpstreamFromPayload(data: unknown): unknown {
+  if (data == null || typeof data !== "object") {
+    return data;
+  }
+
+  if (Array.isArray(data)) {
+    return data.map((item) => stripRedundantUpstreamFromPayload(item));
+  }
+
+  const record = { ...(data as Record<string, unknown>) };
+  const error = record.error;
+  if (error && typeof error === "object" && !Array.isArray(error)) {
+    const { upstream: _upstream, code: _code, ...rest } = error as Record<
+      string,
+      unknown
+    >;
+    record.error = rest;
+  }
+  return record;
 }
 
 export function formatPayloadJson(payload: string | null): string {
@@ -556,10 +577,112 @@ export function formatPayloadJson(payload: string | null): string {
     return "";
   }
   try {
-    return JSON.stringify(JSON.parse(payload), null, 2);
+    const parsed = stripRedundantUpstreamFromPayload(JSON.parse(payload));
+    return JSON.stringify(parsed, null, 2);
   } catch {
     return payload;
   }
+}
+
+const LEGACY_UPSTREAM_PREFIX = /^Upstream provider request failed:\s*/i;
+
+function extractNestedUpstreamError(data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const nested = extractNestedUpstreamError(item);
+      if (nested) {
+        return nested;
+      }
+    }
+    return null;
+  }
+
+  const record = data as Record<string, unknown>;
+  const error = record.error;
+  if (error && typeof error === "object" && !Array.isArray(error)) {
+    return error as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+function formatGatewayErrorDisplay(error: Record<string, unknown>): string {
+  const lines: string[] = [];
+  const message = error.message;
+
+  if (typeof message === "string" && message.trim()) {
+    if (LEGACY_UPSTREAM_PREFIX.test(message)) {
+      const embedded = extractNestedUpstreamError(
+        parseJsonPayload(message.replace(LEGACY_UPSTREAM_PREFIX, "").trim()).data,
+      );
+      const embeddedMessage = embedded?.message;
+      lines.push(
+        typeof embeddedMessage === "string" && embeddedMessage.trim()
+          ? embeddedMessage.trim()
+          : message.trim(),
+      );
+    } else {
+      lines.push(message.trim());
+    }
+  }
+
+  const meta: string[] = [];
+  if (error.status_code != null) {
+    meta.push(`Gateway HTTP ${error.status_code}`);
+  }
+  if (error.upstream_status_code != null) {
+    meta.push(`Upstream HTTP ${error.upstream_status_code}`);
+  }
+  if (typeof error.status === "string" && error.status.trim()) {
+    meta.push(error.status.trim());
+  }
+
+  if (meta.length > 0) {
+    lines.push(meta.join(" · "));
+  }
+
+  return lines.join("\n\n");
+}
+
+/** Plain-text completion content for dashboard display (OpenAI, Anthropic, errors). */
+export function extractResponseDisplayText(payload: string | null): string {
+  if (!payload) {
+    return "";
+  }
+
+  const parsed = parseJsonPayload(payload);
+  if (parsed.error) {
+    return "";
+  }
+
+  if (parsed.data && typeof parsed.data === "object") {
+    const record = parsed.data as Record<string, unknown>;
+    if (record.error && typeof record.error === "object" && !Array.isArray(record.error)) {
+      return formatGatewayErrorDisplay(record.error as Record<string, unknown>);
+    }
+  }
+
+  const messages = parseOutputPayload(parsed.data);
+  const parts = messages
+    .map((message) => message.textContent.trim())
+    .filter((text) => text.length > 0);
+
+  if (parts.length > 0) {
+    return parts.join("\n\n");
+  }
+
+  if (parsed.data && typeof parsed.data === "object") {
+    const record = parsed.data as Record<string, unknown>;
+    if (typeof record.content === "string" && record.content.trim()) {
+      return record.content.trim();
+    }
+  }
+
+  return "";
 }
 
 export function buildPromptMessagesJson(rawInput: string | null): string {

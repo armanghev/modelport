@@ -18,6 +18,7 @@ from app.api.proxy_common import (
     resolve_credential_secret,
     resolve_requested_provider,
 )
+from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.openai_compatible import create_chat_completion, list_models, stream_chat_completion_chunks
 from app.routing.provider_router import resolve_provider_routes
 from app.schemas.openai import OpenAIChatCompletionCreate, OpenAIChatCompletionResponse
@@ -257,7 +258,7 @@ def create_chat_completions(
                                 health_session,
                                 provider_id=resolved_route.provider.id,
                                 status_value=classify_provider_failure_status(exc),
-                                error_message=str(exc.detail),
+                                error_message=format_exception_detail_for_log(exc.detail),
                             )
                         continue
 
@@ -267,7 +268,7 @@ def create_chat_completions(
                             log_session,
                             provider_id=resolved_route.provider.id,
                             status_value=classify_provider_failure_status(exc),
-                            error_message=str(exc.detail),
+                            error_message=format_exception_detail_for_log(exc.detail),
                         )
                         create_api_request_log(
                             log_session,
@@ -286,27 +287,17 @@ def create_chat_completions(
                             pricing_source=None,
                             duration_ms=duration_ms,
                             status_code=exc.status_code,
-                            error_message=str(exc.detail),
+                            error_message=format_exception_detail_for_log(exc.detail),
                             streamed=True,
                             request_id=upstream_request_id,
                             ttfb_ms=ttfb_ms,
                             **io_log_kwargs(
                                 log_session,
                                 request_payload=payload,
-                                response_payload={
-                                    "error": {
-                                        "message": str(exc.detail),
-                                        "status_code": exc.status_code,
-                                    }
-                                },
+                                response_payload=build_logged_error_response(exc),
                             ),
                         )
-                    error_payload = {
-                        "error": {
-                            "message": str(exc.detail),
-                            "type": "api_error",
-                        }
-                    }
+                    error_payload = build_logged_error_response(exc)
                     yield f"data: {json.dumps(error_payload, separators=(',', ':'))}\n\n"
                     yield "data: [DONE]\n\n"
                     return
@@ -343,7 +334,7 @@ def create_chat_completions(
                     session,
                     provider_id=resolved_route.provider.id,
                     status_value=classify_provider_failure_status(exc),
-                    error_message=str(exc.detail),
+                    error_message=format_exception_detail_for_log(exc.detail),
                 )
                 last_error = exc
                 continue
@@ -364,7 +355,7 @@ def create_chat_completions(
                 session,
                 provider_id=resolved_route.provider.id,
                 status_value=classify_provider_failure_status(exc),
-                error_message=str(exc.detail),
+                error_message=format_exception_detail_for_log(exc.detail),
             )
             last_error = exc
             if exc.status_code in (502, 503) and route_index < len(resolved_routes) - 1:
@@ -388,18 +379,13 @@ def create_chat_completions(
                 pricing_source=None,
                 duration_ms=duration_ms,
                 status_code=exc.status_code,
-                error_message=str(exc.detail),
+                error_message=format_exception_detail_for_log(exc.detail),
                 streamed=False,
                 request_id=None,
                 **io_log_kwargs(
                     session,
                     request_payload=payload,
-                    response_payload={
-                        "error": {
-                            "message": str(exc.detail),
-                            "status_code": exc.status_code,
-                        }
-                    },
+                    response_payload=build_logged_error_response(exc),
                 ),
             )
             raise

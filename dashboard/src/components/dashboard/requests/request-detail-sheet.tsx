@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import { CodeIcon } from "@phosphor-icons/react";
 
 import { CopyButton } from "@/components/ui/copy-button";
 import { RequestIoModal } from "@/components/dashboard/requests/request-io-modal";
 import { Button } from "@/components/ui/button";
+import {
+  extractResponseDisplayText,
+  formatPayloadJson,
+} from "@/lib/request-io";
 import {
   Sheet,
   SheetContent,
@@ -138,6 +144,77 @@ function IoNotCapturedState() {
   );
 }
 
+function IoResponseBlock({
+  tokenLabel,
+  payload,
+  displayText,
+  formattedJson,
+  missingLabel,
+}: {
+  tokenLabel: string;
+  payload: string | null;
+  displayText: string;
+  formattedJson: string;
+  missingLabel: string;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
+
+  useEffect(() => {
+    setShowRaw(false);
+  }, [payload]);
+
+  if (!payload) {
+    return (
+      <div className="rounded-xl border border-border-subtle bg-bg-card-muted/30 px-4 py-3">
+        <p className="text-sm font-medium text-text-primary">Response</p>
+        <p className="mt-1 text-sm text-text-muted">{missingLabel}</p>
+      </div>
+    );
+  }
+
+  const copyValue = showRaw ? formattedJson : displayText || formattedJson;
+  const bodyContent = showRaw ? (
+    <pre className="max-h-72 overflow-auto whitespace-pre-wrap wrap-break-word bg-[#1f2328] p-4 font-mono text-xs leading-relaxed text-[#e6edf3]">
+      {formattedJson}
+    </pre>
+  ) : (
+    <pre className="max-h-72 overflow-auto whitespace-pre-wrap wrap-break-word p-4 text-sm leading-relaxed text-text-primary">
+      {displayText || "(No text content — view raw for the full response.)"}
+    </pre>
+  );
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-border-subtle">
+      <div className="flex items-center justify-between gap-3 border-b border-border-subtle bg-bg-card-muted/50 px-4 py-2.5">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-text-primary">Response</p>
+          <p className="text-xs text-text-muted">{tokenLabel}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <CopyButton
+            value={copyValue}
+            label="Copy"
+            className="rounded-md border border-border-subtle px-2.5 py-1 text-xs text-text-secondary hover:bg-bg-card-muted hover:text-text-primary"
+          />
+          <button
+            type="button"
+            onClick={() => setShowRaw((current) => !current)}
+            className={
+              showRaw
+                ? "inline-flex items-center gap-1.5 rounded-md border border-accent-blue/30 bg-accent-blue-bg px-2.5 py-1 text-xs font-medium text-accent-blue"
+                : "inline-flex items-center gap-1.5 rounded-md border border-border-subtle px-2.5 py-1 text-xs text-text-secondary hover:bg-bg-card-muted hover:text-text-primary"
+            }
+          >
+            <CodeIcon size={14} />
+            {showRaw ? "Hide raw" : "View raw"}
+          </button>
+        </div>
+      </div>
+      {bodyContent}
+    </div>
+  );
+}
+
 function IoSection({
   row,
   ioLoggingEnabled,
@@ -157,6 +234,15 @@ function IoSection({
   const outputPayload = row.io?.output ?? null;
   const hasIoPayload = Boolean(inputPayload || outputPayload);
 
+  const responseText = useMemo(
+    () => extractResponseDisplayText(outputPayload),
+    [outputPayload],
+  );
+  const responseJson = useMemo(
+    () => (outputPayload ? formatPayloadJson(outputPayload) : ""),
+    [outputPayload],
+  );
+
   if (!ioLoggingEnabled) {
     return (
       <IoLoggingDisabledState
@@ -172,28 +258,35 @@ function IoSection({
   }
 
   return (
-    <div className="rounded-xl border border-border-subtle bg-bg-card-muted/40 p-4">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-col gap-4 rounded-xl border border-border-subtle bg-bg-card-muted/40 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
-          <p className="text-sm font-medium text-text-primary">Captured I/O available</p>
+          <p className="text-sm font-medium text-text-primary">Captured I/O</p>
           <p className="text-sm text-text-secondary">
             {formatInteger(row.inputTokens)} prompt tokens · {formatInteger(row.outputTokens)}{" "}
             completion tokens
           </p>
-          <p className="text-xs text-text-muted">
-            {inputPayload ? "Request body stored" : "Request body missing"} ·{" "}
-            {outputPayload ? "Response body stored" : "Response body missing"}
-          </p>
         </div>
-        <Button
-          type="button"
-          size="lg"
-          className="h-10 shrink-0 rounded-lg px-5 text-sm"
-          onClick={onOpenInspector}
-        >
-          View I/O details
-        </Button>
+        {inputPayload ? (
+          <Button
+            type="button"
+            size="lg"
+            variant="outline"
+            className="h-10 shrink-0 rounded-lg px-5 text-sm"
+            onClick={onOpenInspector}
+          >
+            Inspect request messages
+          </Button>
+        ) : null}
       </div>
+
+      <IoResponseBlock
+        tokenLabel={`${formatInteger(row.outputTokens)} completion tokens`}
+        payload={outputPayload}
+        displayText={responseText}
+        formattedJson={responseJson}
+        missingLabel="No response body stored for this request."
+      />
     </div>
   );
 }

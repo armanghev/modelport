@@ -3,9 +3,12 @@ from __future__ import annotations
 from urllib.parse import urljoin
 
 import httpx
-from fastapi import HTTPException, status
 
 from app.database import Provider
+from app.errors.upstream import (
+    http_exception_from_upstream_http_error,
+    http_exception_from_upstream_transport_error,
+)
 
 
 def build_chat_completions_url(provider: Provider) -> str:
@@ -107,16 +110,9 @@ def create_chat_completion(
                 response_payload = post_chat_completion(client, provider, headers, retry_payload)
             return response_payload
     except httpx.HTTPStatusError as exc:
-        detail = exc.response.text.strip() or str(exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Upstream provider request failed: {detail}",
-        ) from exc
+        raise http_exception_from_upstream_http_error(exc) from exc
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Upstream provider request failed: {exc}",
-        ) from exc
+        raise http_exception_from_upstream_transport_error(exc) from exc
 
 
 def list_models(
@@ -133,16 +129,9 @@ def list_models(
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as exc:
-        detail = exc.response.text.strip() or str(exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Upstream provider request failed: {detail}",
-        ) from exc
+        raise http_exception_from_upstream_http_error(exc) from exc
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Upstream provider request failed: {exc}",
-        ) from exc
+        raise http_exception_from_upstream_transport_error(exc) from exc
 
 
 def stream_chat_completion_chunks(
@@ -175,13 +164,6 @@ def stream_chat_completion_chunks(
                         continue
                     yield line.removeprefix("data:").strip()
     except httpx.HTTPStatusError as exc:
-        detail = exc.response.text.strip() or str(exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Upstream provider request failed: {detail}",
-        ) from exc
+        raise http_exception_from_upstream_http_error(exc) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Upstream provider request failed: {exc}",
-        ) from exc
+        raise http_exception_from_upstream_transport_error(exc) from exc
