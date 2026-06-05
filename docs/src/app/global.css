@@ -2,6 +2,122 @@
 @import 'fumadocs-ui/css/solar.css';
 @import 'fumadocs-ui/css/preset.css';
 
+:root {
+  /* ModelPort palette */
+  --bg-app: #f8f6f1;
+  --bg-sidebar: #f1ede6;
+  --bg-card: #fcfbf8;
+  --bg-card-muted: #f4f1eb;
+  --bg-hover: #ebe6dd;
+
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-muted: #737373;
+  --text-faint: #a3a3a3;
+
+  --border-default: #e4ddd2;
+  --border-subtle: #eee8df;
+
+  --accent-green: #166534;
+  --accent-green-bg: #ebf7ef;
+  --accent-blue: #315f9e;
+  --accent-blue-bg: #edf3fb;
+  --accent-red: #b42318;
+  --accent-red-bg: #fef3f2;
+  --accent-amber: #a16207;
+  --accent-amber-bg: #fff7e8;
+
+  --primary: oklch(0.24 0.012 85);
+  --primary-foreground: oklch(0.985 0.002 85);
+  --secondary: oklch(0.955 0.008 85);
+  --secondary-foreground: oklch(0.26 0.01 85);
+  --ring: oklch(0.72 0.012 85);
+}
+
+@theme {
+  --color-fd-background: var(--bg-app);
+  --color-fd-foreground: var(--text-primary);
+  --color-fd-muted: var(--bg-card-muted);
+  --color-fd-muted-foreground: var(--text-muted);
+  --color-fd-popover: var(--bg-card);
+  --color-fd-popover-foreground: var(--text-primary);
+  --color-fd-card: var(--bg-card);
+  --color-fd-card-foreground: var(--text-primary);
+  --color-fd-border: var(--border-default);
+  --color-fd-primary: var(--primary);
+  --color-fd-primary-foreground: var(--primary-foreground);
+  --color-fd-secondary: var(--secondary);
+  --color-fd-secondary-foreground: var(--secondary-foreground);
+  --color-fd-accent: var(--bg-hover);
+  --color-fd-accent-foreground: var(--text-primary);
+  --color-fd-ring: var(--ring);
+  --color-fd-overlay: hsla(0, 0%, 0%, 0.2);
+  --color-fd-article: var(--bg-card);
+}
+
+@theme static {
+  --color-fd-info: var(--accent-blue);
+  --color-fd-warning: var(--accent-amber);
+  --color-fd-error: var(--accent-red);
+  --color-fd-success: var(--accent-green);
+  --color-fd-idea: var(--accent-amber);
+  --color-fd-diff-remove: var(--accent-red-bg);
+  --color-fd-diff-remove-symbol: var(--accent-red);
+  --color-fd-diff-add: var(--accent-green-bg);
+  --color-fd-diff-add-symbol: var(--accent-green);
+}
+
+.dark {
+  /* Warm beige dark — mirrors the light palette, not cool blue-grays */
+  --bg-app: #1a1815;
+  --bg-sidebar: #201d18;
+  --bg-card: #26221c;
+  --bg-card-muted: #2c2821;
+  --bg-hover: #343024;
+
+  --text-primary: #f4efe6;
+  --text-secondary: #c8bfb0;
+  --text-muted: #9a9183;
+  --text-faint: #6e675c;
+
+  --border-default: #3d362c;
+  --border-subtle: #322c25;
+
+  --accent-green: #5cb87a;
+  --accent-green-bg: rgba(92, 184, 122, 0.14);
+  --accent-blue: #8fa8c9;
+  --accent-blue-bg: rgba(143, 168, 201, 0.12);
+  --accent-red: #e07a6f;
+  --accent-red-bg: rgba(224, 122, 111, 0.12);
+  --accent-amber: #d4a84a;
+  --accent-amber-bg: rgba(212, 168, 74, 0.14);
+
+  --primary: oklch(0.91 0.018 85);
+  --primary-foreground: oklch(0.24 0.014 85);
+  --secondary: oklch(0.3 0.014 85);
+  --secondary-foreground: oklch(0.93 0.012 85);
+  --ring: oklch(0.58 0.014 85);
+
+  --color-fd-background: var(--bg-app);
+  --color-fd-foreground: var(--text-primary);
+  --color-fd-muted: var(--bg-card-muted);
+  --color-fd-muted-foreground: var(--text-muted);
+  --color-fd-popover: var(--bg-card);
+  --color-fd-popover-foreground: var(--text-primary);
+  --color-fd-card: var(--bg-card);
+  --color-fd-card-foreground: var(--text-primary);
+  --color-fd-border: var(--border-default);
+  --color-fd-primary: var(--primary);
+  --color-fd-primary-foreground: var(--primary-foreground);
+  --color-fd-secondary: var(--secondary);
+  --color-fd-secondary-foreground: var(--secondary-foreground);
+  --color-fd-accent: var(--bg-hover);
+  --color-fd-accent-foreground: var(--text-primary);
+  --color-fd-ring: var(--ring);
+  --color-fd-overlay: hsla(0, 0%, 0%, 0.2);
+  --color-fd-article: var(--bg-card);
+}
+
 html {
   scrollbar-gutter: stable;
 }
