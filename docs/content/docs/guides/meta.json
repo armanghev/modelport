@@ -1,0 +1,10 @@
+{
+  "title": "Guides",
+  "pages": [
+    "model-routing",
+    "openai-compatibility",
+    "anthropic-compatibility",
+    "streaming-responses",
+    "function-calling"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "title": "ModelPort Docs",
+  "pages": [
+    "index", 
+    "quick-start", 
+    "installation",
+    "---Getting Started",
+    "authentication",
+    "---Using ModelPort",
+    "guides",
+    "api-reference",
+    "providers",
+    "sdks",
+    "---Operations",
+    "deployment",
+    "troubleshooting"
+  ]
+}
