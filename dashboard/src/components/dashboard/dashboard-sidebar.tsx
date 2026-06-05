@@ -54,7 +54,7 @@ export function DashboardSidebar() {
                 <SidebarMenuButton
                   asChild
                   isActive={isActive}
-                  className="h-12 gap-3 rounded-xl px-4 text-[14px] font-semibold text-text-secondary data-[active=true]:bg-bg-hover data-[active=true]:text-text-primary"
+                  className="h-10 gap-2 rounded-md px-3 text-sm font-medium text-text-secondary data-[active=true]:bg-bg-hover data-[active=true]:text-text-primary"
                 >
                   <Link href={item.href}>
                     <Icon size={20} weight="regular" />

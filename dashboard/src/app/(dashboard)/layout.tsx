@@ -10,9 +10,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         <div className="flex min-h-screen w-full flex-col lg:flex-row">
           <DashboardSidebar />
           <SidebarInset className="bg-transparent">
-            <main className="w-full flex-1 px-4 py-6 lg:px-10 lg:py-8">
+            <main className="w-full flex-1 px-4 py-6 md:px-9 xl:px-12">
               <PageHeader />
-              <div className="w-full pt-6">{children}</div>
+              <div className="w-full pt-4">{children}</div>
             </main>
           </SidebarInset>
         </div>
