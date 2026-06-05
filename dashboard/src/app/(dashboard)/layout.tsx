@@ -1,22 +1,25 @@
-import type { ReactNode } from "react";
-import { DashboardSidebar } from "@/components/dashboard/dashboard-sidebar";
-import { PageHeader } from "@/components/dashboard/page-header";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import type { ReactNode } from 'react';
+import { DocsLayout } from 'fumadocs-ui/layouts/docs';
+
+import { DashboardSidebarFooter } from '@/components/dashboard/dashboard-sidebar-footer';
+import { PageHeader } from '@/components/dashboard/page-header';
+import { dashboardTree } from '@/lib/dashboard-tree';
+import { baseLayoutOptions } from '@/lib/layout.shared';
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
-    <SidebarProvider>
-      <div className="min-h-screen w-full overflow-x-clip bg-bg-app text-text-primary">
-        <div className="flex min-h-screen w-full flex-col lg:flex-row">
-          <DashboardSidebar />
-          <SidebarInset className="bg-transparent">
-            <main className="w-full flex-1 px-4 py-6 md:px-9 xl:px-12">
-              <PageHeader />
-              <div className="w-full pt-4">{children}</div>
-            </main>
-          </SidebarInset>
-        </div>
+    <DocsLayout
+      tree={dashboardTree}
+      {...baseLayoutOptions()}
+      sidebar={{
+        footer: <DashboardSidebarFooter />,
+        className: 'bg-fd-card!',
+      }}
+    >
+      <div className="[grid-area:main] min-w-0 px-4 py-6 md:px-9 xl:px-12 bg-fd-background border-l">
+        <PageHeader />
+        {children}
       </div>
-    </SidebarProvider>
+    </DocsLayout>
   );
 }

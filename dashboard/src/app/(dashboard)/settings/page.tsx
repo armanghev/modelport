@@ -158,10 +158,7 @@ export default function SettingsPage() {
     setPricingTable(mapped.pricingTable);
     setTracking(mapped.tracking);
     setAutoRefreshInterval(mapped.appearance.autoRefreshInterval);
-    if (mapped.appearance.theme) {
-      setTheme(mapped.appearance.theme);
-    }
-  }, [setTheme]);
+  }, []);
 
   useEffect(() => {
     let active = true;

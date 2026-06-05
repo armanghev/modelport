@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Nunito, Geist_Mono, JetBrains_Mono } from "next/font/google";
+import { RootProvider } from "fumadocs-ui/provider/next";
 import { ThemeProvider } from "@teispace/next-themes";
 import { getTheme } from "@teispace/next-themes/server";
 import "./globals.css";
@@ -35,7 +36,7 @@ export default async function RootLayout({
       suppressHydrationWarning
       className={cn("h-full", "antialiased", nunitoSans.variable, geistMono.variable, jetbrainsMono.variable)}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="flex min-h-screen flex-col">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
@@ -43,7 +44,9 @@ export default async function RootLayout({
           disableTransitionOnChange
           initialTheme={initialTheme ?? undefined}
         >
-          {children}
+          <RootProvider search={{ enabled: false }} theme={{ enabled: false }}>
+            {children}
+          </RootProvider>
         </ThemeProvider>
       </body>
     </html>
