@@ -2,3 +2,56 @@
 title: OpenAI Compatibility
 ---
 
+ModelPort exposes two OpenAI-style surfaces today:
+
+- `POST /v1/chat/completions`
+- `GET /v1/models`
+
+These are intended for OpenAI-compatible clients and SDKs that can target a custom base URL.
+
+## Base URL
+
+Point your OpenAI-compatible client at:
+
+```text
+http://127.0.0.1:13243/v1
+```
+
+And send:
+
+```text
+Authorization: Bearer <MODELPORT_TOKEN>
+```
+
+## Supported Chat Fields
+
+The implemented chat schema supports:
+
+- `model`
+- `provider`
+- `fallback_providers`
+- `messages`
+- `max_tokens`
+- `stream`
+- `tools`
+- `tool_choice`
+
+## Example
+
+```bash
+curl http://127.0.0.1:13243/v1/chat/completions \
+  -H "Authorization: Bearer $MODELPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openrouter/anthropic/claude-sonnet-4",
+    "messages": [
+      { "role": "user", "content": "Summarize what ModelPort does." }
+    ]
+  }'
+```
+
+## Notes
+
+- Streaming is supported.
+- Tool definitions and tool-call responses are supported in the current chat-completions path.
+- `responses` and `embeddings` endpoints are not implemented yet.

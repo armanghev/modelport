@@ -2,3 +2,56 @@
 title: Chat Completions
 ---
 
+`POST /v1/chat/completions` is ModelPort's OpenAI-compatible chat endpoint.
+
+## Authentication
+
+```text
+Authorization: Bearer <MODELPORT_TOKEN>
+```
+
+## Request Body
+
+Supported fields from the implemented schema:
+
+- `model`
+- `provider`
+- `fallback_providers`
+- `messages`
+- `max_tokens`
+- `stream`
+- `tools`
+- `tool_choice`
+
+## Example
+
+```bash
+curl http://127.0.0.1:13243/v1/chat/completions \
+  -H "Authorization: Bearer $MODELPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-ModelPort-Provider: openrouter" \
+  -d '{
+    "model": "anthropic/claude-sonnet-4",
+    "messages": [
+      { "role": "user", "content": "Say hello from ModelPort." }
+    ]
+  }'
+```
+
+## Response
+
+ModelPort returns an OpenAI-compatible chat completion response. The exact payload may include provider-specific fields, but the implemented schema guarantees:
+
+- `id`
+- `model`
+- `choices`
+- optional `usage`
+- optional `object`
+- optional `created`
+
+## Behavior
+
+- Streaming and non-streaming responses are supported.
+- Provider fallbacks are supported.
+- Request logging, usage extraction, and estimated cost tracking run after success.
+- If an upstream provider is marked `anthropic_compatible`, this endpoint currently returns `501`.

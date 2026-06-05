@@ -2,3 +2,110 @@
 title: Quick Start
 ---
 
+This quick start brings up the backend proxy and dashboard with the default local configuration from the repository root.
+
+## 1. Create local environment variables
+
+```bash
+cp .env.example .env
+```
+
+At minimum, set a proxy token:
+
+```bash
+MODELPORT_TOKEN=dev-modelport-token
+```
+
+Then add whichever provider keys you want to use:
+
+```bash
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+GEMINI_API_KEY=
+OPENROUTER_API_KEY=
+GROQ_API_KEY=
+TOGETHER_API_KEY=
+```
+
+## 2. Start the backend
+
+From the repository root:
+
+```bash
+python -m venv backend/.venv
+source backend/.venv/bin/activate
+pip install -r backend/requirements.txt
+set -a; source .env; set +a
+python -m uvicorn app.main:app --app-dir backend --reload --host 127.0.0.1 --port 13243
+```
+
+The default proxy URL is:
+
+```text
+http://127.0.0.1:13243
+```
+
+## 3. Start the dashboard
+
+In a second terminal:
+
+```bash
+cd dashboard
+pnpm install
+pnpm dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+If your backend is running elsewhere, set:
+
+```bash
+NEXT_PUBLIC_MODELPORT_BACKEND_URL=http://127.0.0.1:13243
+```
+
+## 4. Send a test request
+
+OpenAI-style request:
+
+```bash
+curl http://127.0.0.1:13243/v1/chat/completions \
+  -H "Authorization: Bearer $MODELPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-ModelPort-Provider: openai" \
+  -d '{
+    "model": "gpt-4.1",
+    "messages": [
+      { "role": "user", "content": "Say hello from ModelPort." }
+    ]
+  }'
+```
+
+Anthropic-style request:
+
+```bash
+curl http://127.0.0.1:13243/v1/messages \
+  -H "Authorization: Bearer $MODELPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-ModelPort-Provider: openrouter" \
+  -d '{
+    "model": "openai/gpt-4o-mini",
+    "max_tokens": 128,
+    "messages": [
+      { "role": "user", "content": "Say hello from ModelPort." }
+    ]
+  }'
+```
+
+## 5. Configure Claude Code
+
+ModelPort includes an interactive CLI that writes Claude Code settings to point at the proxy:
+
+```bash
+./bin/modelport-configure
+```
+
+The tool can write global, project, or local Claude settings and can pull live model lists when the backend is already running.

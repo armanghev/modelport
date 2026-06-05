@@ -1,4 +1,4 @@
 {
   "title": "Providers",
-  "pages": ["openai", "anthropic", "google", "openrouter"]
+  "pages": ["openai", "anthropic", "google", "openrouter", "ollama"]
 }

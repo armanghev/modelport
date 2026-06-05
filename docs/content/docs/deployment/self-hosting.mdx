@@ -2,3 +2,34 @@
 title: Self Hosting
 ---
 
+ModelPort is already designed for local or self-hosted deployment.
+
+## Default Runtime Paths
+
+- Backend proxy: `http://127.0.0.1:13243`
+- Dashboard UI: `http://localhost:3000`
+- Database: `./data/modelport.db`
+- Config: `./config.yaml`
+- Provider credentials: `.env`
+
+## What Self-Hosting Means Today
+
+Self-hosting currently means:
+
+- running the FastAPI backend yourself
+- running the Next.js dashboard yourself
+- storing state in local SQLite
+- managing provider credentials in environment variables or the local database
+
+## Startup Flow
+
+1. create `.env`
+2. start the backend from the repository root
+3. start the dashboard
+4. point your clients at the proxy
+
+## Notes
+
+<Callout title="Current maturity">
+The backend and dashboard are functional, but the repository does not yet ship a dedicated production deployment package or managed secret backend.
+</Callout>

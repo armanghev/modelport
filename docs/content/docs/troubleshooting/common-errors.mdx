@@ -2,3 +2,48 @@
 title: Common Errors
 ---
 
+## `401 Unauthorized`
+
+Cause:
+
+- missing `Authorization` header
+- invalid bearer token
+
+Fix:
+
+- send `Authorization: Bearer <MODELPORT_TOKEN>`
+- verify the token value loaded into the backend environment
+
+## `400 Provider selection is required`
+
+Cause:
+
+- you used a bare model id such as `gpt-4.1` without `provider`
+- ModelPort could not infer a provider from the model id
+
+Fix:
+
+- add `"provider": "openai"` in the request body
+- or add `X-ModelPort-Provider`
+- or use an inferable model id such as `openai/gpt-4.1`
+
+## `503 No configured credential available for the selected provider`
+
+Cause:
+
+- the selected provider needs an API key and none is configured
+
+Fix:
+
+- set the provider env var such as `OPENAI_API_KEY`
+- or create a database-backed credential with `/admin/provider-credentials`
+
+## `501 Anthropic-compatible upstream providers are not implemented yet`
+
+Cause:
+
+- you selected a provider with type `anthropic_compatible`
+
+Fix:
+
+- route the request through an implemented OpenAI-compatible upstream instead

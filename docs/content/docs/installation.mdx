@@ -2,3 +2,75 @@
 title: Installation
 ---
 
+ModelPort currently has three installable parts:
+
+- the FastAPI backend
+- the Next.js dashboard
+- the optional `modelport-configure` CLI
+
+## Backend
+
+```bash
+python -m venv backend/.venv
+source backend/.venv/bin/activate
+pip install -r backend/requirements.txt
+```
+
+Run it from the repository root so `config.yaml`, `.env`, and `pricing_catalog.yaml` resolve as expected:
+
+```bash
+set -a; source .env; set +a
+python -m uvicorn app.main:app --app-dir backend --reload --host 127.0.0.1 --port 13243
+```
+
+## Dashboard
+
+```bash
+cd dashboard
+pnpm install
+pnpm dev
+```
+
+By default the dashboard expects the backend at `http://127.0.0.1:13243`.
+
+## Docs Site
+
+The documentation app in `docs/` is a separate Fumadocs site:
+
+```bash
+cd docs
+pnpm install
+pnpm dev
+```
+
+## CLI
+
+You can run the CLI from the repository without installing it:
+
+```bash
+python cli/modelport_agent_config
+```
+
+Or install it in a virtual environment:
+
+```bash
+python -m venv cli/.venv
+source cli/.venv/bin/activate
+pip install -e cli/
+modelport-configure
+```
+
+## Required Configuration
+
+The backend reads:
+
+- `config.yaml` for seeded providers and database location
+- `.env` for `MODELPORT_TOKEN` and provider API keys
+
+At minimum:
+
+```bash
+MODELPORT_TOKEN=dev-modelport-token
+```
+
+Provider keys are optional until you route traffic to those providers. Ollama is the exception because its default local setup does not require an API key.
