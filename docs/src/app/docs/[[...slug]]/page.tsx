@@ -5,6 +5,7 @@ import {
   DocsPage,
   DocsTitle,
   MarkdownCopyButton,
+  PageLastUpdate,
   ViewOptionsPopover,
 } from 'fumadocs-ui/layouts/docs/page';
 import { notFound } from 'next/navigation';
@@ -40,6 +41,14 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
           })}
         />
       </DocsBody>
+      {page.data.lastModified ? (
+        <div className="mt-8 border-t border-fd-border pt-4">
+          <PageLastUpdate
+            date={new Date(page.data.lastModified)}
+            className="mb-4"
+          />
+        </div>
+      ) : null}
     </DocsPage>
   );
 }
