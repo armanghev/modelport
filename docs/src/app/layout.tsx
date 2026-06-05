@@ -1,15 +1,36 @@
 import { RootProvider } from 'fumadocs-ui/provider/next';
+import { Geist_Mono, JetBrains_Mono, Nunito } from 'next/font/google';
 import './global.css';
-import { Inter } from 'next/font/google';
+import { cn } from '@/lib/cn';
 
-const inter = Inter({
+const nunitoSans = Nunito({
+  variable: '--font-nunito-sans',
+  subsets: ['latin'],
+});
+
+const geistMono = Geist_Mono({
+  variable: '--font-geist-mono',
+  subsets: ['latin'],
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  variable: '--font-mono',
   subsets: ['latin'],
 });
 
 export default function Layout({ children }: LayoutProps<'/'>) {
   return (
-    <html lang="en" className={inter.className} suppressHydrationWarning>
-      <body className="flex flex-col min-h-screen">
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={cn(
+        'antialiased',
+        nunitoSans.variable,
+        geistMono.variable,
+        jetbrainsMono.variable,
+      )}
+    >
+      <body className="flex min-h-screen flex-col">
         <RootProvider>{children}</RootProvider>
       </body>
     </html>
