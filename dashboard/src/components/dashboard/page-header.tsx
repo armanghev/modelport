@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { MoonIcon, SunIcon } from "@phosphor-icons/react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@teispace/next-themes";
 
 const pages = {
   overview: { title: "Overview", description: "Usage and routing overview" },

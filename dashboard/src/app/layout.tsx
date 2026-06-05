@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Nunito, Geist_Mono, JetBrains_Mono } from "next/font/google";
+import { ThemeProvider } from "@teispace/next-themes";
+import { getTheme } from "@teispace/next-themes/server";
 import "./globals.css";
-import { ThemeProvider } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 
 const jetbrainsMono = JetBrains_Mono({subsets:['latin'],variable:'--font-mono'});
@@ -21,11 +22,13 @@ export const metadata: Metadata = {
   description: "ModelPort | Local AI Proxy",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const initialTheme = await getTheme();
+
   return (
     <html
       lang="en"
@@ -38,6 +41,7 @@ export default function RootLayout({
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
+          initialTheme={initialTheme ?? undefined}
         >
           {children}
         </ThemeProvider>
