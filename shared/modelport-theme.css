@@ -1,0 +1,85 @@
+/* ModelPort shared palette and fumadocs-aligned design rhythm
+ * Source of truth — sync to app copies with: pnpm sync-theme (from repo root)
+ */
+
+:root {
+  letter-spacing: -0.25px;
+
+  --radius-ui: 0.375rem;
+  --radius-panel: 0.75rem;
+  --radius-card: 0.75rem;
+  --radius-card-sm: 0.5rem;
+
+  /* ModelPort palette */
+  --bg-app: #f8f6f1;
+  --bg-sidebar: #f1ede6;
+  --bg-card: #fcfbf8;
+  --bg-card-muted: #f4f1eb;
+  --bg-hover: #ebe6dd;
+
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-muted: #737373;
+  --text-faint: #a3a3a3;
+
+  --border-default: #e4ddd2;
+  --border-subtle: #eee8df;
+  --chart-grid: #d8d1c6;
+
+  --accent-slate: #6b7280;
+  --accent-green: #166534;
+  --accent-green-bg: #ebf7ef;
+  --accent-blue: #315f9e;
+  --accent-blue-bg: #edf3fb;
+  --accent-red: #b42318;
+  --accent-red-bg: #fef3f2;
+  --accent-amber: #a16207;
+  --accent-amber-bg: #fff7e8;
+  --accent-beige: #e9e1d4;
+
+  --icon-mark: #525252;
+  --icon-tile: #e9e1d4;
+
+  --primary: oklch(0.24 0.012 85);
+  --primary-foreground: oklch(0.985 0.002 85);
+  --secondary: oklch(0.955 0.008 85);
+  --secondary-foreground: oklch(0.26 0.01 85);
+  --ring: oklch(0.72 0.012 85);
+}
+
+.dark {
+  --bg-app: #1a1815;
+  --bg-sidebar: #201d18;
+  --bg-card: #26221c;
+  --bg-card-muted: #2c2821;
+  --bg-hover: #343024;
+
+  --text-primary: #f4efe6;
+  --text-secondary: #c8bfb0;
+  --text-muted: #9a9183;
+  --text-faint: #6e675c;
+
+  --border-default: #3d362c;
+  --border-subtle: #322c25;
+  --chart-grid: #3d382f;
+
+  --accent-slate: #9a9183;
+  --accent-green: #5cb87a;
+  --accent-green-bg: rgba(92, 184, 122, 0.14);
+  --accent-blue: #8fa8c9;
+  --accent-blue-bg: rgba(143, 168, 201, 0.12);
+  --accent-red: #e07a6f;
+  --accent-red-bg: rgba(224, 122, 111, 0.12);
+  --accent-amber: #d4a84a;
+  --accent-amber-bg: rgba(212, 168, 74, 0.14);
+  --accent-beige: #4a4338;
+
+  --icon-mark: #e9e1d4;
+  --icon-tile: #6e675c;
+
+  --primary: oklch(0.91 0.018 85);
+  --primary-foreground: oklch(0.24 0.014 85);
+  --secondary: oklch(0.3 0.014 85);
+  --secondary-foreground: oklch(0.93 0.012 85);
+  --ring: oklch(0.58 0.014 85);
+}

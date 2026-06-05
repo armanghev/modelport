@@ -1,44 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "../styles/modelport-theme.css";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* ModelPort palette */
-  --bg-app: #f8f6f1;
-  --bg-sidebar: #f1ede6;
-  --bg-card: #fcfbf8;
-  --bg-card-muted: #f4f1eb;
-  --bg-hover: #ebe6dd;
-
-  /* Text */
-  --text-primary: #171717;
-  --text-secondary: #525252;
-  --text-muted: #737373;
-  --text-faint: #a3a3a3;
-
-  /* Borders */
-  --border-default: #e4ddd2;
-  --border-subtle: #eee8df;
-  --chart-grid: #d8d1c6;
-
-  /* Accents */
-  --accent-slate: #6b7280;
-  --accent-green: #166534;
-  --accent-green-bg: #ebf7ef;
-  --accent-blue: #315f9e;
-  --accent-blue-bg: #edf3fb;
-  --accent-red: #b42318;
-  --accent-red-bg: #fef3f2;
-  --accent-amber: #a16207;
-  --accent-amber-bg: #fff7e8;
-  --accent-beige: #e9e1d4;
-
-  /* Brand icon */
-  --icon-mark: #525252;
-  --icon-tile: #e9e1d4;
-
   /* Terminal */
   --terminal-bg: #171a20;
   --terminal-surface: #1f2430;
@@ -53,10 +20,8 @@
   --sidebar-width: 280px;
   --content-max-width: 1440px;
 
-  /* Radius */
-  --radius-card: 14px;
-  --radius-card-sm: 10px;
-  --radius: 0.75rem;
+  /* Radius — aligned with fumadocs (md panels, xl cards) */
+  --radius: var(--radius-ui);
 
   /* Shadows */
   --shadow-card:
@@ -202,6 +167,7 @@
 
 html {
   font-size: 16px;
+  letter-spacing: -0.25px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -236,15 +202,15 @@ input[type="search"]::-webkit-search-results-decoration {
 
 @layer base {
   h1 {
-    @apply text-[2rem] leading-10 font-bold tracking-[-0.03em] text-text-primary;
+    @apply text-[1.75rem] leading-9 font-semibold text-text-primary;
   }
 
   h2 {
-    @apply text-xl leading-8 font-semibold tracking-[-0.02em] text-text-primary;
+    @apply text-lg leading-7 font-semibold text-text-primary;
   }
 
   h3 {
-    @apply text-base leading-6 font-semibold text-text-primary;
+    @apply text-base leading-6 font-medium text-text-primary;
   }
 
   * {
@@ -262,12 +228,12 @@ input[type="search"]::-webkit-search-results-decoration {
 
 @layer utilities {
   .card-surface {
-    @apply rounded-[14px] border border-border-default bg-bg-card;
+    @apply rounded-xl border border-border-default bg-bg-card shadow-sm;
     box-shadow: var(--shadow-card);
   }
 
   .card-surface-soft {
-    @apply rounded-[10px] border border-border-subtle bg-bg-card-muted;
+    @apply rounded-lg border border-border-subtle bg-bg-card-muted;
   }
 
   .terminal-surface {
@@ -284,36 +250,6 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .dark {
-  /* Warm beige dark — mirrors the light palette, not cool blue-grays */
-  --bg-app: #1a1815;
-  --bg-sidebar: #201d18;
-  --bg-card: #26221c;
-  --bg-card-muted: #2c2821;
-  --bg-hover: #343024;
-
-  --text-primary: #f4efe6;
-  --text-secondary: #c8bfb0;
-  --text-muted: #9a9183;
-  --text-faint: #6e675c;
-
-  --border-default: #3d362c;
-  --border-subtle: #322c25;
-  --chart-grid: #3d382f;
-
-  --accent-slate: #9a9183;
-  --accent-green: #5cb87a;
-  --accent-green-bg: rgba(92, 184, 122, 0.14);
-  --accent-blue: #8fa8c9;
-  --accent-blue-bg: rgba(143, 168, 201, 0.12);
-  --accent-red: #e07a6f;
-  --accent-red-bg: rgba(224, 122, 111, 0.12);
-  --accent-amber: #d4a84a;
-  --accent-amber-bg: rgba(212, 168, 74, 0.14);
-  --accent-beige: #4a4338;
-
-  --icon-mark: #e9e1d4;
-  --icon-tile: #6e675c;
-
   --terminal-bg: #15130f;
   --terminal-surface: #26221c;
   --terminal-text: #f4efe6;
@@ -323,7 +259,6 @@ input[type="search"]::-webkit-search-results-decoration {
   --terminal-error: #e07a6f;
   --terminal-debug: #8fa8c9;
 
-  /* shadcn dark tokens */
   --background: oklch(0.19 0.014 85);
   --foreground: oklch(0.93 0.012 85);
 
