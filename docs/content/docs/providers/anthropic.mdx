@@ -3,7 +3,7 @@ title: Anthropic
 ---
 
 <Callout type="warn" title="Placeholder">
-Anthropic is seeded in configuration, but Anthropic-compatible upstream provider support is not implemented yet.
+Anthropic is seeded in configuration and supported as a native `anthropic_compatible` upstream provider.
 </Callout>
 
-The backend recognizes the provider type and documents the intended base URL, but selecting an `anthropic_compatible` upstream currently returns `501`.
+Use the Anthropic API root as the provider `base_url`, for example `https://api.anthropic.com`. ModelPort uses the native Anthropic `v1/messages` and `v1/models` surfaces for this provider type.

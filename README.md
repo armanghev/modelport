@@ -33,7 +33,7 @@ Working today:
 
 Still in progress:
 
-- Anthropic-compatible upstream providers are configured but not implemented as upstream targets yet. Selecting an `anthropic_compatible` upstream currently returns `501`.
+- Native Anthropic-compatible upstream providers are supported for `POST /v1/messages`, `POST /v1/chat/completions`, and `GET /v1/models`.
 - `/v1/messages/count_tokens`, `/v1/responses`, and `/v1/embeddings` are planned but not implemented.
 - The dashboard expects the backend to be running; it is no longer just a static mock dashboard.
 - Provider health is based on recent runtime/API observations rather than a dedicated background health-check loop.
@@ -41,7 +41,6 @@ Still in progress:
 
 Future plans:
 
-- Native Anthropic-compatible upstream provider support, not just Anthropic-compatible client input.
 - Additional API surfaces such as token counting, OpenAI Responses, embeddings, and other provider-specific capabilities.
 - Custom response schemas and structured output formats that can be managed consistently across providers.
 - More advanced routing policies, including automatic fallback, cost-aware routing, latency-aware routing, and model capability matching.
@@ -330,4 +329,3 @@ ModelPort is designed as a local development tool. Do not expose the backend dir
 - Raw provider keys from `.env` are not displayed in the dashboard.
 - Database-stored credentials are encrypted using `PROXY_ENCRYPTION_KEY`.
 - Request/response body logging can capture prompts, completions, tool inputs, and other sensitive data.
-

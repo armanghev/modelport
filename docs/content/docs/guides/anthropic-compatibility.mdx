@@ -49,6 +49,6 @@ curl http://127.0.0.1:13243/v1/messages \
 
 ## Important Limitation
 
-<Callout type="warn" title="Upstream Anthropic providers are not implemented yet">
-Anthropic-style clients are supported, but `anthropic_compatible` upstream providers currently return `501`. In practice, the implemented path today is Anthropic-style input translated onto OpenAI-compatible upstream providers.
+<Callout type="info" title="Native Anthropic upstreams are supported">
+Anthropic-style clients can now target providers with type `anthropic_compatible` directly. OpenAI-style clients can also route through Anthropic upstreams, with ModelPort handling request and response translation automatically.
 </Callout>

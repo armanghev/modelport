@@ -54,4 +54,4 @@ ModelPort returns an OpenAI-compatible chat completion response. The exact paylo
 - Streaming and non-streaming responses are supported.
 - Provider fallbacks are supported.
 - Request logging, usage extraction, and estimated cost tracking run after success.
-- If an upstream provider is marked `anthropic_compatible`, this endpoint currently returns `501`.
+- If an upstream provider is marked `anthropic_compatible`, ModelPort translates the OpenAI-style request onto Anthropic Messages and translates the response back to an OpenAI-compatible chat completion.

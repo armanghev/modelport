@@ -38,12 +38,16 @@ Fix:
 - set the provider env var such as `OPENAI_API_KEY`
 - or create a database-backed credential with `/admin/provider-credentials`
 
-## `501 Anthropic-compatible upstream providers are not implemented yet`
+## Anthropic upstream request problems
 
 Cause:
 
-- you selected a provider with type `anthropic_compatible`
+- the Anthropic provider base URL is wrong
+- the Anthropic credential is missing or invalid
+- the upstream Anthropic request was rejected
 
 Fix:
 
-- route the request through an implemented OpenAI-compatible upstream instead
+- set the provider base URL to the Anthropic API root, such as `https://api.anthropic.com`
+- verify `ANTHROPIC_API_KEY` or the stored provider credential is configured
+- verify the request includes Anthropic-required fields such as `max_tokens`

@@ -46,7 +46,7 @@ Client
 ## Current Limits
 
 <Callout type="warn" title="Implemented versus planned">
-ModelPort already accepts Anthropic-style client requests, but Anthropic-compatible upstream providers are not implemented yet. Selecting an `anthropic_compatible` upstream currently returns `501`.
+Anthropic-compatible upstream providers are supported for `POST /v1/messages`, `POST /v1/chat/completions`, and `GET /v1/models`. OpenAI-style clients are translated onto Anthropic upstreams when you select a provider with type `anthropic_compatible`.
 </Callout>
 
 These features are planned but not implemented:
