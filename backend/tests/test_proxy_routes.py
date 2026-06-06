@@ -969,6 +969,101 @@ def test_models_route_returns_openai_compatible_models_for_selected_provider(
     }
 
 
+def test_models_route_returns_anthropic_upstream_models_for_selected_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_list_anthropic_models(provider, api_key):
+        assert provider.id == "anthropic"
+        assert api_key == "sk-anthropic-seeded"
+        return {
+            "data": [
+                {
+                    "id": "claude-sonnet-4-5-20250929",
+                    "display_name": "Claude Sonnet 4.5",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "app.api.openai.list_anthropic_models",
+        fake_list_anthropic_models,
+    )
+
+    response = client.get(
+        "/v1/models",
+        headers={
+            "Authorization": "Bearer test-local-token",
+            "X-ModelPort-Provider": "anthropic",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "data": [
+            {
+                "id": "claude-sonnet-4-5-20250929",
+                "display_name": "Claude Sonnet 4.5",
+            }
+        ]
+    }
+
+
+def test_chat_completions_route_supports_anthropic_upstream(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    def fake_create_anthropic_message(provider, api_key, payload):
+        captured["provider_id"] = provider.id
+        captured["api_key"] = api_key
+        captured["payload"] = payload
+        return {
+            "id": "msg_456",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [{"type": "text", "text": "Translated from Anthropic"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 6, "output_tokens": 3},
+        }
+
+    monkeypatch.setattr(
+        "app.api.openai.create_anthropic_message",
+        fake_create_anthropic_message,
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Translated from Anthropic"
+    assert response.json()["usage"] == {
+        "prompt_tokens": 6,
+        "completion_tokens": 3,
+        "total_tokens": 9,
+    }
+    assert captured == {
+        "provider_id": "anthropic",
+        "api_key": "sk-anthropic-seeded",
+        "payload": {
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    }
+
+
 def test_chat_completions_route_retries_gemini_when_low_max_tokens_return_empty_completion(
     client: TestClient,
     monkeypatch,
@@ -1086,6 +1181,63 @@ def test_chat_completions_route_streams_openai_sse_chunks(
     assert '"content":"Hello"' in body
     assert '"content":" world"' in body
     assert "data: [DONE]" in body
+
+
+def test_chat_completions_route_streams_anthropic_upstream_as_openai_sse(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    def fake_stream_anthropic_message_events(provider, api_key, payload):
+        captured["provider_id"] = provider.id
+        captured["api_key"] = api_key
+        captured["payload"] = payload
+        yield "event: message_start"
+        yield 'data: {"type":"message_start","message":{"id":"msg_stream_openai_123","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[],"usage":{"input_tokens":8,"output_tokens":0}}}'
+        yield 'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}'
+        yield 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}'
+        yield 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" from Anthropic"}}'
+        yield 'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}'
+        yield "event: message_stop"
+        yield 'data: {"type":"message_stop"}'
+
+    monkeypatch.setattr(
+        "app.api.openai.stream_anthropic_message_events",
+        fake_stream_anthropic_message_events,
+    )
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert 'data: {"id":"msg_stream_openai_123"' in body
+    assert '"content":"Hello"' in body
+    assert '"content":" from Anthropic"' in body
+    assert '"finish_reason":"stop"' in body
+    assert "data: [DONE]" in body
+    assert captured == {
+        "provider_id": "anthropic",
+        "api_key": "sk-anthropic-seeded",
+        "payload": {
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        },
+    }
 
 
 def test_messages_route_uses_fallback_provider_when_primary_is_degraded(

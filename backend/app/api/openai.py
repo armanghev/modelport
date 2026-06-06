@@ -21,6 +21,11 @@ from app.api.proxy_common import (
     resolve_requested_provider,
 )
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
+from app.providers.anthropic_compatible import (
+    create_message as create_anthropic_message,
+    list_models as list_anthropic_models,
+    stream_message_events as stream_anthropic_message_events,
+)
 from app.providers.openai_compatible import create_chat_completion, list_models, stream_chat_completion_chunks
 from app.routing.provider_router import resolve_provider_routes
 from app.schemas.openai import OpenAIChatCompletionCreate, OpenAIChatCompletionResponse
@@ -37,8 +42,25 @@ from app.translators.anthropic_to_openai import translate_anthropic_message_to_o
 from app.translators.openai_request_to_anthropic import (
     translate_openai_chat_completion_request_to_anthropic,
 )
+from app.translators.openai_to_anthropic import (
+    translate_anthropic_message_to_openai_chat_completion,
+    translate_anthropic_stream_event_to_openai_chunks,
+)
 
 router = APIRouter(tags=["openai"])
+
+
+def build_anthropic_upstream_payload(
+    payload,
+    *,
+    upstream_model: str,
+) -> dict:
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_none=True,
+    )
+    upstream_payload["model"] = upstream_model
+    return upstream_payload
 
 
 @router.get("/v1/models")
@@ -53,12 +75,6 @@ def get_models(
         requested_model="",
         fallback_provider_ids=[],
     )[0]
-    if resolved_route.provider.provider_type == "anthropic_compatible":
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Anthropic-compatible upstream providers are not implemented yet.",
-        )
-
     try:
         provider_secret = resolve_credential_secret(resolved_route.credential)
     except EncryptionConfigurationError as exc:
@@ -72,6 +88,9 @@ def get_models(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="No configured credential available for the selected provider.",
         )
+
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        return list_anthropic_models(resolved_route.provider, api_key=provider_secret)
 
     return list_models(resolved_route.provider, api_key=provider_secret)
 
@@ -151,12 +170,6 @@ def create_chat_completions(
                     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
                 try:
-                    if resolved_route.provider.provider_type == "anthropic_compatible":
-                        raise HTTPException(
-                            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                            detail="Anthropic-compatible upstream providers are not implemented yet.",
-                        )
-
                     if not provider_supports_anonymous_access(
                         resolved_route.provider.base_url,
                         resolved_route.provider.provider_type,
@@ -166,43 +179,85 @@ def create_chat_completions(
                             detail="No configured credential available for the selected provider.",
                         )
 
-                    for raw_chunk in stream_chat_completion_chunks(
-                        resolved_route.provider,
-                        api_key=provider_secret,
-                        payload=openai_payload,
-                    ):
-                        if raw_chunk == "[DONE]":
-                            continue
-
-                        if ttfb_ms is None:
-                            ttfb_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-
-                        try:
-                            chunk = json.loads(raw_chunk)
-                        except ValueError:
+                    if resolved_route.provider.provider_type == "anthropic_compatible":
+                        anthropic_payload = build_anthropic_upstream_payload(
+                            internal_payload,
+                            upstream_model=resolved_route.upstream_model,
+                        )
+                        stream_state: dict[str, object] = {
+                            "id": None,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                        }
+                        for line in stream_anthropic_message_events(
+                            resolved_route.provider,
+                            api_key=provider_secret,
+                            payload=anthropic_payload,
+                        ):
                             emitted_chunks = True
-                            yield f"data: {raw_chunk}\n\n"
-                            continue
+                            if ttfb_ms is None:
+                                ttfb_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                            for chunk in translate_anthropic_stream_event_to_openai_chunks(
+                                line,
+                                state=stream_state,
+                                requested_model=payload.model,
+                            ):
+                                if chunk.get("id"):
+                                    upstream_request_id = str(chunk["id"])
+                                usage = chunk.get("usage")
+                                if isinstance(usage, dict):
+                                    final_usage = usage
+                                delta_text = extract_openai_stream_delta_text(chunk)
+                                if delta_text:
+                                    text_parts.append(delta_text)
+                                completion_reason = extract_openai_stream_completion_reason(chunk) or completion_reason
+                                yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+                        yield "data: [DONE]\n\n"
+                        usage_snapshot = UsageSnapshot(
+                            input_tokens=int(stream_state.get("prompt_tokens", 0) or 0),
+                            output_tokens=int(stream_state.get("completion_tokens", 0) or 0),
+                            total_tokens=int(stream_state.get("prompt_tokens", 0) or 0)
+                            + int(stream_state.get("completion_tokens", 0) or 0),
+                            token_source="provider",
+                        )
+                    else:
+                        for raw_chunk in stream_chat_completion_chunks(
+                            resolved_route.provider,
+                            api_key=provider_secret,
+                            payload=openai_payload,
+                        ):
+                            if raw_chunk == "[DONE]":
+                                continue
 
-                        emitted_chunks = True
-                        if chunk.get("id"):
-                            upstream_request_id = str(chunk["id"])
-                        if isinstance(chunk.get("usage"), dict):
-                            final_usage = chunk["usage"]
-                        delta_text = extract_openai_stream_delta_text(chunk)
-                        if delta_text:
-                            text_parts.append(delta_text)
-                        completion_reason = extract_openai_stream_completion_reason(chunk) or completion_reason
+                            if ttfb_ms is None:
+                                ttfb_ms = max(0, round((time.perf_counter() - started_at) * 1000))
 
-                        yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+                            try:
+                                chunk = json.loads(raw_chunk)
+                            except ValueError:
+                                emitted_chunks = True
+                                yield f"data: {raw_chunk}\n\n"
+                                continue
 
-                    yield "data: [DONE]\n\n"
+                            emitted_chunks = True
+                            if chunk.get("id"):
+                                upstream_request_id = str(chunk["id"])
+                            if isinstance(chunk.get("usage"), dict):
+                                final_usage = chunk["usage"]
+                            delta_text = extract_openai_stream_delta_text(chunk)
+                            if delta_text:
+                                text_parts.append(delta_text)
+                            completion_reason = extract_openai_stream_completion_reason(chunk) or completion_reason
 
-                    usage_snapshot = build_stream_usage_snapshot(
-                        openai_payload,
-                        "".join(text_parts),
-                        final_usage,
-                    )
+                            yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+
+                        yield "data: [DONE]\n\n"
+
+                        usage_snapshot = build_stream_usage_snapshot(
+                            openai_payload,
+                            "".join(text_parts),
+                            final_usage,
+                        )
                     duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
 
                     with session_factory() as log_session:
@@ -324,12 +379,6 @@ def create_chat_completions(
         except EncryptionConfigurationError as exc:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
-        if resolved_route.provider.provider_type == "anthropic_compatible":
-            raise HTTPException(
-                status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail="Anthropic-compatible upstream providers are not implemented yet.",
-            )
-
         if not provider_supports_anonymous_access(
             resolved_route.provider.base_url,
             resolved_route.provider.provider_type,
@@ -348,6 +397,109 @@ def create_chat_completions(
                 last_error = exc
                 continue
             raise exc
+
+        if resolved_route.provider.provider_type == "anthropic_compatible":
+            anthropic_payload = build_anthropic_upstream_payload(
+                internal_payload,
+                upstream_model=resolved_route.upstream_model,
+            )
+            try:
+                upstream_response = create_anthropic_message(
+                    resolved_route.provider,
+                    api_key=provider_secret,
+                    payload=anthropic_payload,
+                )
+            except HTTPException as exc:
+                persist_provider_health_status(
+                    session,
+                    provider_id=resolved_route.provider.id,
+                    status_value=classify_provider_failure_status(exc),
+                    error_message=format_exception_detail_for_log(exc.detail),
+                )
+                last_error = exc
+                if exc.status_code in (502, 503) and route_index < len(resolved_routes) - 1:
+                    continue
+
+                duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                create_api_request_log(
+                    session,
+                    input_format="openai",
+                    output_format="openai",
+                    endpoint="/v1/chat/completions",
+                    client_name=client_name,
+                    requested_model=payload.model,
+                    resolved_model=resolved_route.upstream_model,
+                    provider=resolved_route.provider.id,
+                    input_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    token_source=None,
+                    estimated_cost_usd=None,
+                    pricing_source=None,
+                    duration_ms=duration_ms,
+                    status_code=exc.status_code,
+                    error_message=format_exception_detail_for_log(exc.detail),
+                    streamed=False,
+                    request_id=None,
+                    **io_log_kwargs(
+                        session,
+                        request_payload=payload,
+                        response_payload=build_logged_error_response(exc),
+                    ),
+                )
+                raise
+
+            openai_response = translate_anthropic_message_to_openai_chat_completion(
+                upstream_response,
+                requested_model=payload.model,
+            )
+            usage = openai_response.get("usage") if isinstance(openai_response.get("usage"), dict) else {}
+            usage_snapshot = UsageSnapshot(
+                input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                output_tokens=int(usage.get("completion_tokens", 0) or 0),
+                total_tokens=int(usage.get("total_tokens", 0) or 0),
+                token_source="provider",
+            )
+            pricing_override = find_pricing_override(
+                session,
+                provider_id=resolved_route.provider.id,
+                model=resolved_route.upstream_model,
+            )
+            estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
+                pricing_override,
+                input_tokens=usage_snapshot.input_tokens,
+                output_tokens=usage_snapshot.output_tokens,
+            )
+            duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+            completion_reason = extract_openai_stream_completion_reason(openai_response)
+            create_api_request_log(
+                session,
+                input_format="openai",
+                output_format="openai",
+                endpoint="/v1/chat/completions",
+                client_name=client_name,
+                requested_model=payload.model,
+                resolved_model=resolved_route.upstream_model,
+                provider=resolved_route.provider.id,
+                input_tokens=usage_snapshot.input_tokens,
+                output_tokens=usage_snapshot.output_tokens,
+                total_tokens=usage_snapshot.total_tokens,
+                token_source=usage_snapshot.token_source,
+                estimated_cost_usd=estimated_cost_usd,
+                pricing_source=pricing_source,
+                duration_ms=duration_ms,
+                status_code=200,
+                error_message=None,
+                streamed=False,
+                request_id=str(openai_response.get("id")) if openai_response.get("id") else None,
+                completion_reason=completion_reason,
+                **io_log_kwargs(
+                    session,
+                    request_payload=payload,
+                    response_payload=openai_response,
+                ),
+            )
+            return OpenAIChatCompletionResponse.model_validate(openai_response)
 
         openai_payload = translate_anthropic_message_to_openai(
             internal_payload,

@@ -382,3 +382,166 @@ class AnthropicStreamTranslator:
             ]
         )
         return events
+
+
+OPENAI_FINISH_REASON_BY_ANTHROPIC_STOP_REASON = {
+    "end_turn": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+}
+
+
+def translate_anthropic_message_to_openai_chat_completion(
+    payload: dict,
+    *,
+    requested_model: str,
+) -> dict:
+    content = payload.get("content")
+    if not isinstance(content, list):
+        content = []
+
+    text_parts: list[str] = []
+    tool_calls: list[dict] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        block_type = item.get("type")
+        if block_type == "text" and isinstance(item.get("text"), str):
+            text_parts.append(item["text"])
+        elif block_type == "tool_use":
+            tool_calls.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "type": "function",
+                    "function": {
+                        "name": str(item.get("name") or ""),
+                        "arguments": json.dumps(item.get("input", {})),
+                    },
+                }
+            )
+
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    prompt_tokens = int(usage.get("input_tokens", 0) or 0)
+    completion_tokens = int(usage.get("output_tokens", 0) or 0)
+    finish_reason = OPENAI_FINISH_REASON_BY_ANTHROPIC_STOP_REASON.get(
+        str(payload.get("stop_reason") or ""),
+        "stop",
+    )
+
+    message: dict[str, object] = {
+        "role": "assistant",
+        "content": "\n".join(text_parts) if text_parts else None,
+    }
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+
+    return {
+        "id": str(payload.get("id") or "chatcmpl_generated"),
+        "object": "chat.completion",
+        "model": requested_model,
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
+
+
+def translate_anthropic_stream_event_to_openai_chunks(
+    line: str,
+    *,
+    state: dict[str, object],
+    requested_model: str,
+) -> list[dict]:
+    if not line.startswith("data:"):
+        return []
+
+    raw_payload = line.removeprefix("data:").strip()
+    if not raw_payload:
+        return []
+
+    try:
+        payload = json.loads(raw_payload)
+    except ValueError:
+        return []
+
+    if not isinstance(payload, dict):
+        return []
+
+    event_type = payload.get("type")
+    chunks: list[dict] = []
+
+    if event_type == "message_start":
+        message = payload.get("message")
+        if isinstance(message, dict):
+            message_id = str(message.get("id") or "chatcmpl_generated")
+            state["id"] = message_id
+            usage = message.get("usage")
+            if isinstance(usage, dict):
+                input_tokens = usage.get("input_tokens")
+                if isinstance(input_tokens, int):
+                    state["prompt_tokens"] = input_tokens
+        return chunks
+
+    chunk_id = str(state.get("id") or "chatcmpl_generated")
+
+    if event_type == "content_block_delta":
+        delta = payload.get("delta")
+        if isinstance(delta, dict) and delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "model": requested_model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": delta["text"]},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        return chunks
+
+    if event_type == "message_delta":
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            output_tokens = usage.get("output_tokens")
+            if isinstance(output_tokens, int):
+                state["completion_tokens"] = output_tokens
+        delta = payload.get("delta")
+        stop_reason = None
+        if isinstance(delta, dict):
+            stop_reason = delta.get("stop_reason")
+        finish_reason = OPENAI_FINISH_REASON_BY_ANTHROPIC_STOP_REASON.get(str(stop_reason or ""), "stop")
+        chunks.append(
+            {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "model": requested_model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": finish_reason,
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": int(state.get("prompt_tokens", 0) or 0),
+                    "completion_tokens": int(state.get("completion_tokens", 0) or 0),
+                    "total_tokens": int(state.get("prompt_tokens", 0) or 0)
+                    + int(state.get("completion_tokens", 0) or 0),
+                },
+            }
+        )
+        return chunks
+
+    return chunks
