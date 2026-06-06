@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+import httpx
+import pytest
+from fastapi import HTTPException
+
 from app.database import Provider
 from app.providers.anthropic_compatible import (
     build_headers,
@@ -198,3 +202,173 @@ def test_stream_message_events_passes_through_sse_lines(monkeypatch) -> None:
     assert captured["headers"]["x-api-key"] == "sk-anthropic-seeded"
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
     assert captured["json"] == {"model": "claude-sonnet-4-5", "stream": True}
+
+
+@pytest.mark.parametrize("factory", ["http_status", "transport", "value"])
+def test_create_message_maps_upstream_errors(monkeypatch, factory: str) -> None:
+    provider = make_anthropic_provider()
+    request = httpx.Request("POST", build_messages_url(provider))
+    response = httpx.Response(503, request=request, text="temporary outage")
+    expected = HTTPException(status_code=502, detail={"message": f"mapped {factory}"})
+    captured: dict[str, object] = {}
+
+    def fake_http_error_mapper(exc: httpx.HTTPStatusError) -> HTTPException:
+        captured["http_error"] = exc
+        return expected
+
+    def fake_transport_error_mapper(exc: httpx.HTTPError | ValueError) -> HTTPException:
+        captured["transport_error"] = exc
+        return expected
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            if factory == "http_status":
+                raise httpx.HTTPStatusError("temporary outage", request=request, response=response)
+            if factory == "transport":
+                raise httpx.ConnectError("network down", request=request)
+            raise ValueError("invalid upstream payload")
+
+    monkeypatch.setattr("app.providers.anthropic_compatible.httpx.Client", FakeClient)
+    monkeypatch.setattr(
+        "app.providers.anthropic_compatible.http_exception_from_upstream_http_error",
+        fake_http_error_mapper,
+    )
+    monkeypatch.setattr(
+        "app.providers.anthropic_compatible.http_exception_from_upstream_transport_error",
+        fake_transport_error_mapper,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        create_message(provider, api_key="sk-anthropic-seeded", payload={"model": "claude"})
+
+    assert exc_info.value is expected
+    if factory == "http_status":
+        assert isinstance(captured["http_error"], httpx.HTTPStatusError)
+        assert "transport_error" not in captured
+    else:
+        assert isinstance(captured["transport_error"], httpx.HTTPError | ValueError)
+        assert "http_error" not in captured
+
+
+@pytest.mark.parametrize("factory", ["http_status", "transport", "value"])
+def test_list_models_maps_upstream_errors(monkeypatch, factory: str) -> None:
+    provider = make_anthropic_provider()
+    request = httpx.Request("GET", build_models_url(provider))
+    response = httpx.Response(502, request=request, text="bad gateway")
+    expected = HTTPException(status_code=502, detail={"message": f"mapped {factory}"})
+    captured: dict[str, object] = {}
+
+    def fake_http_error_mapper(exc: httpx.HTTPStatusError) -> HTTPException:
+        captured["http_error"] = exc
+        return expected
+
+    def fake_transport_error_mapper(exc: httpx.HTTPError | ValueError) -> HTTPException:
+        captured["transport_error"] = exc
+        return expected
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None):
+            if factory == "http_status":
+                raise httpx.HTTPStatusError("bad gateway", request=request, response=response)
+            if factory == "transport":
+                raise httpx.ReadError("socket closed", request=request)
+            raise ValueError("invalid models payload")
+
+    monkeypatch.setattr("app.providers.anthropic_compatible.httpx.Client", FakeClient)
+    monkeypatch.setattr(
+        "app.providers.anthropic_compatible.http_exception_from_upstream_http_error",
+        fake_http_error_mapper,
+    )
+    monkeypatch.setattr(
+        "app.providers.anthropic_compatible.http_exception_from_upstream_transport_error",
+        fake_transport_error_mapper,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        list_models(provider, api_key="sk-anthropic-seeded")
+
+    assert exc_info.value is expected
+    if factory == "http_status":
+        assert isinstance(captured["http_error"], httpx.HTTPStatusError)
+        assert "transport_error" not in captured
+    else:
+        assert isinstance(captured["transport_error"], httpx.HTTPError | ValueError)
+        assert "http_error" not in captured
+
+
+@pytest.mark.parametrize("factory", ["http_status", "transport"])
+def test_stream_message_events_maps_upstream_errors(monkeypatch, factory: str) -> None:
+    provider = make_anthropic_provider()
+    request = httpx.Request("POST", build_messages_url(provider))
+    response = httpx.Response(504, request=request, text="gateway timeout")
+    expected = HTTPException(status_code=502, detail={"message": f"mapped {factory}"})
+    captured: dict[str, object] = {}
+
+    def fake_http_error_mapper(exc: httpx.HTTPStatusError) -> HTTPException:
+        captured["http_error"] = exc
+        return expected
+
+    def fake_transport_error_mapper(exc: httpx.HTTPError | ValueError) -> HTTPException:
+        captured["transport_error"] = exc
+        return expected
+
+    class FakeStreamContext:
+        def __enter__(self):
+            if factory == "http_status":
+                raise httpx.HTTPStatusError("gateway timeout", request=request, response=response)
+            raise httpx.ReadTimeout("timed out", request=request)
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def stream(self, method: str, url: str, headers: dict | None = None, json: dict | None = None):
+            return FakeStreamContext()
+
+    monkeypatch.setattr("app.providers.anthropic_compatible.httpx.Client", FakeClient)
+    monkeypatch.setattr(
+        "app.providers.anthropic_compatible.http_exception_from_upstream_http_error",
+        fake_http_error_mapper,
+    )
+    monkeypatch.setattr(
+        "app.providers.anthropic_compatible.http_exception_from_upstream_transport_error",
+        fake_transport_error_mapper,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        list(stream_message_events(provider, api_key="sk-anthropic-seeded", payload={"model": "claude", "stream": True}))
+
+    assert exc_info.value is expected
+    if factory == "http_status":
+        assert isinstance(captured["http_error"], httpx.HTTPStatusError)
+        assert "transport_error" not in captured
+    else:
+        assert isinstance(captured["transport_error"], httpx.HTTPError)
+        assert "http_error" not in captured
