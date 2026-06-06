@@ -71,7 +71,17 @@ def build_upstream_error_detail(
 
 
 def http_exception_from_upstream_http_error(exc: httpx.HTTPStatusError) -> HTTPException:
-    body = exc.response.text.strip() if exc.response is not None else ""
+    body = ""
+    if exc.response is not None:
+        try:
+            body = exc.response.text.strip()
+        except httpx.ResponseNotRead:
+            try:
+                exc.response.read()
+            except httpx.StreamError:
+                body = ""
+            else:
+                body = exc.response.text.strip()
     upstream_status_code = exc.response.status_code if exc.response is not None else None
     detail = build_upstream_error_detail(
         upstream_status_code=upstream_status_code,

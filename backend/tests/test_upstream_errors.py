@@ -1,6 +1,7 @@
 import json
 
 import httpx
+import pytest
 from fastapi import HTTPException
 
 from app.errors.upstream import (
@@ -77,6 +78,69 @@ def test_http_exception_from_upstream_http_error() -> None:
     assert "code" not in http_exc.detail
     assert http_exc.detail["status"] == "NOT_FOUND"
     assert "upstream" not in http_exc.detail
+
+
+def test_http_exception_from_unread_streaming_upstream_http_error() -> None:
+    request = httpx.Request("POST", "https://example.com/v1/chat/completions")
+    response = httpx.Response(
+        429,
+        request=request,
+        stream=httpx.ByteStream(
+            json.dumps(
+                {
+                    "error": {
+                        "message": "Rate limit exceeded",
+                        "status": "RESOURCE_EXHAUSTED",
+                    }
+                }
+            ).encode("utf-8")
+        ),
+    )
+    exc = httpx.HTTPStatusError("error", request=request, response=response)
+
+    with pytest.raises(httpx.ResponseNotRead):
+        _ = response.text
+
+    http_exc = http_exception_from_upstream_http_error(exc)
+
+    assert http_exc.status_code == 502
+    assert isinstance(http_exc.detail, dict)
+    assert http_exc.detail["message"] == "Rate limit exceeded"
+    assert http_exc.detail["status"] == "RESOURCE_EXHAUSTED"
+    assert http_exc.detail["upstream_status_code"] == 429
+
+
+def test_http_exception_from_closed_streaming_upstream_http_error() -> None:
+    request = httpx.Request("POST", "https://example.com/v1/chat/completions")
+    response = httpx.Response(
+        429,
+        request=request,
+        stream=httpx.ByteStream(
+            json.dumps(
+                {
+                    "error": {
+                        "message": "Rate limit exceeded",
+                        "status": "RESOURCE_EXHAUSTED",
+                    }
+                }
+            ).encode("utf-8")
+        ),
+    )
+    response.close()
+    exc = httpx.HTTPStatusError("stream closed", request=request, response=response)
+
+    with pytest.raises(httpx.ResponseNotRead):
+        _ = response.text
+    with pytest.raises(httpx.StreamClosed):
+        response.read()
+
+    http_exc = http_exception_from_upstream_http_error(exc)
+
+    assert http_exc.status_code == 502
+    assert isinstance(http_exc.detail, dict)
+    assert http_exc.detail["message"] == "stream closed"
+    assert "status" not in http_exc.detail
+    assert http_exc.detail["upstream_status_code"] == 429
 
 
 def test_build_upstream_error_detail_omits_raw_upstream_body() -> None:
