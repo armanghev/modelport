@@ -299,7 +299,7 @@ def test_provider_health_allows_local_provider_without_api_key(
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
-        def get(self, url: str, headers: dict | None = None):
+        def get(self, url: str, headers: dict | None = None, **kwargs):
             if "localhost:11434" in url:
                 return FakeResponse()
             raise httpx.ConnectError("remote unavailable")
@@ -359,7 +359,7 @@ def test_provider_health_prefers_configured_enabled_credential(
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
-        def get(self, url: str, headers: dict | None = None):
+        def get(self, url: str, headers: dict | None = None, **kwargs):
             headers = headers or {}
             if "api.openai.com" in url:
                 assert headers.get("Authorization") == "Bearer sk-configured-secret"
@@ -373,6 +373,60 @@ def test_provider_health_prefers_configured_enabled_credential(
     cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
     assert cards_by_id["openai"]["status"] == "operational"
     assert cards_by_id["openai"]["availableModelCount"] == 1
+
+
+def test_provider_health_uses_anthropic_models_endpoint_and_headers(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    import httpx
+
+    class FakeResponse:
+        def __init__(self, payload: dict) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None, **kwargs):
+            headers = headers or {}
+            if "api.anthropic.com" in url:
+                assert url == "https://api.anthropic.com/v1/models"
+                assert headers.get("x-api-key") == "sk-anthropic-seeded"
+                assert headers.get("anthropic-version") == "2023-06-01"
+                return FakeResponse(
+                    {
+                        "data": [
+                            {
+                                "id": "claude-sonnet-4-5-20250929",
+                                "display_name": "Claude Sonnet 4.5",
+                            }
+                        ]
+                    }
+                )
+            raise httpx.ConnectError("provider unavailable")
+
+    monkeypatch.setattr("app.api.admin.httpx.Client", FakeHttpClient)
+
+    health_response = client.get("/admin/providers/health")
+
+    assert health_response.status_code == 200
+    cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
+    assert cards_by_id["anthropic"]["status"] == "operational"
+    assert cards_by_id["anthropic"]["availableModelCount"] == 1
 
 
 def test_provider_models_endpoint_returns_live_models_for_healthy_providers_only(
@@ -401,7 +455,7 @@ def test_provider_models_endpoint_returns_live_models_for_healthy_providers_only
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
 
-        def get(self, url: str, headers: dict | None = None):
+        def get(self, url: str, headers: dict | None = None, **kwargs):
             headers = headers or {}
             if "api.openai.com" in url:
                 assert headers.get("Authorization") == "Bearer sk-openai-seeded"
@@ -443,3 +497,60 @@ def test_provider_models_endpoint_returns_live_models_for_healthy_providers_only
     assert payload["totals"]["live_model_count"] == 3
     assert providers["ollama"]["available_model_count"] == 1
     assert providers["ollama"]["models"][0]["id"] == "qwen2.5-coder:latest"
+
+
+def test_provider_models_endpoint_includes_anthropic_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    import httpx
+
+    class FakeResponse:
+        def __init__(self, payload: dict) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None, **kwargs):
+            headers = headers or {}
+            if "api.anthropic.com" in url:
+                assert url == "https://api.anthropic.com/v1/models"
+                assert headers.get("x-api-key") == "sk-anthropic-seeded"
+                assert headers.get("anthropic-version") == "2023-06-01"
+                return FakeResponse(
+                    {
+                        "data": [
+                            {
+                                "id": "claude-sonnet-4-5-20250929",
+                                "display_name": "Claude Sonnet 4.5",
+                            }
+                        ]
+                    }
+                )
+            raise httpx.ConnectError("provider unavailable")
+
+    monkeypatch.setattr("app.api.admin.httpx.Client", FakeHttpClient)
+
+    response = client.get("/admin/providers/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    providers = {entry["provider_id"]: entry for entry in payload["providers"]}
+    assert set(providers) == {"anthropic"}
+    assert providers["anthropic"]["status"] == "operational"
+    assert providers["anthropic"]["available_model_count"] == 1
+    assert providers["anthropic"]["models"][0]["id"] == "claude-sonnet-4-5-20250929"
