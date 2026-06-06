@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 from app.database import Provider
 from app.providers.anthropic_compatible import (
+    build_headers,
     build_messages_url,
     build_models_url,
     create_message,
@@ -27,6 +28,19 @@ def test_build_urls_for_anthropic_upstream() -> None:
 
     assert build_messages_url(provider) == "https://api.anthropic.com/v1/messages"
     assert build_models_url(provider) == "https://api.anthropic.com/v1/models"
+
+
+def test_build_headers_for_anthropic_requests() -> None:
+    assert build_headers(None) == {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+    }
+    assert build_headers("sk-anthropic-seeded", stream=True) == {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "Accept": "text/event-stream",
+        "x-api-key": "sk-anthropic-seeded",
+    }
 
 
 def test_create_message_uses_anthropic_headers_and_messages_url(monkeypatch) -> None:
@@ -74,6 +88,7 @@ def test_create_message_uses_anthropic_headers_and_messages_url(monkeypatch) -> 
     assert response == {"id": "msg_123", "type": "message"}
     assert captured["timeout"] == 60.0
     assert captured["url"] == "https://api.anthropic.com/v1/messages"
+    assert captured["headers"]["Content-Type"] == "application/json"
     assert captured["headers"]["x-api-key"] == "sk-anthropic-seeded"
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
     assert captured["json"] == {
@@ -115,6 +130,7 @@ def test_list_models_uses_models_url_and_anthropic_headers(monkeypatch) -> None:
     assert response == {"data": [{"id": "claude-sonnet-4-5"}]}
     assert captured["timeout"] == 30.0
     assert captured["url"] == "https://api.anthropic.com/v1/models"
+    assert captured["headers"]["Content-Type"] == "application/json"
     assert captured["headers"]["x-api-key"] == "sk-anthropic-seeded"
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
 
@@ -177,7 +193,8 @@ def test_stream_message_events_passes_through_sse_lines(monkeypatch) -> None:
     assert captured["timeout"] == 60.0
     assert captured["method"] == "POST"
     assert captured["url"] == "https://api.anthropic.com/v1/messages"
+    assert captured["headers"]["Content-Type"] == "application/json"
     assert captured["headers"]["Accept"] == "text/event-stream"
     assert captured["headers"]["x-api-key"] == "sk-anthropic-seeded"
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
-
+    assert captured["json"] == {"model": "claude-sonnet-4-5", "stream": True}
