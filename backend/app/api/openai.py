@@ -29,12 +29,25 @@ from app.providers.anthropic_compatible import (
     stream_message_events as stream_anthropic_message_events,
 )
 from app.providers.openai_compatible import (
+    cancel_response,
     create_chat_completion,
     create_embedding,
     create_response,
     get_model,
+    get_response,
     list_models,
+    list_response_input_items,
     stream_chat_completion_chunks,
+)
+from app.responses.store import (
+    PROXY_EMULATED,
+    build_input_items_from_create_payload,
+    cancel_emulated_response,
+    get_response_resource,
+    list_input_items,
+    retrieve_emulated_response,
+    save_emulated_response,
+    save_passthrough_response,
 )
 from app.routing.provider_router import resolve_provider_routes
 from app.schemas.openai import (
@@ -66,6 +79,41 @@ from app.translators.openai_to_anthropic import (
 )
 
 router = APIRouter(tags=["proxy"])
+
+
+def resolve_stored_response_route(
+    session: Session,
+    response_id: str,
+) -> tuple:
+    resource = get_response_resource(session, response_id)
+    if resource is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Response resource '{response_id}' was not found.",
+        )
+
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=resource.provider_id,
+        requested_model=resource.requested_model,
+        upstream_model=resource.upstream_model,
+        fallback_provider_ids=[],
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+    return resource, resolved_route, provider_secret
 
 
 def build_anthropic_upstream_payload(
@@ -279,12 +327,23 @@ def create_responses(
             api_key=provider_secret,
             payload=upstream_payload,
         )
-        return OpenAIResponse.model_validate(
-            translate_anthropic_message_to_openai_response(
-                upstream_response,
-                requested_model=payload.model,
-            )
+        response_dict = translate_anthropic_message_to_openai_response(
+            upstream_response,
+            requested_model=payload.model,
         )
+        openai_response = OpenAIResponse.model_validate(response_dict)
+        save_emulated_response(
+            session,
+            response_id=openai_response.id,
+            provider_id=resolved_route.provider.id,
+            requested_model=payload.model,
+            upstream_model=resolved_route.upstream_model,
+            response_body=openai_response.model_dump(),
+            input_items=build_input_items_from_create_payload(payload),
+            status=openai_response.status,
+        )
+        session.commit()
+        return openai_response
 
     upstream_payload = payload.model_dump(
         exclude={"provider", "fallback_providers"},
@@ -293,11 +352,128 @@ def create_responses(
     )
     upstream_payload.pop("stream", None)
     upstream_payload["model"] = resolved_route.upstream_model
+    response_dict = create_response(
+        resolved_route.provider,
+        api_key=provider_secret,
+        payload=upstream_payload,
+    )
+    openai_response = OpenAIResponse.model_validate(response_dict)
+    save_passthrough_response(
+        session,
+        response_id=openai_response.id,
+        provider_id=resolved_route.provider.id,
+        requested_model=payload.model,
+        upstream_model=resolved_route.upstream_model,
+        status=openai_response.status,
+    )
+    session.commit()
+    return openai_response
+
+
+@router.get("/v1/responses/{response_id}", response_model=OpenAIResponse)
+def retrieve_response(
+    response_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> OpenAIResponse:
+    resource, resolved_route, provider_secret = resolve_stored_response_route(session, response_id)
+
+    if resource.storage_kind == PROXY_EMULATED:
+        response_dict = retrieve_emulated_response(session, response_id)
+        if response_dict is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Response resource '{response_id}' was not found.",
+            )
+        return OpenAIResponse.model_validate(response_dict)
+
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Selected provider does not support OpenAI responses lifecycle compatibility.",
+        )
+
     return OpenAIResponse.model_validate(
-        create_response(
+        get_response(
             resolved_route.provider,
             api_key=provider_secret,
-            payload=upstream_payload,
+            response_id=response_id,
+        )
+    )
+
+
+@router.get("/v1/responses/{response_id}/input_items")
+def retrieve_response_input_items(
+    response_id: str,
+    request: Request,
+    after: str | None = None,
+    limit: int | None = None,
+    order: str | None = None,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resource, resolved_route, provider_secret = resolve_stored_response_route(session, response_id)
+
+    if resource.storage_kind == PROXY_EMULATED:
+        input_items = list_input_items(session, response_id)
+        if input_items is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Response resource '{response_id}' was not found.",
+            )
+        return input_items
+
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Selected provider does not support OpenAI responses lifecycle compatibility.",
+        )
+
+    return list_response_input_items(
+        resolved_route.provider,
+        api_key=provider_secret,
+        response_id=response_id,
+        after=after,
+        limit=limit,
+        order=order,
+    )
+
+
+@router.post("/v1/responses/{response_id}/cancel", response_model=OpenAIResponse)
+def cancel_stored_response(
+    response_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> OpenAIResponse:
+    resource, resolved_route, provider_secret = resolve_stored_response_route(session, response_id)
+
+    if resource.storage_kind == PROXY_EMULATED:
+        try:
+            response_dict = cancel_emulated_response(session, response_id)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Response resource '{response_id}' was not found.",
+            ) from exc
+        session.commit()
+        return OpenAIResponse.model_validate(response_dict)
+
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Selected provider does not support OpenAI responses lifecycle compatibility.",
+        )
+
+    return OpenAIResponse.model_validate(
+        cancel_response(
+            resolved_route.provider,
+            api_key=provider_secret,
+            response_id=response_id,
         )
     )
 

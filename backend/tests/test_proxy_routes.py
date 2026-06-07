@@ -1229,6 +1229,276 @@ def test_responses_route_rejects_streaming_for_now(
     assert response.status_code == 501
 
 
+def test_get_response_route_proxies_openai_compatible_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    create_calls: list[dict] = []
+    retrieve_calls: list[str] = []
+
+    def fake_create_response(provider, api_key, payload):
+        create_calls.append({"provider_id": provider.id, "payload": payload})
+        return {
+            "id": "resp_upstream_123",
+            "object": "response",
+            "status": "completed",
+            "model": "gpt-4.1",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Hello"}],
+                }
+            ],
+        }
+
+    def fake_get_response(provider, api_key, response_id):
+        retrieve_calls.append(response_id)
+        return {
+            "id": response_id,
+            "object": "response",
+            "status": "completed",
+            "model": "gpt-4.1",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Hello again"}],
+                }
+            ],
+        }
+
+    monkeypatch.setattr("app.api.openai.create_response", fake_create_response)
+    monkeypatch.setattr("app.api.openai.get_response", fake_get_response)
+
+    create_response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "input": "hello",
+        },
+    )
+    assert create_response.status_code == 200
+
+    response = client.get(
+        "/v1/responses/resp_upstream_123",
+        headers={"Authorization": "Bearer test-local-token"},
+    )
+
+    assert response.status_code == 200
+    assert retrieve_calls == ["resp_upstream_123"]
+    assert response.json()["output"][0]["content"][0]["text"] == "Hello again"
+
+
+def test_get_response_route_serves_emulated_anthropic_response(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_create_anthropic_message(provider, api_key, payload):
+        return {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [{"type": "text", "text": "Hello from Anthropic"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 6, "output_tokens": 3},
+        }
+
+    monkeypatch.setattr(
+        "app.api.openai.create_anthropic_message",
+        fake_create_anthropic_message,
+    )
+
+    create_response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hello"}],
+                }
+            ],
+        },
+    )
+    assert create_response.status_code == 200
+    response_id = create_response.json()["id"]
+
+    response = client.get(
+        f"/v1/responses/{response_id}",
+        headers={"Authorization": "Bearer test-local-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == response_id
+    assert response.json()["output"][0]["content"][0]["text"] == "Hello from Anthropic"
+
+
+def test_list_response_input_items_route_serves_emulated_anthropic_response(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_create_anthropic_message(provider, api_key, payload):
+        return {
+            "id": "msg_456",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [{"type": "text", "text": "Done"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 4, "output_tokens": 2},
+        }
+
+    monkeypatch.setattr(
+        "app.api.openai.create_anthropic_message",
+        fake_create_anthropic_message,
+    )
+
+    create_response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "input": "hello",
+            "instructions": "Be terse.",
+        },
+    )
+    assert create_response.status_code == 200
+    response_id = create_response.json()["id"]
+
+    response = client.get(
+        f"/v1/responses/{response_id}/input_items",
+        headers={"Authorization": "Bearer test-local-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "object": "list",
+        "data": [
+            {
+                "type": "message",
+                "role": "system",
+                "content": [{"type": "input_text", "text": "Be terse."}],
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}],
+            },
+        ],
+    }
+
+
+def test_cancel_response_route_proxies_openai_compatible_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_create_response(provider, api_key, payload):
+        return {
+            "id": "resp_upstream_cancel",
+            "object": "response",
+            "status": "in_progress",
+            "model": "gpt-4.1",
+            "output": [],
+        }
+
+    def fake_cancel_response(provider, api_key, response_id):
+        return {
+            "id": response_id,
+            "object": "response",
+            "status": "cancelled",
+            "model": "gpt-4.1",
+            "output": [],
+        }
+
+    monkeypatch.setattr("app.api.openai.create_response", fake_create_response)
+    monkeypatch.setattr("app.api.openai.cancel_response", fake_cancel_response)
+
+    create_response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "input": "hello",
+        },
+    )
+    assert create_response.status_code == 200
+
+    response = client.post(
+        "/v1/responses/resp_upstream_cancel/cancel",
+        headers={"Authorization": "Bearer test-local-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+
+def test_cancel_response_route_updates_emulated_anthropic_response(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_create_anthropic_message(provider, api_key, payload):
+        return {
+            "id": "msg_789",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [{"type": "text", "text": "Done"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 4, "output_tokens": 2},
+        }
+
+    monkeypatch.setattr(
+        "app.api.openai.create_anthropic_message",
+        fake_create_anthropic_message,
+    )
+
+    create_response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "input": "hello",
+        },
+    )
+    assert create_response.status_code == 200
+    response_id = create_response.json()["id"]
+
+    response = client.post(
+        f"/v1/responses/{response_id}/cancel",
+        headers={"Authorization": "Bearer test-local-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+    retrieve_response = client.get(
+        f"/v1/responses/{response_id}",
+        headers={"Authorization": "Bearer test-local-token"},
+    )
+    assert retrieve_response.status_code == 200
+    assert retrieve_response.json()["status"] == "cancelled"
+
+
+def test_get_response_route_returns_not_found_for_unknown_id(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/v1/responses/resp_missing",
+        headers={"Authorization": "Bearer test-local-token"},
+    )
+
+    assert response.status_code == 404
+
+
 def test_messages_count_tokens_route_supports_anthropic_provider(
     client: TestClient,
     monkeypatch,

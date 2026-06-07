@@ -36,6 +36,21 @@ def build_responses_url(provider: Provider) -> str:
     return urljoin(normalized_base, "responses")
 
 
+def build_response_url(provider: Provider, response_id: str) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, f"responses/{response_id}")
+
+
+def build_response_input_items_url(provider: Provider, response_id: str) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, f"responses/{response_id}/input_items")
+
+
+def build_response_cancel_url(provider: Provider, response_id: str) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, f"responses/{response_id}/cancel")
+
+
 def is_gemini_openai_provider(provider: Provider) -> bool:
     return "generativelanguage.googleapis.com" in provider.base_url
 
@@ -208,6 +223,88 @@ def create_response(
                 build_responses_url(provider),
                 headers=headers,
                 json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def get_response(
+    provider: Provider,
+    api_key: str | None,
+    response_id: str,
+) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.get(
+                build_response_url(provider, response_id),
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def list_response_input_items(
+    provider: Provider,
+    api_key: str | None,
+    response_id: str,
+    *,
+    after: str | None = None,
+    limit: int | None = None,
+    order: str | None = None,
+) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    params: dict[str, str | int] = {}
+    if after is not None:
+        params["after"] = after
+    if limit is not None:
+        params["limit"] = limit
+    if order is not None:
+        params["order"] = order
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.get(
+                build_response_input_items_url(provider, response_id),
+                headers=headers,
+                params=params or None,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def cancel_response(
+    provider: Provider,
+    api_key: str | None,
+    response_id: str,
+) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                build_response_cancel_url(provider, response_id),
+                headers=headers,
             )
             response.raise_for_status()
             return response.json()
