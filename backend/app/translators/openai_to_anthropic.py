@@ -125,12 +125,39 @@ def translate_anthropic_message_to_openai_response(
         content = []
 
     output_content: list[dict] = []
+    function_call_items: list[dict] = []
     for item in content:
         if not isinstance(item, dict):
             continue
         block_type = item.get("type")
         if block_type == "text" and isinstance(item.get("text"), str):
             output_content.append({"type": "output_text", "text": item["text"]})
+        elif block_type == "tool_use":
+            tool_id = str(item.get("id") or "generated")
+            tool_input = item.get("input")
+            if not isinstance(tool_input, dict):
+                tool_input = {}
+            function_call_items.append(
+                {
+                    "type": "function_call",
+                    "id": f"fc_{tool_id}",
+                    "call_id": tool_id,
+                    "name": str(item.get("name") or ""),
+                    "arguments": json.dumps(tool_input, separators=(",", ":")),
+                    "status": "completed",
+                }
+            )
+
+    output: list[dict] = []
+    if output_content:
+        output.append(
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": output_content,
+            }
+        )
+    output.extend(function_call_items)
 
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
     input_tokens = int(usage.get("input_tokens", 0) or 0)
@@ -141,19 +168,77 @@ def translate_anthropic_message_to_openai_response(
         "object": "response",
         "status": "completed",
         "model": requested_model,
-        "output": [
-            {
-                "type": "message",
-                "role": "assistant",
-                "content": output_content,
-            }
-        ],
+        "output": output,
         "usage": {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
         },
     }
+
+
+def _init_response_stream_tool_state(state: dict[str, object]) -> dict[int, dict[str, object]]:
+    tool_blocks = state.get("tool_blocks")
+    if not isinstance(tool_blocks, dict):
+        tool_blocks = {}
+        state["tool_blocks"] = tool_blocks
+    return tool_blocks
+
+
+def _next_response_output_index(state: dict[str, object]) -> int:
+    output_index = state.get("next_output_index")
+    if not isinstance(output_index, int):
+        output_index = 0
+    state["next_output_index"] = output_index + 1
+    return output_index
+
+
+def _build_function_call_item(
+    *,
+    item_id: str,
+    call_id: str,
+    name: str,
+    arguments: str,
+    status: str,
+) -> dict:
+    return {
+        "id": item_id,
+        "type": "function_call",
+        "call_id": call_id,
+        "name": name,
+        "arguments": arguments,
+        "status": status,
+    }
+
+
+def _emit_response_function_call_arguments_done(
+    *,
+    item_id: str,
+    output_index: int,
+    name: str,
+    arguments: str,
+) -> list[str]:
+    return [
+        format_openai_response_sse_event(
+            "response.function_call_arguments.done",
+            {
+                "item_id": item_id,
+                "output_index": output_index,
+                "name": name,
+                "arguments": arguments,
+            },
+        )
+    ]
+
+
+def _emit_response_output_item_done(*, output_index: int, item: dict) -> str:
+    return format_openai_response_sse_event(
+        "response.output_item.done",
+        {
+            "output_index": output_index,
+            "item": item,
+        },
+    )
 
 
 class AnthropicStreamTranslator:
@@ -169,6 +254,7 @@ class AnthropicStreamTranslator:
         self.open_block_type: str | None = None
         self.openai_tool_index_to_content_index: dict[int, int] = {}
         self.pending_tool_metadata: dict[int, dict[str, str]] = {}
+        self.pending_tool_arguments: dict[int, str] = {}
         self.current_openai_tool_index: int | None = None
         self.text_parts: list[str] = []
         self.completion_reason: str | None = None
@@ -311,17 +397,48 @@ class AnthropicStreamTranslator:
                 events.extend(self._close_open_block())
                 self.current_openai_tool_index = None
 
+            if has_arguments and openai_tool_index not in self.openai_tool_index_to_content_index:
+                if not metadata["name"]:
+                    self.pending_tool_arguments[openai_tool_index] = (
+                        self.pending_tool_arguments.get(openai_tool_index, "")
+                        + arguments_fragment
+                    )
+                    has_arguments = False
+
             if openai_tool_index not in self.openai_tool_index_to_content_index:
-                if self.open_block_index is not None and not has_arguments:
+                if self.open_block_index is not None and not has_arguments and not metadata["name"]:
                     continue
 
-                events.extend(
-                    self._open_tool_use_block(
-                        openai_tool_index,
-                        metadata["id"],
-                        metadata["name"],
-                    )
+                should_open = bool(metadata["name"]) and (
+                    has_arguments
+                    or self.open_block_index is None
+                    or openai_tool_index in self.pending_tool_arguments
                 )
+                if should_open:
+                    events.extend(
+                        self._open_tool_use_block(
+                            openai_tool_index,
+                            metadata["id"],
+                            metadata["name"],
+                        )
+                    )
+                    buffered_arguments = self.pending_tool_arguments.pop(openai_tool_index, "")
+                    if buffered_arguments:
+                        content_index = self.openai_tool_index_to_content_index.get(openai_tool_index)
+                        if content_index is not None:
+                            events.append(
+                                format_sse_event(
+                                    "content_block_delta",
+                                    {
+                                        "type": "content_block_delta",
+                                        "index": content_index,
+                                        "delta": {
+                                            "type": "input_json_delta",
+                                            "partial_json": buffered_arguments,
+                                        },
+                                    },
+                                )
+                            )
 
             if has_arguments:
                 content_index = self.openai_tool_index_to_content_index.get(openai_tool_index)
@@ -673,12 +790,44 @@ def _build_emulated_openai_response_from_stream_state(
     *,
     requested_model: str,
 ) -> dict:
+    anthropic_content: list[dict] = []
+    text = "".join(state.get("text_parts") or [])
+    if text:
+        anthropic_content.append({"type": "text", "text": text})
+
+    tool_blocks = state.get("tool_blocks")
+    if isinstance(tool_blocks, dict):
+        for tool_block in tool_blocks.values():
+            if not isinstance(tool_block, dict):
+                continue
+            arguments = tool_block.get("arguments")
+            if arguments is None:
+                arguments_parts = tool_block.get("arguments_parts")
+                if isinstance(arguments_parts, list):
+                    arguments = "".join(arguments_parts)
+            tool_input: dict = {}
+            if isinstance(arguments, str) and arguments:
+                try:
+                    parsed_arguments = json.loads(arguments)
+                except ValueError:
+                    parsed_arguments = {}
+                if isinstance(parsed_arguments, dict):
+                    tool_input = parsed_arguments
+            anthropic_content.append(
+                {
+                    "type": "tool_use",
+                    "id": str(tool_block.get("call_id") or "generated"),
+                    "name": str(tool_block.get("name") or ""),
+                    "input": tool_input,
+                }
+            )
+
     anthropic_message = {
         "id": str(state.get("anthropic_message_id") or "generated"),
         "type": "message",
         "role": "assistant",
         "model": requested_model,
-        "content": [{"type": "text", "text": "".join(state.get("text_parts") or [])}],
+        "content": anthropic_content,
         "stop_reason": str(state.get("stop_reason") or "end_turn"),
         "usage": {
             "input_tokens": int(state.get("prompt_tokens", 0) or 0),
@@ -766,6 +915,43 @@ def translate_anthropic_stream_line_to_openai_response_sse(
             )
         ]
 
+    if event_type == "content_block_start":
+        content_block = payload.get("content_block")
+        index = payload.get("index")
+        if (
+            isinstance(content_block, dict)
+            and content_block.get("type") == "tool_use"
+            and isinstance(index, int)
+        ):
+            call_id = str(content_block.get("id") or f"toolu_{index}")
+            name = str(content_block.get("name") or "")
+            item_id = f"fc_{call_id}"
+            output_index = _next_response_output_index(state)
+            tool_blocks = _init_response_stream_tool_state(state)
+            tool_blocks[index] = {
+                "item_id": item_id,
+                "call_id": call_id,
+                "name": name,
+                "output_index": output_index,
+                "arguments_parts": [],
+            }
+            return [
+                format_openai_response_sse_event(
+                    "response.output_item.added",
+                    {
+                        "output_index": output_index,
+                        "item": _build_function_call_item(
+                            item_id=item_id,
+                            call_id=call_id,
+                            name=name,
+                            arguments="",
+                            status="in_progress",
+                        ),
+                    },
+                )
+            ]
+        return []
+
     if event_type == "content_block_delta":
         delta = payload.get("delta")
         if isinstance(delta, dict) and delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
@@ -783,7 +969,66 @@ def translate_anthropic_stream_line_to_openai_response_sse(
                     },
                 )
             ]
+        if (
+            isinstance(delta, dict)
+            and delta.get("type") == "input_json_delta"
+            and isinstance(delta.get("partial_json"), str)
+        ):
+            index = payload.get("index")
+            if not isinstance(index, int):
+                return []
+            tool_blocks = _init_response_stream_tool_state(state)
+            tool_block = tool_blocks.get(index)
+            if not isinstance(tool_block, dict):
+                return []
+            partial_json = delta["partial_json"]
+            arguments_parts = tool_block.setdefault("arguments_parts", [])
+            if isinstance(arguments_parts, list):
+                arguments_parts.append(partial_json)
+            return [
+                format_openai_response_sse_event(
+                    "response.function_call_arguments.delta",
+                    {
+                        "item_id": tool_block["item_id"],
+                        "output_index": tool_block["output_index"],
+                        "delta": partial_json,
+                    },
+                )
+            ]
         return []
+
+    if event_type == "content_block_stop":
+        index = payload.get("index")
+        if not isinstance(index, int):
+            return []
+        tool_blocks = _init_response_stream_tool_state(state)
+        tool_block = tool_blocks.get(index)
+        if not isinstance(tool_block, dict):
+            return []
+        arguments_parts = tool_block.get("arguments_parts")
+        arguments = "".join(arguments_parts) if isinstance(arguments_parts, list) else ""
+        tool_block["arguments"] = arguments
+        tool_block["status"] = "completed"
+        item = _build_function_call_item(
+            item_id=str(tool_block["item_id"]),
+            call_id=str(tool_block["call_id"]),
+            name=str(tool_block["name"]),
+            arguments=arguments,
+            status="completed",
+        )
+        events = _emit_response_function_call_arguments_done(
+            item_id=str(tool_block["item_id"]),
+            output_index=int(tool_block["output_index"]),
+            name=str(tool_block["name"]),
+            arguments=arguments,
+        )
+        events.append(
+            _emit_response_output_item_done(
+                output_index=int(tool_block["output_index"]),
+                item=item,
+            )
+        )
+        return events
 
     if event_type == "message_delta":
         delta = payload.get("delta")
