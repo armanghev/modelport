@@ -4,7 +4,7 @@ import json
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.proxy_common import (
@@ -19,16 +19,24 @@ from app.api.proxy_common import (
     resolve_credential_secret,
     get_known_provider_ids,
     resolve_proxy_model_routing,
+    resolve_requested_provider,
 )
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.anthropic_compatible import (
+    cancel_message_batch,
     count_message_tokens,
     create_message as create_anthropic_message,
+    create_message_batch,
+    delete_message_batch,
+    get_message_batch,
+    get_message_batch_results,
+    list_message_batches,
     stream_message_events as stream_anthropic_message_events,
 )
 from app.providers.openai_compatible import create_chat_completion, stream_chat_completion_chunks
 from app.routing.provider_router import resolve_provider_routes
 from app.schemas.anthropic import (
+    AnthropicMessageBatchCreate,
     AnthropicMessageCountTokensCreate,
     AnthropicMessageCountTokensResponse,
     AnthropicMessageCreate,
@@ -51,6 +59,43 @@ from app.translators.openai_to_anthropic import (
 )
 
 router = APIRouter(tags=["proxy"])
+
+
+def resolve_anthropic_compatible_route(
+    session: Session,
+    request: Request,
+    *,
+    provider_id: str | None,
+    fallback_provider_ids: list[str] | None = None,
+) -> tuple:
+    resolved_provider_id = resolve_requested_provider(request, provider_id)
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=resolved_provider_id,
+        requested_model="",
+        fallback_provider_ids=fallback_provider_ids or [],
+    )[0]
+    if resolved_route.provider.provider_type != "anthropic_compatible":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Selected provider does not support Anthropic message batch compatibility.",
+        )
+
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+    return resolved_route, provider_secret
 
 
 def build_anthropic_upstream_payload(
@@ -173,6 +218,136 @@ def create_message_count_tokens(
             payload=upstream_payload,
         )
     )
+
+
+@router.post("/v1/messages/batches")
+def create_message_batches(
+    request: Request,
+    payload: AnthropicMessageBatchCreate,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=payload.provider,
+        fallback_provider_ids=payload.fallback_providers,
+    )
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_none=True,
+    )
+    return create_message_batch(
+        resolved_route.provider,
+        api_key=provider_secret,
+        payload=upstream_payload,
+    )
+
+
+@router.get("/v1/messages/batches")
+def list_message_batches_route(
+    request: Request,
+    after_id: str | None = None,
+    before_id: str | None = None,
+    limit: int | None = None,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=None,
+    )
+    return list_message_batches(
+        resolved_route.provider,
+        api_key=provider_secret,
+        after_id=after_id,
+        before_id=before_id,
+        limit=limit,
+    )
+
+
+@router.get("/v1/messages/batches/{message_batch_id}")
+def retrieve_message_batch(
+    message_batch_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=None,
+    )
+    return get_message_batch(
+        resolved_route.provider,
+        api_key=provider_secret,
+        batch_id=message_batch_id,
+    )
+
+
+@router.post("/v1/messages/batches/{message_batch_id}/cancel")
+def cancel_message_batch_route(
+    message_batch_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=None,
+    )
+    return cancel_message_batch(
+        resolved_route.provider,
+        api_key=provider_secret,
+        batch_id=message_batch_id,
+    )
+
+
+@router.delete("/v1/messages/batches/{message_batch_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_message_batch_route(
+    message_batch_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> None:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=None,
+    )
+    delete_message_batch(
+        resolved_route.provider,
+        api_key=provider_secret,
+        batch_id=message_batch_id,
+    )
+
+
+@router.get("/v1/messages/batches/{message_batch_id}/results")
+def retrieve_message_batch_results(
+    message_batch_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> Response:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=None,
+    )
+    content, content_type = get_message_batch_results(
+        resolved_route.provider,
+        api_key=provider_secret,
+        batch_id=message_batch_id,
+    )
+    return Response(content=content, media_type=content_type)
 
 
 @router.post("/v1/messages", response_model=AnthropicMessageResponse)

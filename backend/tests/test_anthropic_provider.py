@@ -9,12 +9,18 @@ from fastapi import HTTPException
 from app.database import Provider
 from app.providers.anthropic_compatible import (
     build_headers,
+    build_message_batch_cancel_url,
+    build_message_batch_results_url,
+    build_message_batch_url,
+    build_message_batches_url,
     build_message_count_tokens_url,
     build_model_url,
     build_messages_url,
     build_models_url,
+    cancel_message_batch,
     count_message_tokens,
     create_message,
+    create_message_batch,
     get_model,
     list_models,
     stream_message_events,
@@ -40,6 +46,19 @@ def test_build_urls_for_anthropic_upstream() -> None:
     assert (
         build_message_count_tokens_url(provider)
         == "https://api.anthropic.com/v1/messages/count_tokens"
+    )
+    assert build_message_batches_url(provider) == "https://api.anthropic.com/v1/messages/batches"
+    assert (
+        build_message_batch_url(provider, "msgbatch_123")
+        == "https://api.anthropic.com/v1/messages/batches/msgbatch_123"
+    )
+    assert (
+        build_message_batch_cancel_url(provider, "msgbatch_123")
+        == "https://api.anthropic.com/v1/messages/batches/msgbatch_123/cancel"
+    )
+    assert (
+        build_message_batch_results_url(provider, "msgbatch_123")
+        == "https://api.anthropic.com/v1/messages/batches/msgbatch_123/results"
     )
 
 

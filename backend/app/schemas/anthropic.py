@@ -108,3 +108,14 @@ class AnthropicMessageCountTokensCreate(BaseModel):
 
 class AnthropicMessageCountTokensResponse(BaseModel):
     input_tokens: int
+
+
+class AnthropicMessageBatchRequestItem(BaseModel):
+    custom_id: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnthropicMessageBatchCreate(BaseModel):
+    provider: str | None = None
+    fallback_providers: list[str] = []
+    requests: list[AnthropicMessageBatchRequestItem]
