@@ -31,6 +31,9 @@ from app.providers.anthropic_compatible import (
 )
 from app.providers.openai_compatible import (
     cancel_response,
+    create_audio_speech,
+    create_audio_transcription,
+    create_audio_translation,
     create_chat_completion,
     create_completion,
     create_embedding,
@@ -61,6 +64,7 @@ from app.responses.store import (
 )
 from app.routing.provider_router import resolve_provider_routes
 from app.schemas.openai import (
+    OpenAIAudioSpeechCreate,
     OpenAIChatCompletionCreate,
     OpenAIChatCompletionResponse,
     OpenAIEmbeddingCreate,
@@ -589,6 +593,134 @@ async def create_image_variations(
         form_fields=form_fields,
         files=files,
     )
+
+
+@router.post("/v1/audio/transcriptions")
+async def create_audio_transcriptions(
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    provider_id, requested_model, form_fields, files = await parse_openai_multipart_passthrough(request)
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=provider_id,
+        requested_model=requested_model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=requested_model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=[],
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    ensure_openai_compatible_provider(
+        resolved_route,
+        detail="Selected provider does not support OpenAI audio transcription compatibility.",
+    )
+    ensure_provider_secret_available(resolved_route, provider_secret)
+
+    form_fields["model"] = resolved_route.upstream_model
+    return create_audio_transcription(
+        resolved_route.provider,
+        api_key=provider_secret,
+        form_fields=form_fields,
+        files=files,
+    )
+
+
+@router.post("/v1/audio/translations")
+async def create_audio_translations(
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    provider_id, requested_model, form_fields, files = await parse_openai_multipart_passthrough(request)
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=provider_id,
+        requested_model=requested_model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=requested_model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=[],
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    ensure_openai_compatible_provider(
+        resolved_route,
+        detail="Selected provider does not support OpenAI audio translation compatibility.",
+    )
+    ensure_provider_secret_available(resolved_route, provider_secret)
+
+    form_fields["model"] = resolved_route.upstream_model
+    return create_audio_translation(
+        resolved_route.provider,
+        api_key=provider_secret,
+        form_fields=form_fields,
+        files=files,
+    )
+
+
+@router.post("/v1/audio/speech")
+def create_audio_speech_route(
+    request: Request,
+    payload: OpenAIAudioSpeechCreate,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> Response:
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=payload.provider,
+        requested_model=payload.model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=payload.model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=payload.fallback_providers,
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    ensure_openai_compatible_provider(
+        resolved_route,
+        detail="Selected provider does not support OpenAI text-to-speech compatibility.",
+    )
+    ensure_provider_secret_available(resolved_route, provider_secret)
+
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_defaults=True,
+        exclude_none=True,
+    )
+    upstream_payload["model"] = resolved_route.upstream_model
+    content, content_type = create_audio_speech(
+        resolved_route.provider,
+        api_key=provider_secret,
+        payload=upstream_payload,
+    )
+    return Response(content=content, media_type=content_type)
 
 
 @router.post("/v1/responses", response_model=OpenAIResponse)
