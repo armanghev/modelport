@@ -1482,6 +1482,58 @@ def test_get_response_route_returns_not_found_for_unknown_id(
     assert response.status_code == 404
 
 
+def test_get_response_route_returns_not_found_for_expired_resource(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.database import ProxyResponseResource
+
+    def fake_create_anthropic_message(provider, api_key, payload):
+        return {
+            "id": "msg_expired_123",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [{"type": "text", "text": "Expired soon"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 4, "output_tokens": 2},
+        }
+
+    monkeypatch.setattr(
+        "app.api.openai.create_anthropic_message",
+        fake_create_anthropic_message,
+    )
+
+    create_response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "input": "hello",
+        },
+    )
+    assert create_response.status_code == 200
+    response_id = create_response.json()["id"]
+
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        resource = session.get(ProxyResponseResource, response_id)
+        assert resource is not None
+        resource.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        session.commit()
+
+    response = client.get(
+        f"/v1/responses/{response_id}",
+        headers={"Authorization": "Bearer test-local-token"},
+    )
+
+    assert response.status_code == 404
+    assert "expired" in response.json()["detail"].lower()
+
+
 def test_messages_count_tokens_route_supports_anthropic_provider(
     client: TestClient,
     monkeypatch,

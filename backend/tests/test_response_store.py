@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.database import build_session_factory
+from app.database import ProxyResponseResource, build_session_factory
 from app.responses.store import (
     PROXY_EMULATED,
     UPSTREAM_PASSTHROUGH,
     build_input_items_from_create_payload,
     cancel_emulated_response,
+    default_expires_at,
+    get_active_response_resource,
     get_response_resource,
     list_input_items,
+    response_resource_is_expired,
     retrieve_emulated_response,
     save_emulated_response,
     save_passthrough_response,
@@ -132,3 +136,62 @@ def test_cancel_emulated_response_updates_status(session_factory: sessionmaker[S
         stored = retrieve_emulated_response(session, "resp_emulated_2")
         assert stored is not None
         assert stored["status"] == "cancelled"
+
+
+def test_save_emulated_response_sets_expires_at(session_factory: sessionmaker[Session]) -> None:
+    now = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
+    response_body = {
+        "id": "resp_emulated_3",
+        "object": "response",
+        "status": "completed",
+        "model": "claude-sonnet-4-5",
+        "output": [],
+    }
+
+    with session_factory() as session:
+        save_emulated_response(
+            session,
+            response_id="resp_emulated_3",
+            provider_id="anthropic",
+            requested_model="claude-sonnet-4-5",
+            upstream_model="claude-sonnet-4-5-20250929",
+            response_body=response_body,
+            input_items=[],
+            expires_at=default_expires_at(now=now),
+        )
+        session.commit()
+
+        resource = get_response_resource(session, "resp_emulated_3")
+        assert resource is not None
+        assert resource.expires_at is not None
+        assert not response_resource_is_expired(resource, now=now)
+        assert response_resource_is_expired(resource, now=now + timedelta(hours=25))
+
+
+def test_expired_emulated_response_is_not_retrievable(session_factory: sessionmaker[Session]) -> None:
+    response_body = {
+        "id": "resp_emulated_4",
+        "object": "response",
+        "status": "completed",
+        "model": "claude-sonnet-4-5",
+        "output": [],
+    }
+
+    with session_factory() as session:
+        save_emulated_response(
+            session,
+            response_id="resp_emulated_4",
+            provider_id="anthropic",
+            requested_model="claude-sonnet-4-5",
+            upstream_model="claude-sonnet-4-5-20250929",
+            response_body=response_body,
+            input_items=[{"type": "message", "role": "user", "content": []}],
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+        session.commit()
+
+        assert get_active_response_resource(session, "resp_emulated_4") is None
+        assert retrieve_emulated_response(session, "resp_emulated_4") is None
+        assert list_input_items(session, "resp_emulated_4") is None
+        with pytest.raises(KeyError):
+            cancel_emulated_response(session, "resp_emulated_4")
