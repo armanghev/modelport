@@ -4,7 +4,7 @@ import json
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.proxy_common import (
@@ -34,6 +34,9 @@ from app.providers.openai_compatible import (
     create_chat_completion,
     create_completion,
     create_embedding,
+    create_image_edit,
+    create_image_generation,
+    create_image_variation,
     create_moderation,
     create_response,
     get_model,
@@ -61,6 +64,7 @@ from app.schemas.openai import (
     OpenAIChatCompletionCreate,
     OpenAIChatCompletionResponse,
     OpenAIEmbeddingCreate,
+    OpenAIImageGenerationCreate,
     OpenAILegacyCompletionCreate,
     OpenAIModerationCreate,
     OpenAIResponse,
@@ -89,6 +93,59 @@ from app.translators.openai_to_anthropic import (
 )
 
 router = APIRouter(tags=["proxy"])
+
+PROXY_MULTIPART_FIELDS = frozenset({"provider", "fallback_providers"})
+
+
+def ensure_openai_compatible_provider(resolved_route, *, detail: str) -> None:
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        raise unsupported_provider_capability(detail)
+
+
+def ensure_provider_secret_available(resolved_route, provider_secret: str | None) -> None:
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+
+async def parse_openai_multipart_passthrough(
+    request: Request,
+) -> tuple[str | None, str, dict[str, str], dict[str, tuple[str, bytes, str]]]:
+    form = await request.form()
+    provider_value = form.get("provider")
+    provider_id = (
+        provider_value.strip().lower()
+        if isinstance(provider_value, str) and provider_value.strip()
+        else None
+    )
+
+    model_value = form.get("model")
+    if not isinstance(model_value, str) or not model_value.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="model form field is required.",
+        )
+    requested_model = model_value.strip()
+
+    form_fields: dict[str, str] = {}
+    files: dict[str, tuple[str, bytes, str]] = {}
+    for key, value in form.multi_items():
+        if key in PROXY_MULTIPART_FIELDS:
+            continue
+        if hasattr(value, "read"):
+            content = await value.read()
+            filename = value.filename or "upload.bin"
+            content_type = value.content_type or "application/octet-stream"
+            files[key] = (filename, content, content_type)
+        elif isinstance(value, str):
+            form_fields[key] = value
+
+    return provider_id, requested_model, form_fields, files
 
 
 def resolve_stored_response_route(
@@ -404,6 +461,133 @@ def create_moderations(
         resolved_route.provider,
         api_key=provider_secret,
         payload=upstream_payload,
+    )
+
+
+@router.post("/v1/images/generations")
+def create_image_generations(
+    request: Request,
+    payload: OpenAIImageGenerationCreate,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=payload.provider,
+        requested_model=payload.model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=payload.model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=payload.fallback_providers,
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    ensure_openai_compatible_provider(
+        resolved_route,
+        detail="Selected provider does not support OpenAI image generation compatibility.",
+    )
+    ensure_provider_secret_available(resolved_route, provider_secret)
+
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_defaults=True,
+        exclude_none=True,
+    )
+    upstream_payload["model"] = resolved_route.upstream_model
+    return create_image_generation(
+        resolved_route.provider,
+        api_key=provider_secret,
+        payload=upstream_payload,
+    )
+
+
+@router.post("/v1/images/edits")
+async def create_image_edits(
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    provider_id, requested_model, form_fields, files = await parse_openai_multipart_passthrough(request)
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=provider_id,
+        requested_model=requested_model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=requested_model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=[],
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    ensure_openai_compatible_provider(
+        resolved_route,
+        detail="Selected provider does not support OpenAI image edit compatibility.",
+    )
+    ensure_provider_secret_available(resolved_route, provider_secret)
+
+    form_fields["model"] = resolved_route.upstream_model
+    return create_image_edit(
+        resolved_route.provider,
+        api_key=provider_secret,
+        form_fields=form_fields,
+        files=files,
+    )
+
+
+@router.post("/v1/images/variations")
+async def create_image_variations(
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    provider_id, requested_model, form_fields, files = await parse_openai_multipart_passthrough(request)
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=provider_id,
+        requested_model=requested_model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=requested_model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=[],
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    ensure_openai_compatible_provider(
+        resolved_route,
+        detail="Selected provider does not support OpenAI image variation compatibility.",
+    )
+    ensure_provider_secret_available(resolved_route, provider_secret)
+
+    form_fields["model"] = resolved_route.upstream_model
+    return create_image_variation(
+        resolved_route.provider,
+        api_key=provider_secret,
+        form_fields=form_fields,
+        files=files,
     )
 
 

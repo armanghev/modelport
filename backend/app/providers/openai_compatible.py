@@ -41,6 +41,36 @@ def build_moderations_url(provider: Provider) -> str:
     return urljoin(normalized_base, "moderations")
 
 
+def build_image_generations_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "images/generations")
+
+
+def build_image_edits_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "images/edits")
+
+
+def build_image_variations_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "images/variations")
+
+
+def build_audio_transcriptions_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "audio/transcriptions")
+
+
+def build_audio_translations_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "audio/translations")
+
+
+def build_audio_speech_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "audio/speech")
+
+
 def build_responses_url(provider: Provider) -> str:
     normalized_base = provider.base_url.rstrip("/") + "/"
     return urljoin(normalized_base, "responses")
@@ -236,6 +266,150 @@ def create_completion(
             )
             response.raise_for_status()
             return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def post_openai_multipart_json(
+    provider: Provider,
+    api_key: str | None,
+    url: str,
+    *,
+    form_fields: dict[str, str],
+    files: dict[str, tuple[str, bytes, str]],
+) -> dict:
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            response = client.post(
+                url,
+                headers=headers,
+                data=form_fields,
+                files={
+                    field_name: (filename, content, content_type)
+                    for field_name, (filename, content, content_type) in files.items()
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def create_image_generation(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            response = client.post(
+                build_image_generations_url(provider),
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def create_image_edit(
+    provider: Provider,
+    api_key: str | None,
+    *,
+    form_fields: dict[str, str],
+    files: dict[str, tuple[str, bytes, str]],
+) -> dict:
+    return post_openai_multipart_json(
+        provider,
+        api_key,
+        build_image_edits_url(provider),
+        form_fields=form_fields,
+        files=files,
+    )
+
+
+def create_image_variation(
+    provider: Provider,
+    api_key: str | None,
+    *,
+    form_fields: dict[str, str],
+    files: dict[str, tuple[str, bytes, str]],
+) -> dict:
+    return post_openai_multipart_json(
+        provider,
+        api_key,
+        build_image_variations_url(provider),
+        form_fields=form_fields,
+        files=files,
+    )
+
+
+def create_audio_transcription(
+    provider: Provider,
+    api_key: str | None,
+    *,
+    form_fields: dict[str, str],
+    files: dict[str, tuple[str, bytes, str]],
+) -> dict:
+    return post_openai_multipart_json(
+        provider,
+        api_key,
+        build_audio_transcriptions_url(provider),
+        form_fields=form_fields,
+        files=files,
+    )
+
+
+def create_audio_translation(
+    provider: Provider,
+    api_key: str | None,
+    *,
+    form_fields: dict[str, str],
+    files: dict[str, tuple[str, bytes, str]],
+) -> dict:
+    return post_openai_multipart_json(
+        provider,
+        api_key,
+        build_audio_translations_url(provider),
+        form_fields=form_fields,
+        files=files,
+    )
+
+
+def create_audio_speech(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+) -> tuple[bytes, str]:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            response = client.post(
+                build_audio_speech_url(provider),
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "audio/mpeg")
+            return response.content, content_type
     except httpx.HTTPStatusError as exc:
         raise http_exception_from_upstream_http_error(exc) from exc
     except (httpx.HTTPError, ValueError) as exc:

@@ -138,3 +138,22 @@ class OpenAIModerationCreate(BaseModel):
     fallback_providers: list[str] = []
     model: str | None = None
     input: str | list[str]
+
+
+class OpenAIImageGenerationCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    provider: str | None = None
+    fallback_providers: list[str] = []
+    model: str
+    prompt: str
+
+
+class OpenAIAudioSpeechCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    provider: str | None = None
+    fallback_providers: list[str] = []
+    model: str
+    input: str
+    voice: str
