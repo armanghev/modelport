@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -25,11 +25,16 @@ from app.errors.upstream import build_logged_error_response, format_exception_de
 from app.providers.anthropic_compatible import (
     cancel_message_batch,
     count_message_tokens,
+    create_file,
     create_message as create_anthropic_message,
     create_message_batch,
+    delete_file,
     delete_message_batch,
+    get_file,
+    get_file_content,
     get_message_batch,
     get_message_batch_results,
+    list_files,
     list_message_batches,
     stream_message_events as stream_anthropic_message_events,
 )
@@ -78,7 +83,7 @@ def resolve_anthropic_compatible_route(
     if resolved_route.provider.provider_type != "anthropic_compatible":
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Selected provider does not support Anthropic message batch compatibility.",
+            detail="Selected provider does not support this Anthropic-compatible route.",
         )
 
     try:
@@ -348,6 +353,119 @@ def retrieve_message_batch_results(
         batch_id=message_batch_id,
     )
     return Response(content=content, media_type=content_type)
+
+
+@router.post("/v1/files")
+async def upload_file(
+    request: Request,
+    file: UploadFile = File(...),
+    provider: str | None = Form(None),
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=provider,
+    )
+    content = await file.read()
+    filename = file.filename or "upload.bin"
+    content_type = file.content_type or "application/octet-stream"
+    return create_file(
+        resolved_route.provider,
+        api_key=provider_secret,
+        filename=filename,
+        content=content,
+        content_type=content_type,
+    )
+
+
+@router.get("/v1/files")
+def list_files_route(
+    request: Request,
+    after_id: str | None = None,
+    before_id: str | None = None,
+    limit: int | None = None,
+    scope_id: str | None = None,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=None,
+    )
+    return list_files(
+        resolved_route.provider,
+        api_key=provider_secret,
+        after_id=after_id,
+        before_id=before_id,
+        limit=limit,
+        scope_id=scope_id,
+    )
+
+
+@router.get("/v1/files/{file_id}")
+def retrieve_file(
+    file_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=None,
+    )
+    return get_file(
+        resolved_route.provider,
+        api_key=provider_secret,
+        file_id=file_id,
+    )
+
+
+@router.get("/v1/files/{file_id}/content")
+def retrieve_file_content(
+    file_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> Response:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=None,
+    )
+    content, content_type = get_file_content(
+        resolved_route.provider,
+        api_key=provider_secret,
+        file_id=file_id,
+    )
+    return Response(content=content, media_type=content_type)
+
+
+@router.delete("/v1/files/{file_id}")
+def delete_file_route(
+    file_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_route, provider_secret = resolve_anthropic_compatible_route(
+        session,
+        request,
+        provider_id=None,
+    )
+    return delete_file(
+        resolved_route.provider,
+        api_key=provider_secret,
+        file_id=file_id,
+    )
 
 
 @router.post("/v1/messages", response_model=AnthropicMessageResponse)

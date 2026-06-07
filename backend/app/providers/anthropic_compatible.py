@@ -51,6 +51,24 @@ def build_message_batch_results_url(provider: Provider, batch_id: str) -> str:
     return urljoin(normalized_base, f"v1/messages/batches/{batch_id}/results")
 
 
+def build_files_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "v1/files")
+
+
+def build_file_url(provider: Provider, file_id: str) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, f"v1/files/{file_id}")
+
+
+def build_file_content_url(provider: Provider, file_id: str) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, f"v1/files/{file_id}/content")
+
+
+FILES_API_BETA = "files-api-2025-04-14"
+
+
 def build_headers(api_key: str | None, *, stream: bool = False) -> dict[str, str]:
     headers = {
         "Content-Type": "application/json",
@@ -58,6 +76,16 @@ def build_headers(api_key: str | None, *, stream: bool = False) -> dict[str, str
     }
     if stream:
         headers["Accept"] = "text/event-stream"
+    if api_key:
+        headers["x-api-key"] = api_key
+    return headers
+
+
+def build_files_headers(api_key: str | None) -> dict[str, str]:
+    headers = {
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": FILES_API_BETA,
+    }
     if api_key:
         headers["x-api-key"] = api_key
     return headers
@@ -261,6 +289,122 @@ def get_message_batch_results(
             response.raise_for_status()
             content_type = response.headers.get("content-type", "application/x-jsonlines")
             return response.content, content_type
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def create_file(
+    provider: Provider,
+    api_key: str | None,
+    *,
+    filename: str,
+    content: bytes,
+    content_type: str,
+) -> dict:
+    files = {"file": (filename, content, content_type)}
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                build_files_url(provider),
+                headers=build_files_headers(api_key),
+                files=files,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def list_files(
+    provider: Provider,
+    api_key: str | None,
+    *,
+    after_id: str | None = None,
+    before_id: str | None = None,
+    limit: int | None = None,
+    scope_id: str | None = None,
+) -> dict:
+    params: dict[str, str | int] = {}
+    if after_id is not None:
+        params["after_id"] = after_id
+    if before_id is not None:
+        params["before_id"] = before_id
+    if limit is not None:
+        params["limit"] = limit
+    if scope_id is not None:
+        params["scope_id"] = scope_id
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.get(
+                build_files_url(provider),
+                headers=build_files_headers(api_key),
+                params=params or None,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def get_file(
+    provider: Provider,
+    api_key: str | None,
+    file_id: str,
+) -> dict:
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.get(
+                build_file_url(provider, file_id),
+                headers=build_files_headers(api_key),
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def get_file_content(
+    provider: Provider,
+    api_key: str | None,
+    file_id: str,
+) -> tuple[bytes, str]:
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.get(
+                build_file_content_url(provider, file_id),
+                headers=build_files_headers(api_key),
+            )
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "application/octet-stream")
+            return response.content, content_type
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def delete_file(
+    provider: Provider,
+    api_key: str | None,
+    file_id: str,
+) -> dict:
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.delete(
+                build_file_url(provider, file_id),
+                headers=build_files_headers(api_key),
+            )
+            response.raise_for_status()
+            return response.json()
     except httpx.HTTPStatusError as exc:
         raise http_exception_from_upstream_http_error(exc) from exc
     except (httpx.HTTPError, ValueError) as exc:

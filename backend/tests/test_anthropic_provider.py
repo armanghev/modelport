@@ -8,6 +8,11 @@ from fastapi import HTTPException
 
 from app.database import Provider
 from app.providers.anthropic_compatible import (
+    FILES_API_BETA,
+    build_file_content_url,
+    build_file_url,
+    build_files_headers,
+    build_files_url,
     build_headers,
     build_message_batch_cancel_url,
     build_message_batch_results_url,
@@ -19,6 +24,7 @@ from app.providers.anthropic_compatible import (
     build_models_url,
     cancel_message_batch,
     count_message_tokens,
+    create_file,
     create_message,
     create_message_batch,
     get_model,
@@ -60,6 +66,12 @@ def test_build_urls_for_anthropic_upstream() -> None:
         build_message_batch_results_url(provider, "msgbatch_123")
         == "https://api.anthropic.com/v1/messages/batches/msgbatch_123/results"
     )
+    assert build_files_url(provider) == "https://api.anthropic.com/v1/files"
+    assert build_file_url(provider, "file_123") == "https://api.anthropic.com/v1/files/file_123"
+    assert (
+        build_file_content_url(provider, "file_123")
+        == "https://api.anthropic.com/v1/files/file_123/content"
+    )
 
 
 def test_build_headers_for_anthropic_requests() -> None:
@@ -71,6 +83,11 @@ def test_build_headers_for_anthropic_requests() -> None:
         "Content-Type": "application/json",
         "anthropic-version": "2023-06-01",
         "Accept": "text/event-stream",
+        "x-api-key": "sk-anthropic-seeded",
+    }
+    assert build_files_headers("sk-anthropic-seeded") == {
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": FILES_API_BETA,
         "x-api-key": "sk-anthropic-seeded",
     }
 
@@ -241,6 +258,51 @@ def test_count_message_tokens_uses_count_tokens_url_and_headers(monkeypatch) -> 
     assert captured["url"] == "https://api.anthropic.com/v1/messages/count_tokens"
     assert captured["headers"]["x-api-key"] == "sk-anthropic-seeded"
     assert captured["json"]["model"] == "claude-sonnet-4-5"
+
+
+def test_create_file_uses_files_url_beta_header_and_multipart_upload(monkeypatch) -> None:
+    provider = make_anthropic_provider()
+    captured: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"id": "file_123", "type": "file"}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            captured["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, files=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["files"] = files
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.anthropic_compatible.httpx.Client", FakeClient)
+
+    response = create_file(
+        provider,
+        api_key="sk-anthropic-seeded",
+        filename="document.pdf",
+        content=b"pdf-bytes",
+        content_type="application/pdf",
+    )
+
+    assert response == {"id": "file_123", "type": "file"}
+    assert captured["url"] == "https://api.anthropic.com/v1/files"
+    assert captured["headers"]["anthropic-beta"] == FILES_API_BETA
+    assert captured["files"]["file"][0] == "document.pdf"
+    assert captured["files"]["file"][1] == b"pdf-bytes"
+    assert captured["files"]["file"][2] == "application/pdf"
 
 
 def test_stream_message_events_passes_through_sse_lines(monkeypatch) -> None:
