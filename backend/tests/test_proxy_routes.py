@@ -1099,6 +1099,136 @@ def test_embeddings_route_rejects_anthropic_provider(
     assert response.status_code == 501
 
 
+def test_responses_route_proxies_openai_compatible_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured_payload: dict = {}
+
+    def fake_create_response(provider, api_key, payload):
+        captured_payload.update(payload)
+        return {
+            "id": "resp_123",
+            "object": "response",
+            "status": "completed",
+            "model": "gpt-4.1",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Hello"}],
+                }
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
+        }
+
+    monkeypatch.setattr("app.api.openai.create_response", fake_create_response)
+
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "input": "hello",
+            "instructions": "Be terse.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_payload == {
+        "model": "gpt-4.1",
+        "input": "hello",
+        "instructions": "Be terse.",
+    }
+    assert response.json()["output"][0]["content"][0]["text"] == "Hello"
+
+
+def test_responses_route_translates_anthropic_provider_response(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    def fake_create_anthropic_message(provider, api_key, payload):
+        captured.update(payload)
+        return {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [{"type": "text", "text": "Hello from Anthropic"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 6, "output_tokens": 3},
+        }
+
+    monkeypatch.setattr(
+        "app.api.openai.create_anthropic_message",
+        fake_create_anthropic_message,
+    )
+
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hello"}],
+                }
+            ],
+            "instructions": "Be terse.",
+            "max_output_tokens": 64,
+            "temperature": 0.4,
+            "top_p": 0.8,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 64,
+        "system": "Be terse.",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": False,
+        "temperature": 0.4,
+        "top_p": 0.8,
+    }
+    assert response.json() == {
+        "id": "resp_msg_123",
+        "object": "response",
+        "status": "completed",
+        "model": "claude-sonnet-4-5",
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello from Anthropic"}],
+            }
+        ],
+        "usage": {"input_tokens": 6, "output_tokens": 3, "total_tokens": 9},
+    }
+
+
+def test_responses_route_rejects_streaming_for_now(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "input": "hello",
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 501
+
+
 def test_messages_count_tokens_route_supports_anthropic_provider(
     client: TestClient,
     monkeypatch,

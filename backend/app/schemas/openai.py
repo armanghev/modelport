@@ -83,3 +83,38 @@ class OpenAIEmbeddingCreate(BaseModel):
     encoding_format: str | None = None
     dimensions: int | None = None
     user: str | None = None
+
+
+class OpenAIResponseInputTextPart(BaseModel):
+    type: Literal["input_text"]
+    text: str
+
+
+class OpenAIResponseInputMessage(BaseModel):
+    role: Literal["system", "developer", "user", "assistant"]
+    content: str | list[OpenAIResponseInputTextPart]
+
+
+class OpenAIResponseCreate(BaseModel):
+    provider: str | None = None
+    fallback_providers: list[str] = []
+    model: str
+    input: str | list[OpenAIResponseInputMessage]
+    instructions: str | None = None
+    stream: bool = False
+    max_output_tokens: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    tools: list[OpenAIToolDefinition] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+
+
+class OpenAIResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    object: str
+    status: str
+    model: str
+    output: list[dict]
+    usage: dict | None = None

@@ -11,10 +11,19 @@ from app.schemas.anthropic import (
     AnthropicToolResultBlock,
     AnthropicToolUseBlock,
 )
-from app.schemas.openai import OpenAIChatCompletionCreate, OpenAITextPart
+from app.schemas.openai import (
+    OpenAIChatCompletionCreate,
+    OpenAIResponseCreate,
+    OpenAIResponseInputTextPart,
+    OpenAITextPart,
+)
 
 
 def flatten_openai_text_parts(parts: list[OpenAITextPart]) -> str:
+    return "\n".join(part.text for part in parts if part.text)
+
+
+def flatten_openai_response_text_parts(parts: list[OpenAIResponseInputTextPart]) -> str:
     return "\n".join(part.text for part in parts if part.text)
 
 
@@ -24,6 +33,12 @@ def normalize_openai_content(content: str | list[OpenAITextPart] | None) -> str:
     if isinstance(content, str):
         return content
     return flatten_openai_text_parts(content)
+
+
+def normalize_openai_response_content(content: str | list[OpenAIResponseInputTextPart]) -> str:
+    if isinstance(content, str):
+        return content
+    return flatten_openai_response_text_parts(content)
 
 
 def translate_openai_tool_choice(tool_choice: str | dict | None) -> dict | None:
@@ -151,6 +166,50 @@ def translate_openai_chat_completion_request_to_anthropic(
         temperature=payload.temperature,
         top_p=payload.top_p,
         stop_sequences=[payload.stop] if isinstance(payload.stop, str) else payload.stop,
+        tools=tools or None,
+        tool_choice=tool_choice,
+    )
+
+
+def translate_openai_response_create_to_anthropic(
+    payload: OpenAIResponseCreate,
+) -> AnthropicMessageCreate:
+    system_messages: list[str] = []
+    messages: list[AnthropicMessage] = []
+
+    if payload.instructions:
+        system_messages.append(payload.instructions)
+
+    if isinstance(payload.input, str):
+        messages.append(AnthropicMessage(role="user", content=payload.input))
+    else:
+        for message in payload.input:
+            normalized_content = normalize_openai_response_content(message.content)
+            if message.role in {"system", "developer"}:
+                if normalized_content:
+                    system_messages.append(normalized_content)
+                continue
+            messages.append(
+                AnthropicMessage(
+                    role=message.role,
+                    content=normalized_content,
+                )
+            )
+
+    system = "\n\n".join(system_messages) if system_messages else None
+    tools = translate_openai_tools(payload.tools) if payload.tools else None
+    tool_choice = translate_openai_tool_choice(payload.tool_choice)
+
+    return AnthropicMessageCreate(
+        provider=payload.provider,
+        fallback_providers=payload.fallback_providers,
+        model=payload.model,
+        max_tokens=payload.max_output_tokens,
+        system=system,
+        messages=messages,
+        stream=payload.stream,
+        temperature=payload.temperature,
+        top_p=payload.top_p,
         tools=tools or None,
         tool_choice=tool_choice,
     )

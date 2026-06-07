@@ -31,6 +31,7 @@ from app.providers.anthropic_compatible import (
 from app.providers.openai_compatible import (
     create_chat_completion,
     create_embedding,
+    create_response,
     get_model,
     list_models,
     stream_chat_completion_chunks,
@@ -40,6 +41,8 @@ from app.schemas.openai import (
     OpenAIChatCompletionCreate,
     OpenAIChatCompletionResponse,
     OpenAIEmbeddingCreate,
+    OpenAIResponse,
+    OpenAIResponseCreate,
 )
 from app.tracking.cost_service import calculate_estimated_cost_usd
 from app.tracking.io_logging import io_log_kwargs
@@ -54,8 +57,10 @@ from app.translators.anthropic_to_openai import translate_anthropic_message_to_o
 from app.translators.models import translate_anthropic_model_to_openai, translate_anthropic_models_to_openai
 from app.translators.openai_request_to_anthropic import (
     translate_openai_chat_completion_request_to_anthropic,
+    translate_openai_response_create_to_anthropic,
 )
 from app.translators.openai_to_anthropic import (
+    translate_anthropic_message_to_openai_response,
     translate_anthropic_message_to_openai_chat_completion,
     translate_anthropic_stream_event_to_openai_chunks,
 )
@@ -83,6 +88,7 @@ def build_openai_upstream_payload(
 ) -> dict:
     upstream_payload = payload.model_dump(
         exclude={"provider", "fallback_providers"},
+        exclude_defaults=True,
         exclude_none=True,
     )
     upstream_payload["model"] = upstream_model
@@ -219,6 +225,81 @@ def create_embeddings(
         resolved_route.provider,
         api_key=provider_secret,
         payload=upstream_payload,
+    )
+
+
+@router.post("/v1/responses", response_model=OpenAIResponse)
+def create_responses(
+    request: Request,
+    payload: OpenAIResponseCreate,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> OpenAIResponse:
+    if payload.stream:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Streaming responses are not implemented yet for this proxy route.",
+        )
+
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=payload.provider,
+        requested_model=payload.model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=payload.model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=payload.fallback_providers,
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        anthropic_payload = translate_openai_response_create_to_anthropic(payload)
+        upstream_payload = build_anthropic_upstream_payload(
+            anthropic_payload,
+            upstream_model=resolved_route.upstream_model,
+        )
+        upstream_response = create_anthropic_message(
+            resolved_route.provider,
+            api_key=provider_secret,
+            payload=upstream_payload,
+        )
+        return OpenAIResponse.model_validate(
+            translate_anthropic_message_to_openai_response(
+                upstream_response,
+                requested_model=payload.model,
+            )
+        )
+
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_defaults=True,
+        exclude_none=True,
+    )
+    upstream_payload.pop("stream", None)
+    upstream_payload["model"] = resolved_route.upstream_model
+    return OpenAIResponse.model_validate(
+        create_response(
+            resolved_route.provider,
+            api_key=provider_secret,
+            payload=upstream_payload,
+        )
     )
 
 

@@ -31,6 +31,11 @@ def build_embeddings_url(provider: Provider) -> str:
     return urljoin(normalized_base, "embeddings")
 
 
+def build_responses_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "responses")
+
+
 def is_gemini_openai_provider(provider: Provider) -> bool:
     return "generativelanguage.googleapis.com" in provider.base_url
 
@@ -177,6 +182,30 @@ def create_embedding(
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
                 build_embeddings_url(provider),
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def create_response(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                build_responses_url(provider),
                 headers=headers,
                 json=payload,
             )

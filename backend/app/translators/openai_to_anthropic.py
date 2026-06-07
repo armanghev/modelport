@@ -116,6 +116,46 @@ def translate_openai_chat_completion_to_anthropic(
     )
 
 
+def translate_anthropic_message_to_openai_response(
+    payload: dict,
+    requested_model: str,
+) -> dict:
+    content = payload.get("content")
+    if not isinstance(content, list):
+        content = []
+
+    output_content: list[dict] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        block_type = item.get("type")
+        if block_type == "text" and isinstance(item.get("text"), str):
+            output_content.append({"type": "output_text", "text": item["text"]})
+
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    input_tokens = int(usage.get("input_tokens", 0) or 0)
+    output_tokens = int(usage.get("output_tokens", 0) or 0)
+
+    return {
+        "id": f"resp_{payload.get('id') or 'generated'}",
+        "object": "response",
+        "status": "completed",
+        "model": requested_model,
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": output_content,
+            }
+        ],
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        },
+    }
+
+
 class AnthropicStreamTranslator:
     def __init__(self, *, requested_model: str, input_tokens: int) -> None:
         self.requested_model = requested_model
