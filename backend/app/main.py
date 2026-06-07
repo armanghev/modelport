@@ -13,6 +13,7 @@ from app.api.anthropic import router as anthropic_router
 from app.api.openai import router as openai_router
 from app.config import AppConfig, load_config
 from app.database import build_session_factory, initialize_database, seed_admin_data
+from app.openapi import configure_openapi
 from app.pricing_seed import DEFAULT_CATALOG_PATH, seed_pricing_overrides
 
 
@@ -35,7 +36,15 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
             seed_pricing_overrides(session_factory, config, catalog_path=catalog_path)
         yield
 
-    app = FastAPI(title="ModelPort Backend", lifespan=lifespan)
+    app = FastAPI(
+        title="ModelPort Backend",
+        version="0.1.0",
+        description=(
+            "ModelPort backend API including the OpenAI/Anthropic-compatible proxy, admin, and analytics routes. "
+            "Proxy-only docs are available at /docs/proxy."
+        ),
+        lifespan=lifespan,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -50,6 +59,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
     app.include_router(analytics_router)
     app.include_router(anthropic_router)
     app.include_router(openai_router)
+    configure_openapi(app)
 
     @app.get("/health")
     def health() -> dict[str, str]:

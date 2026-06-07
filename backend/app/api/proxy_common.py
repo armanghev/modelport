@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+from typing import Annotated
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Header
 from sqlalchemy.orm import Session, sessionmaker
 
 from sqlalchemy import select
@@ -15,6 +18,25 @@ from app.routing.model_prefixes import (
 )
 from app.security import EncryptionConfigurationError, decrypt_secret
 
+MODELPORT_PROVIDER_HEADER = "X-ModelPort-Provider"
+
+ModelPortProviderHeader = Annotated[
+    str | None,
+    Header(
+        alias=MODELPORT_PROVIDER_HEADER,
+        description=(
+            "Optional provider override (for example openrouter, openai, anthropic). "
+            "Required for GET /v1/models and when the model id has no recognized prefix."
+        ),
+    ),
+]
+
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="BearerAuth",
+    description="ModelPort proxy token from the MODELPORT_TOKEN environment variable.",
+)
+
 
 def get_session(request: Request) -> Session:
     session_factory: sessionmaker[Session] = request.app.state.session_factory
@@ -22,7 +44,10 @@ def get_session(request: Request) -> Session:
         yield session
 
 
-def require_proxy_token(request: Request) -> None:
+def require_proxy_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> None:
     token_env_name = request.app.state.config.security.modelport_token
     expected_token = os.environ.get(token_env_name)
     if not expected_token:
@@ -31,14 +56,13 @@ def require_proxy_token(request: Request) -> None:
             detail=f"{token_env_name} environment variable is not configured.",
         )
 
-    authorization = request.headers.get("Authorization", "")
-    if not authorization.startswith("Bearer "):
+    if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authorization header with a Bearer token is required.",
         )
 
-    presented_token = authorization.removeprefix("Bearer ").strip()
+    presented_token = credentials.credentials.strip()
     if not presented_token or presented_token != expected_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -66,12 +90,12 @@ def get_known_provider_ids(session: Session) -> set[str]:
 
 
 def resolve_requested_provider(request: Request, provider_id: str | None) -> str:
-    header_provider = request.headers.get("X-ModelPort-Provider")
+    header_provider = request.headers.get(MODELPORT_PROVIDER_HEADER)
     resolved_provider_id = header_provider or provider_id
     if not resolved_provider_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provider selection is required. Pass X-ModelPort-Provider or provider in the request body.",
+            detail=f"Provider selection is required. Pass {MODELPORT_PROVIDER_HEADER} or provider in the request body.",
         )
     return resolved_provider_id.strip().lower()
 
@@ -83,7 +107,7 @@ def resolve_proxy_model_routing(
     requested_model: str,
     known_provider_ids: set[str],
 ) -> ResolvedModelSelection:
-    explicit_provider = request.headers.get("X-ModelPort-Provider") or provider_id
+    explicit_provider = request.headers.get(MODELPORT_PROVIDER_HEADER) or provider_id
     if explicit_provider:
         normalized_provider = explicit_provider.strip().lower()
         return ResolvedModelSelection(
@@ -100,7 +124,7 @@ def resolve_proxy_model_routing(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "Provider selection is required. Pass X-ModelPort-Provider, provider in the request body, "
+                f"Provider selection is required. Pass {MODELPORT_PROVIDER_HEADER}, provider in the request body, "
                 "or use a model id with a recognized provider or native prefix."
             ),
         )
@@ -140,6 +164,9 @@ def classify_provider_failure_status(exc: HTTPException) -> str:
 
 __all__ = [
     "EncryptionConfigurationError",
+    "ModelPortProviderHeader",
+    "MODELPORT_PROVIDER_HEADER",
+    "bearer_scheme",
     "get_session",
     "provider_supports_anonymous_access",
     "persist_provider_health_status",

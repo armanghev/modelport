@@ -3,10 +3,7 @@ import type {
   RequestRow,
 } from "@/lib/mock-dashboard-data";
 import { dashboardMockData } from "@/lib/mock-dashboard-data";
-
-const DEFAULT_BACKEND_URL = "http://127.0.0.1:13243";
-const backendBaseUrl =
-  process.env.NEXT_PUBLIC_MODELPORT_BACKEND_URL ?? DEFAULT_BACKEND_URL;
+import { backendUrl as backendBaseUrl } from "@/lib/backend-url";
 
 export type OverviewAnalyticsPayload = DashboardMockData["overview"];
 export type RequestsAnalyticsPayload = DashboardMockData["requests"];

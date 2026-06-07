@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.proxy_common import (
     EncryptionConfigurationError,
+    ModelPortProviderHeader,
     classify_provider_failure_status,
     get_session,
     persist_provider_health_status,
@@ -43,7 +44,7 @@ from app.translators.openai_to_anthropic import (
     translate_openai_chat_completion_to_anthropic,
 )
 
-router = APIRouter(tags=["anthropic"])
+router = APIRouter(tags=["proxy"])
 
 
 def build_anthropic_upstream_payload(
@@ -119,6 +120,7 @@ def create_message(
     payload: AnthropicMessageCreate,
     session: Session = Depends(get_session),
     _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
 ) -> AnthropicMessageResponse | StreamingResponse:
     started_at = time.perf_counter()
     model_routing = resolve_proxy_model_routing(
