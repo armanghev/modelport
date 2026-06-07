@@ -314,6 +314,37 @@ def cancel_response(
         raise http_exception_from_upstream_transport_error(exc) from exc
 
 
+def stream_response_events(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+):
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            with client.stream(
+                "POST",
+                build_responses_url(provider),
+                headers=headers,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if isinstance(line, bytes):
+                        line = line.decode("utf-8")
+                    yield f"{line}\n"
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except httpx.HTTPError as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
 def stream_chat_completion_chunks(
     provider: Provider,
     api_key: str | None,

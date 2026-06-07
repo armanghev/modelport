@@ -661,3 +661,144 @@ def translate_anthropic_stream_event_to_openai_chunks(
         return chunks
 
     return chunks
+
+
+def format_openai_response_sse_event(event_type: str, payload: dict) -> str:
+    event_payload = {"type": event_type, **payload}
+    return f"event: {event_type}\ndata: {json.dumps(event_payload, separators=(',', ':'))}\n\n"
+
+
+def _build_emulated_openai_response_from_stream_state(
+    state: dict[str, object],
+    *,
+    requested_model: str,
+) -> dict:
+    anthropic_message = {
+        "id": str(state.get("anthropic_message_id") or "generated"),
+        "type": "message",
+        "role": "assistant",
+        "model": requested_model,
+        "content": [{"type": "text", "text": "".join(state.get("text_parts") or [])}],
+        "stop_reason": str(state.get("stop_reason") or "end_turn"),
+        "usage": {
+            "input_tokens": int(state.get("prompt_tokens", 0) or 0),
+            "output_tokens": int(state.get("completion_tokens", 0) or 0),
+        },
+    }
+    return translate_anthropic_message_to_openai_response(
+        anthropic_message,
+        requested_model=requested_model,
+    )
+
+
+def _emit_openai_response_completed_event(
+    state: dict[str, object],
+    *,
+    requested_model: str,
+) -> list[str]:
+    if state.get("completed_emitted"):
+        return []
+
+    final_response = _build_emulated_openai_response_from_stream_state(
+        state,
+        requested_model=requested_model,
+    )
+    state["final_response"] = final_response
+    state["response_id"] = final_response["id"]
+    state["completed_emitted"] = True
+    return [
+        format_openai_response_sse_event(
+            "response.completed",
+            {"response": final_response},
+        )
+    ]
+
+
+def translate_anthropic_stream_line_to_openai_response_sse(
+    line: str,
+    *,
+    state: dict[str, object],
+    requested_model: str,
+) -> list[str]:
+    if not line.startswith("data:"):
+        return []
+
+    raw_payload = line.removeprefix("data:").strip()
+    if not raw_payload:
+        return []
+
+    try:
+        payload = json.loads(raw_payload)
+    except ValueError:
+        return []
+
+    if not isinstance(payload, dict):
+        return []
+
+    event_type = payload.get("type")
+    if event_type == "message_start":
+        message = payload.get("message")
+        if not isinstance(message, dict):
+            return []
+
+        message_id = str(message.get("id") or "generated")
+        state["anthropic_message_id"] = message_id
+        state["response_id"] = f"resp_{message_id}"
+        state["text_parts"] = []
+        usage = message.get("usage")
+        if isinstance(usage, dict):
+            input_tokens = usage.get("input_tokens")
+            if isinstance(input_tokens, int):
+                state["prompt_tokens"] = input_tokens
+
+        return [
+            format_openai_response_sse_event(
+                "response.created",
+                {
+                    "response": {
+                        "id": state["response_id"],
+                        "object": "response",
+                        "status": "in_progress",
+                        "model": requested_model,
+                        "output": [],
+                    }
+                },
+            )
+        ]
+
+    if event_type == "content_block_delta":
+        delta = payload.get("delta")
+        if isinstance(delta, dict) and delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
+            text = delta["text"]
+            text_parts = state.setdefault("text_parts", [])
+            if isinstance(text_parts, list):
+                text_parts.append(text)
+            return [
+                format_openai_response_sse_event(
+                    "response.output_text.delta",
+                    {
+                        "output_index": 0,
+                        "content_index": 0,
+                        "delta": text,
+                    },
+                )
+            ]
+        return []
+
+    if event_type == "message_delta":
+        delta = payload.get("delta")
+        if isinstance(delta, dict):
+            stop_reason = delta.get("stop_reason")
+            if stop_reason:
+                state["stop_reason"] = stop_reason
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            output_tokens = usage.get("output_tokens")
+            if isinstance(output_tokens, int):
+                state["completion_tokens"] = output_tokens
+        return _emit_openai_response_completed_event(state, requested_model=requested_model)
+
+    if event_type == "message_stop":
+        return _emit_openai_response_completed_event(state, requested_model=requested_model)
+
+    return []

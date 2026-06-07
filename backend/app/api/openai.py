@@ -38,6 +38,7 @@ from app.providers.openai_compatible import (
     list_models,
     list_response_input_items,
     stream_chat_completion_chunks,
+    stream_response_events,
 )
 from app.responses.store import (
     PROXY_EMULATED,
@@ -76,6 +77,7 @@ from app.translators.openai_to_anthropic import (
     translate_anthropic_message_to_openai_response,
     translate_anthropic_message_to_openai_chat_completion,
     translate_anthropic_stream_event_to_openai_chunks,
+    translate_anthropic_stream_line_to_openai_response_sse,
 )
 
 router = APIRouter(tags=["proxy"])
@@ -282,13 +284,7 @@ def create_responses(
     session: Session = Depends(get_session),
     _: None = Depends(require_proxy_token),
     _modelport_provider: ModelPortProviderHeader = None,
-) -> OpenAIResponse:
-    if payload.stream:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Streaming responses are not implemented yet for this proxy route.",
-        )
-
+) -> OpenAIResponse | StreamingResponse:
     model_routing = resolve_proxy_model_routing(
         request,
         provider_id=payload.provider,
@@ -314,6 +310,73 @@ def create_responses(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="No configured credential available for the selected provider.",
+        )
+
+    if payload.stream:
+        if resolved_route.provider.provider_type == "anthropic_compatible":
+            anthropic_payload = translate_openai_response_create_to_anthropic(payload)
+            upstream_payload = build_anthropic_upstream_payload(
+                anthropic_payload,
+                upstream_model=resolved_route.upstream_model,
+            )
+            upstream_payload["stream"] = True
+            input_items = build_input_items_from_create_payload(payload)
+
+            def anthropic_response_stream():
+                stream_state: dict[str, object] = {}
+                for line in stream_anthropic_message_events(
+                    resolved_route.provider,
+                    api_key=provider_secret,
+                    payload=upstream_payload,
+                ):
+                    for sse_event in translate_anthropic_stream_line_to_openai_response_sse(
+                        line,
+                        state=stream_state,
+                        requested_model=payload.model,
+                    ):
+                        yield sse_event
+
+                final_response = stream_state.get("final_response")
+                if isinstance(final_response, dict):
+                    openai_response = OpenAIResponse.model_validate(final_response)
+                    save_emulated_response(
+                        session,
+                        response_id=openai_response.id,
+                        provider_id=resolved_route.provider.id,
+                        requested_model=payload.model,
+                        upstream_model=resolved_route.upstream_model,
+                        response_body=openai_response.model_dump(),
+                        input_items=input_items,
+                        status=openai_response.status,
+                    )
+                    session.commit()
+
+            return StreamingResponse(
+                anthropic_response_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        upstream_payload = payload.model_dump(
+            exclude={"provider", "fallback_providers"},
+            exclude_defaults=True,
+            exclude_none=True,
+        )
+        upstream_payload["model"] = resolved_route.upstream_model
+        upstream_payload["stream"] = True
+
+        def openai_response_stream():
+            for line in stream_response_events(
+                resolved_route.provider,
+                api_key=provider_secret,
+                payload=upstream_payload,
+            ):
+                yield line
+
+        return StreamingResponse(
+            openai_response_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     if resolved_route.provider.provider_type == "anthropic_compatible":
