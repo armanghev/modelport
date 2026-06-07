@@ -13,8 +13,21 @@ def test_proxy_route_capabilities_include_core_openai_and_anthropic_families() -
     assert "/v1/embeddings" in routes
     assert "/v1/completions" in routes
     assert "/v1/moderations" in routes
+    assert "/v1/images/generations" in routes
+    assert "/v1/audio/speech" in routes
     assert "/v1/messages/batches" in routes
     assert "/v1/files" in routes
+
+
+def test_models_capability_uses_openai_protocol_with_anthropic_upstream_translation() -> None:
+    list_capability = get_proxy_route_capability("/v1/models")
+    retrieve_capability = get_proxy_route_capability("/v1/models/{model}")
+    assert list_capability is not None
+    assert retrieve_capability is not None
+    assert list_capability.client_protocol == "openai"
+    assert retrieve_capability.client_protocol == "openai"
+    assert "anthropic_compatible" in list_capability.upstream_provider_types
+    assert "anthropic_compatible" in retrieve_capability.upstream_provider_types
 
 
 def test_get_proxy_route_capability_returns_response_lifecycle_metadata() -> None:
