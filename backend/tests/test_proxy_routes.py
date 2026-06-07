@@ -1212,23 +1212,6 @@ def test_responses_route_translates_anthropic_provider_response(
     }
 
 
-def test_responses_route_rejects_streaming_for_now(
-    client: TestClient,
-) -> None:
-    response = client.post(
-        "/v1/responses",
-        headers={"Authorization": "Bearer test-local-token"},
-        json={
-            "provider": "openai",
-            "model": "gpt-4.1",
-            "input": "hello",
-            "stream": True,
-        },
-    )
-
-    assert response.status_code == 501
-
-
 def test_get_response_route_proxies_openai_compatible_provider(
     client: TestClient,
     monkeypatch,
