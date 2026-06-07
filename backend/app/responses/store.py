@@ -174,3 +174,36 @@ def cancel_emulated_response(session: Session, response_id: str) -> dict:
     resource.response_json = json.dumps(response_body)
     session.flush()
     return response_body
+
+
+def ingest_passthrough_response_stream_line(line: str, state: dict[str, object]) -> None:
+    stripped = line.strip()
+    if not stripped.startswith("data:"):
+        return
+
+    raw_payload = stripped.removeprefix("data:").strip()
+    if not raw_payload:
+        return
+
+    try:
+        payload = json.loads(raw_payload)
+    except ValueError:
+        return
+
+    if not isinstance(payload, dict):
+        return
+
+    event_type = payload.get("type")
+    response = payload.get("response")
+    if not isinstance(response, dict):
+        return
+
+    if event_type in {"response.created", "response.completed", "response.in_progress"}:
+        response_id = response.get("id")
+        if isinstance(response_id, str) and response_id:
+            state["response_id"] = response_id
+        status = response.get("status")
+        if isinstance(status, str) and status:
+            state["status"] = status
+        if event_type == "response.completed":
+            state["final_response"] = response

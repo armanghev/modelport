@@ -21,6 +21,7 @@ from app.api.proxy_common import (
     resolve_proxy_model_routing,
     resolve_requested_provider,
 )
+from app.compatibility.errors import unsupported_provider_capability
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.anthropic_compatible import (
     create_message as create_anthropic_message,
@@ -31,13 +32,16 @@ from app.providers.anthropic_compatible import (
 from app.providers.openai_compatible import (
     cancel_response,
     create_chat_completion,
+    create_completion,
     create_embedding,
+    create_moderation,
     create_response,
     get_model,
     get_response,
     list_models,
     list_response_input_items,
     stream_chat_completion_chunks,
+    stream_completion_chunks,
     stream_response_events,
 )
 from app.responses.store import (
@@ -46,6 +50,7 @@ from app.responses.store import (
     cancel_emulated_response,
     get_active_response_resource,
     get_response_resource,
+    ingest_passthrough_response_stream_line,
     list_input_items,
     retrieve_emulated_response,
     save_emulated_response,
@@ -56,6 +61,8 @@ from app.schemas.openai import (
     OpenAIChatCompletionCreate,
     OpenAIChatCompletionResponse,
     OpenAIEmbeddingCreate,
+    OpenAILegacyCompletionCreate,
+    OpenAIModerationCreate,
     OpenAIResponse,
     OpenAIResponseCreate,
 )
@@ -278,6 +285,128 @@ def create_embeddings(
     )
 
 
+@router.post("/v1/completions", response_model=None)
+def create_completions(
+    request: Request,
+    payload: OpenAILegacyCompletionCreate,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict | StreamingResponse:
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=payload.provider,
+        requested_model=payload.model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=payload.model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=payload.fallback_providers,
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        raise unsupported_provider_capability(
+            "Selected provider does not support OpenAI legacy completions compatibility.",
+        )
+
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_defaults=True,
+        exclude_none=True,
+    )
+    upstream_payload["model"] = resolved_route.upstream_model
+
+    if payload.stream:
+
+        def event_stream():
+            for raw_chunk in stream_completion_chunks(
+                resolved_route.provider,
+                api_key=provider_secret,
+                payload=upstream_payload,
+            ):
+                if raw_chunk == "[DONE]":
+                    yield "data: [DONE]\n\n"
+                    continue
+                yield f"data: {raw_chunk}\n\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    return create_completion(
+        resolved_route.provider,
+        api_key=provider_secret,
+        payload=upstream_payload,
+    )
+
+
+@router.post("/v1/moderations")
+def create_moderations(
+    request: Request,
+    payload: OpenAIModerationCreate,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_provider_id = resolve_requested_provider(request, payload.provider)
+    requested_model = payload.model or ""
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=resolved_provider_id,
+        requested_model=requested_model,
+        upstream_model=requested_model,
+        fallback_provider_ids=payload.fallback_providers,
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        raise unsupported_provider_capability(
+            "Selected provider does not support OpenAI moderations compatibility.",
+        )
+
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_none=True,
+    )
+    if payload.model:
+        upstream_payload["model"] = resolved_route.upstream_model
+    return create_moderation(
+        resolved_route.provider,
+        api_key=provider_secret,
+        payload=upstream_payload,
+    )
+
+
 @router.post("/v1/responses", response_model=OpenAIResponse)
 def create_responses(
     request: Request,
@@ -367,12 +496,27 @@ def create_responses(
         upstream_payload["stream"] = True
 
         def openai_response_stream():
+            stream_state: dict[str, object] = {}
             for line in stream_response_events(
                 resolved_route.provider,
                 api_key=provider_secret,
                 payload=upstream_payload,
             ):
+                ingest_passthrough_response_stream_line(line, stream_state)
                 yield line
+
+            response_id = stream_state.get("response_id")
+            status = stream_state.get("status")
+            if isinstance(response_id, str) and isinstance(status, str):
+                save_passthrough_response(
+                    session,
+                    response_id=response_id,
+                    provider_id=resolved_route.provider.id,
+                    requested_model=payload.model,
+                    upstream_model=resolved_route.upstream_model,
+                    status=status,
+                )
+                session.commit()
 
         return StreamingResponse(
             openai_response_stream(),
