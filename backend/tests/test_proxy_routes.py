@@ -1066,6 +1066,56 @@ def test_chat_completions_route_supports_anthropic_upstream(
     }
 
 
+def test_chat_completions_route_supports_anthropic_upstream_with_sampling_and_stop_controls(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    def fake_create_anthropic_message(provider, api_key, payload):
+        captured.update(payload)
+        return {
+            "id": "msg_456",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [{"type": "text", "text": "Translated from Anthropic"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 6, "output_tokens": 3},
+        }
+
+    monkeypatch.setattr(
+        "app.api.openai.create_anthropic_message",
+        fake_create_anthropic_message,
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64,
+            "temperature": 0.4,
+            "top_p": 0.8,
+            "stop": ["END"],
+            "tool_choice": "none",
+            "messages": [
+                {"role": "system", "content": "System"},
+                {"role": "developer", "content": "Developer"},
+                {"role": "user", "content": "hello"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["temperature"] == 0.4
+    assert captured["top_p"] == 0.8
+    assert captured["stop_sequences"] == ["END"]
+    assert captured["tool_choice"] == {"type": "none"}
+    assert captured["system"] == "System\n\nDeveloper"
+
+
 def test_chat_completions_route_retries_gemini_when_low_max_tokens_return_empty_completion(
     client: TestClient,
     monkeypatch,
@@ -1240,6 +1290,42 @@ def test_chat_completions_route_streams_anthropic_upstream_as_openai_sse(
             "stream": True,
         },
     }
+
+
+def test_chat_completions_route_streams_anthropic_tool_use_as_openai_tool_calls(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_stream_anthropic_message_events(provider, api_key, payload):
+        yield 'data: {"type":"message_start","message":{"id":"msg_stream_openai_tool","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[],"usage":{"input_tokens":8,"output_tokens":0}}}'
+        yield 'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_123","name":"Write","input":{}}}'
+        yield 'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":\\"out.txt\\"}"}}'
+        yield 'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}'
+        yield 'data: {"type":"message_stop"}'
+
+    monkeypatch.setattr(
+        "app.api.openai.stream_anthropic_message_events",
+        fake_stream_anthropic_message_events,
+    )
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert '"tool_calls":[{"index":0,"id":"toolu_123","type":"function","function":{"name":"Write","arguments":""}}]' in body
+    assert '"tool_calls":[{"index":0,"type":"function","function":{"arguments":"{\\"path\\":\\"out.txt\\"}"}}]' in body
+    assert '"finish_reason":"tool_calls"' in body
 
 
 def test_messages_route_uses_fallback_provider_when_primary_is_degraded(
@@ -1489,6 +1575,68 @@ def test_messages_route_forwards_tools_to_openai_upstream(
             "input": {"path": "claude.html", "contents": "<html>"},
         }
     ]
+
+
+def test_messages_route_preserves_sampling_and_stop_sequences_for_openai_upstream(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured_payload: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "id": "chatcmpl_tools",
+                "model": "models/gemini-2.5-pro",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 3},
+            }
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            captured_payload.update(json or {})
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.openai_compatible.httpx.Client", FakeHttpClient)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "gemini",
+            "model": "models/gemini-2.5-pro",
+            "max_tokens": 1024,
+            "temperature": 0.4,
+            "top_p": 0.8,
+            "stop_sequences": ["END"],
+            "tool_choice": {"type": "none"},
+            "messages": [{"role": "user", "content": "Create claude.html"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_payload["temperature"] == 0.4
+    assert captured_payload["top_p"] == 0.8
+    assert captured_payload["stop"] == ["END"]
+    assert captured_payload["tool_choice"] == "none"
 
 
 def test_messages_route_streams_tool_use_sse_events(
