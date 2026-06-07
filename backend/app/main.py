@@ -13,6 +13,7 @@ from app.api.anthropic import router as anthropic_router
 from app.api.openai import router as openai_router
 from app.config import AppConfig, load_config
 from app.database import build_session_factory, initialize_database, seed_admin_data
+from app.compatibility.exception_handlers import register_exception_handlers
 from app.openapi import configure_openapi
 from app.pricing_seed import DEFAULT_CATALOG_PATH, seed_pricing_overrides
 
@@ -59,6 +60,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
     app.include_router(analytics_router)
     app.include_router(anthropic_router)
     app.include_router(openai_router)
+    register_exception_handlers(app)
     configure_openapi(app)
 
     @app.get("/health")

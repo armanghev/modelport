@@ -108,6 +108,32 @@ def test_save_passthrough_response_metadata(session_factory: sessionmaker[Sessio
         assert json.loads(resource.input_items_json or "null") is None
 
 
+def test_save_passthrough_response_updates_existing_resource(session_factory: sessionmaker[Session]) -> None:
+    with session_factory() as session:
+        save_passthrough_response(
+            session,
+            response_id="resp_upstream_1",
+            provider_id="openai",
+            requested_model="gpt-4.1",
+            upstream_model="gpt-4.1",
+            status="completed",
+        )
+        save_passthrough_response(
+            session,
+            response_id="resp_upstream_1",
+            provider_id="mock-local",
+            requested_model="gpt-5.5:mock-text",
+            upstream_model="gpt-5.5:mock-text",
+            status="completed",
+        )
+        session.commit()
+
+        resource = get_response_resource(session, "resp_upstream_1")
+        assert resource is not None
+        assert resource.provider_id == "mock-local"
+        assert resource.requested_model == "gpt-5.5:mock-text"
+
+
 def test_cancel_emulated_response_updates_status(session_factory: sessionmaker[Session]) -> None:
     response_body = {
         "id": "resp_emulated_2",

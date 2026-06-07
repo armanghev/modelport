@@ -114,6 +114,19 @@ def save_passthrough_response(
     status: str,
     expires_at: datetime | None = None,
 ) -> ProxyResponseResource:
+    resolved_expires_at = expires_at or default_expires_at()
+    existing = get_response_resource(session, response_id)
+    if existing is not None:
+        existing.provider_id = provider_id
+        existing.storage_kind = UPSTREAM_PASSTHROUGH
+        existing.status = status
+        existing.requested_model = requested_model
+        existing.upstream_model = upstream_model
+        existing.upstream_response_id = response_id
+        existing.expires_at = resolved_expires_at
+        session.flush()
+        return existing
+
     resource = ProxyResponseResource(
         id=response_id,
         provider_id=provider_id,
@@ -122,7 +135,7 @@ def save_passthrough_response(
         requested_model=requested_model,
         upstream_model=upstream_model,
         upstream_response_id=response_id,
-        expires_at=expires_at or default_expires_at(),
+        expires_at=resolved_expires_at,
     )
     session.add(resource)
     session.flush()

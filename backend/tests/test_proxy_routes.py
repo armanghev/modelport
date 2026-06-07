@@ -1531,7 +1531,7 @@ def test_get_response_route_returns_not_found_for_expired_resource(
     )
 
     assert response.status_code == 404
-    assert "expired" in response.json()["detail"].lower()
+    assert "expired" in response.json()["error"]["message"].lower()
 
 
 def test_messages_count_tokens_route_supports_anthropic_provider(

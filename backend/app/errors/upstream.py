@@ -6,6 +6,8 @@ from typing import Any
 import httpx
 from fastapi import HTTPException, status
 
+from app.compatibility.openai_errors import client_status_for_upstream_error, format_openai_proxy_error_response
+
 
 def parse_upstream_error_body(raw: str) -> Any | None:
     text = raw.strip()
@@ -51,6 +53,9 @@ def build_upstream_error_detail(
     message = fallback_message.strip() or "Upstream provider request failed."
     status_label: str | None = None
 
+    upstream_error_type: str | None = None
+    upstream_error_code: str | None = None
+
     if upstream_error is not None:
         upstream_message = upstream_error.get("message")
         if isinstance(upstream_message, str) and upstream_message.strip():
@@ -58,11 +63,23 @@ def build_upstream_error_detail(
         status_value = upstream_error.get("status")
         if isinstance(status_value, str) and status_value.strip():
             status_label = status_value.strip()
+        type_value = upstream_error.get("type")
+        if isinstance(type_value, str) and type_value.strip():
+            upstream_error_type = type_value.strip()
+        code_value = upstream_error.get("code")
+        if isinstance(code_value, str) and code_value.strip():
+            upstream_error_code = code_value.strip()
+        elif isinstance(code_value, int):
+            upstream_error_code = str(code_value)
 
     detail: dict[str, Any] = {
         "type": "upstream_provider_error",
         "message": message,
     }
+    if upstream_error_type is not None:
+        detail["provider_error_type"] = upstream_error_type
+    if upstream_error_code is not None:
+        detail["code"] = upstream_error_code
     if upstream_status_code is not None:
         detail["upstream_status_code"] = upstream_status_code
     if status_label is not None:
@@ -88,7 +105,10 @@ def http_exception_from_upstream_http_error(exc: httpx.HTTPStatusError) -> HTTPE
         upstream_body=body,
         fallback_message=body or str(exc),
     )
-    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
+    return HTTPException(
+        status_code=client_status_for_upstream_error(upstream_status_code),
+        detail=detail,
+    )
 
 
 def http_exception_from_upstream_transport_error(exc: httpx.HTTPError | ValueError) -> HTTPException:
@@ -117,22 +137,14 @@ def format_exception_detail_for_log(detail: Any) -> str:
 
 
 def build_logged_error_response(exc: HTTPException) -> dict[str, Any]:
+    status_code, body = format_openai_proxy_error_response(exc)
+    error = dict(body["error"])
+    error["status_code"] = status_code
+
     detail = exc.detail
     if isinstance(detail, dict):
-        error: dict[str, Any] = {
-            "message": detail.get("message", "Request failed"),
-            "type": detail.get("type", "api_error"),
-            "status_code": exc.status_code,
-        }
         for key in ("status", "upstream_status_code"):
             if key in detail:
                 error[key] = detail[key]
-        return {"error": error}
 
-    return {
-        "error": {
-            "message": str(detail),
-            "type": "api_error",
-            "status_code": exc.status_code,
-        }
-    }
+    return {"error": error}

@@ -159,6 +159,11 @@ def persist_provider_health_status(
 def classify_provider_failure_status(exc: HTTPException) -> str:
     if exc.status_code == status.HTTP_502_BAD_GATEWAY:
         return "degraded"
+    detail = exc.detail
+    if isinstance(detail, dict) and detail.get("upstream_status_code") is not None:
+        return "degraded"
+    if status.HTTP_400_BAD_REQUEST <= exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
+        return "degraded"
     return "offline"
 
 
