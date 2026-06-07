@@ -118,3 +118,23 @@ class OpenAIResponse(BaseModel):
     model: str
     output: list[dict]
     usage: dict | None = None
+
+
+class OpenAILegacyCompletionCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    provider: str | None = None
+    fallback_providers: list[str] = []
+    model: str
+    prompt: str | list[str]
+    max_tokens: int | None = None
+    stream: bool = False
+
+
+class OpenAIModerationCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    provider: str | None = None
+    fallback_providers: list[str] = []
+    model: str | None = None
+    input: str | list[str]

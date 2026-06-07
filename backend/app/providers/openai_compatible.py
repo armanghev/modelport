@@ -31,6 +31,16 @@ def build_embeddings_url(provider: Provider) -> str:
     return urljoin(normalized_base, "embeddings")
 
 
+def build_completions_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "completions")
+
+
+def build_moderations_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "moderations")
+
+
 def build_responses_url(provider: Provider) -> str:
     normalized_base = provider.base_url.rstrip("/") + "/"
     return urljoin(normalized_base, "responses")
@@ -208,6 +218,54 @@ def create_embedding(
         raise http_exception_from_upstream_transport_error(exc) from exc
 
 
+def create_completion(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                build_completions_url(provider),
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def create_moderation(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                build_moderations_url(provider),
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
 def create_response(
     provider: Provider,
     api_key: str | None,
@@ -339,6 +397,41 @@ def stream_response_events(
                     if isinstance(line, bytes):
                         line = line.decode("utf-8")
                     yield f"{line}\n"
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except httpx.HTTPError as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def stream_completion_chunks(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+):
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            with client.stream(
+                "POST",
+                build_completions_url(provider),
+                headers=headers,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    if isinstance(line, bytes):
+                        line = line.decode("utf-8")
+                    if not line.startswith("data:"):
+                        continue
+                    yield line.removeprefix("data:").strip()
     except httpx.HTTPStatusError as exc:
         raise http_exception_from_upstream_http_error(exc) from exc
     except httpx.HTTPError as exc:
