@@ -29,6 +29,8 @@ def test_openapi_includes_bearer_auth_for_proxy_routes(client: TestClient) -> No
         "/v1/files/{file_id}",
         "/v1/files/{file_id}/content",
         "/v1/embeddings",
+        "/v1/completions",
+        "/v1/moderations",
         "/v1/messages/count_tokens",
     ):
         for operation in schema["paths"][path].values():
@@ -55,6 +57,8 @@ def test_openapi_documents_modelport_provider_header(client: TestClient) -> None
         "/v1/files/{file_id}",
         "/v1/files/{file_id}/content",
         "/v1/embeddings",
+        "/v1/completions",
+        "/v1/moderations",
         "/v1/messages/count_tokens",
     ):
         for operation in schema["paths"][path].values():
@@ -79,6 +83,7 @@ def test_proxy_openapi_filters_to_v1_routes(client: TestClient) -> None:
         assert schema["info"]["title"] == "ModelPort Proxy API"
         assert set(schema["paths"]) == {
             "/v1/chat/completions",
+            "/v1/completions",
             "/v1/embeddings",
             "/v1/messages",
             "/v1/messages/batches",
@@ -95,6 +100,7 @@ def test_proxy_openapi_filters_to_v1_routes(client: TestClient) -> None:
             "/v1/responses/{response_id}",
             "/v1/responses/{response_id}/cancel",
             "/v1/responses/{response_id}/input_items",
+            "/v1/moderations",
         }
         assert "ProviderResponse" not in schema.get("components", {}).get("schemas", {})
 
