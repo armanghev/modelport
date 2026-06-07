@@ -94,3 +94,17 @@ class AnthropicMessageResponse(BaseModel):
     stop_reason: Literal["end_turn", "max_tokens", "tool_use"] | None = None
     stop_sequence: str | None = None
     usage: AnthropicUsage
+
+
+class AnthropicMessageCountTokensCreate(BaseModel):
+    provider: str | None = None
+    fallback_providers: list[str] = []
+    model: str
+    system: str | list[AnthropicTextBlock] | None = None
+    messages: list[AnthropicMessage]
+    tools: list[AnthropicToolDefinition] | None = None
+    thinking: dict[str, Any] | None = None
+
+
+class AnthropicMessageCountTokensResponse(BaseModel):
+    input_tokens: int

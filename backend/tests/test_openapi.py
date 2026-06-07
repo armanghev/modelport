@@ -12,7 +12,7 @@ def test_openapi_includes_bearer_auth_for_proxy_routes(client: TestClient) -> No
     assert "BearerAuth" in security_schemes
     assert security_schemes["BearerAuth"]["scheme"] == "bearer"
 
-    for path in ("/v1/models", "/v1/chat/completions", "/v1/messages"):
+    for path in ("/v1/models", "/v1/models/{model}", "/v1/chat/completions", "/v1/messages", "/v1/embeddings", "/v1/messages/count_tokens"):
         for operation in schema["paths"][path].values():
             assert operation["security"] == [{"BearerAuth": []}]
 
@@ -20,7 +20,7 @@ def test_openapi_includes_bearer_auth_for_proxy_routes(client: TestClient) -> No
 def test_openapi_documents_modelport_provider_header(client: TestClient) -> None:
     schema = client.get("/openapi.json").json()
 
-    for path in ("/v1/models", "/v1/chat/completions", "/v1/messages"):
+    for path in ("/v1/models", "/v1/models/{model}", "/v1/chat/completions", "/v1/messages", "/v1/embeddings", "/v1/messages/count_tokens"):
         for operation in schema["paths"][path].values():
             header_params = [
                 parameter
@@ -43,8 +43,11 @@ def test_proxy_openapi_filters_to_v1_routes(client: TestClient) -> None:
         assert schema["info"]["title"] == "ModelPort Proxy API"
         assert set(schema["paths"]) == {
             "/v1/chat/completions",
+            "/v1/embeddings",
             "/v1/messages",
+            "/v1/messages/count_tokens",
             "/v1/models",
+            "/v1/models/{model}",
         }
         assert "ProviderResponse" not in schema.get("components", {}).get("schemas", {})
 

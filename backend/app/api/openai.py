@@ -24,12 +24,23 @@ from app.api.proxy_common import (
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.anthropic_compatible import (
     create_message as create_anthropic_message,
+    get_model as get_anthropic_model,
     list_models as list_anthropic_models,
     stream_message_events as stream_anthropic_message_events,
 )
-from app.providers.openai_compatible import create_chat_completion, list_models, stream_chat_completion_chunks
+from app.providers.openai_compatible import (
+    create_chat_completion,
+    create_embedding,
+    get_model,
+    list_models,
+    stream_chat_completion_chunks,
+)
 from app.routing.provider_router import resolve_provider_routes
-from app.schemas.openai import OpenAIChatCompletionCreate, OpenAIChatCompletionResponse
+from app.schemas.openai import (
+    OpenAIChatCompletionCreate,
+    OpenAIChatCompletionResponse,
+    OpenAIEmbeddingCreate,
+)
 from app.tracking.cost_service import calculate_estimated_cost_usd
 from app.tracking.io_logging import io_log_kwargs
 from app.tracking.log_service import create_api_request_log
@@ -40,7 +51,7 @@ from app.tracking.usage_service import (
     extract_usage_snapshot,
 )
 from app.translators.anthropic_to_openai import translate_anthropic_message_to_openai
-from app.translators.models import translate_anthropic_models_to_openai
+from app.translators.models import translate_anthropic_model_to_openai, translate_anthropic_models_to_openai
 from app.translators.openai_request_to_anthropic import (
     translate_openai_chat_completion_request_to_anthropic,
 )
@@ -111,6 +122,104 @@ def get_models(
         )
 
     return list_models(resolved_route.provider, api_key=provider_secret)
+
+
+@router.get("/v1/models/{model}")
+def get_model_by_id(
+    model: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=resolve_requested_provider(request, None),
+        requested_model=model,
+        upstream_model=model,
+        fallback_provider_ids=[],
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        return translate_anthropic_model_to_openai(
+            get_anthropic_model(
+                resolved_route.provider,
+                api_key=provider_secret,
+                model_id=resolved_route.upstream_model,
+            )
+        )
+
+    return get_model(
+        resolved_route.provider,
+        api_key=provider_secret,
+        model_id=resolved_route.upstream_model,
+    )
+
+
+@router.post("/v1/embeddings")
+def create_embeddings(
+    request: Request,
+    payload: OpenAIEmbeddingCreate,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> dict:
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=payload.provider,
+        requested_model=payload.model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=payload.model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=payload.fallback_providers,
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if resolved_route.provider.provider_type == "anthropic_compatible":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Selected provider does not support OpenAI embeddings compatibility.",
+        )
+
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_none=True,
+    )
+    upstream_payload["model"] = resolved_route.upstream_model
+    return create_embedding(
+        resolved_route.provider,
+        api_key=provider_secret,
+        payload=upstream_payload,
+    )
 
 
 def extract_openai_stream_delta_text(chunk: dict) -> str:

@@ -9,9 +9,13 @@ from fastapi import HTTPException
 from app.database import Provider
 from app.providers.anthropic_compatible import (
     build_headers,
+    build_message_count_tokens_url,
+    build_model_url,
     build_messages_url,
     build_models_url,
+    count_message_tokens,
     create_message,
+    get_model,
     list_models,
     stream_message_events,
 )
@@ -32,6 +36,11 @@ def test_build_urls_for_anthropic_upstream() -> None:
 
     assert build_messages_url(provider) == "https://api.anthropic.com/v1/messages"
     assert build_models_url(provider) == "https://api.anthropic.com/v1/models"
+    assert build_model_url(provider, "claude-sonnet-4-5-20250929") == "https://api.anthropic.com/v1/models/claude-sonnet-4-5-20250929"
+    assert (
+        build_message_count_tokens_url(provider)
+        == "https://api.anthropic.com/v1/messages/count_tokens"
+    )
 
 
 def test_build_headers_for_anthropic_requests() -> None:
@@ -137,6 +146,82 @@ def test_list_models_uses_models_url_and_anthropic_headers(monkeypatch) -> None:
     assert captured["headers"]["Content-Type"] == "application/json"
     assert captured["headers"]["x-api-key"] == "sk-anthropic-seeded"
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
+
+
+def test_get_model_uses_model_url_and_anthropic_headers(monkeypatch) -> None:
+    provider = make_anthropic_provider()
+    captured: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"id": "claude-sonnet-4-5-20250929", "type": "model"}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            captured["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None):
+            captured["url"] = url
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.anthropic_compatible.httpx.Client", FakeClient)
+
+    response = get_model(provider, api_key="sk-anthropic-seeded", model_id="claude-sonnet-4-5-20250929")
+
+    assert response == {"id": "claude-sonnet-4-5-20250929", "type": "model"}
+    assert captured["url"] == "https://api.anthropic.com/v1/models/claude-sonnet-4-5-20250929"
+    assert captured["headers"]["x-api-key"] == "sk-anthropic-seeded"
+
+
+def test_count_message_tokens_uses_count_tokens_url_and_headers(monkeypatch) -> None:
+    provider = make_anthropic_provider()
+    captured: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"input_tokens": 11}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            captured["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr("app.providers.anthropic_compatible.httpx.Client", FakeClient)
+
+    response = count_message_tokens(
+        provider,
+        api_key="sk-anthropic-seeded",
+        payload={"model": "claude-sonnet-4-5", "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response == {"input_tokens": 11}
+    assert captured["url"] == "https://api.anthropic.com/v1/messages/count_tokens"
+    assert captured["headers"]["x-api-key"] == "sk-anthropic-seeded"
+    assert captured["json"]["model"] == "claude-sonnet-4-5"
 
 
 def test_stream_message_events_passes_through_sse_lines(monkeypatch) -> None:

@@ -38,3 +38,16 @@ def translate_anthropic_models_to_openai(payload: dict) -> dict:
         "object": "list",
         "data": translated_models,
     }
+
+
+def translate_anthropic_model_to_openai(payload: dict) -> dict:
+    model_id = payload.get("id")
+    translated_model = {
+        "id": model_id,
+        "object": "model",
+        "owned_by": "anthropic",
+    }
+    created = _parse_created_at(payload.get("created_at"))
+    if created is not None:
+        translated_model["created"] = created
+    return translated_model

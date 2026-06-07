@@ -22,12 +22,18 @@ from app.api.proxy_common import (
 )
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.anthropic_compatible import (
+    count_message_tokens,
     create_message as create_anthropic_message,
     stream_message_events as stream_anthropic_message_events,
 )
 from app.providers.openai_compatible import create_chat_completion, stream_chat_completion_chunks
 from app.routing.provider_router import resolve_provider_routes
-from app.schemas.anthropic import AnthropicMessageCreate, AnthropicMessageResponse
+from app.schemas.anthropic import (
+    AnthropicMessageCountTokensCreate,
+    AnthropicMessageCountTokensResponse,
+    AnthropicMessageCreate,
+    AnthropicMessageResponse,
+)
 from app.tracking.cost_service import calculate_estimated_cost_usd
 from app.tracking.io_logging import io_log_kwargs
 from app.tracking.log_service import create_api_request_log
@@ -112,6 +118,61 @@ def update_anthropic_stream_summary(
             output_tokens = usage.get("output_tokens")
             if isinstance(output_tokens, int):
                 summary["output_tokens"] = output_tokens
+
+
+@router.post("/v1/messages/count_tokens", response_model=AnthropicMessageCountTokensResponse)
+def create_message_count_tokens(
+    request: Request,
+    payload: AnthropicMessageCountTokensCreate,
+    session: Session = Depends(get_session),
+    _: None = Depends(require_proxy_token),
+    _modelport_provider: ModelPortProviderHeader = None,
+) -> AnthropicMessageCountTokensResponse:
+    model_routing = resolve_proxy_model_routing(
+        request,
+        provider_id=payload.provider,
+        requested_model=payload.model,
+        known_provider_ids=get_known_provider_ids(session),
+    )
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=model_routing.provider_id,
+        requested_model=payload.model,
+        upstream_model=model_routing.upstream_model,
+        fallback_provider_ids=payload.fallback_providers,
+    )[0]
+    try:
+        provider_secret = resolve_credential_secret(resolved_route.credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    if resolved_route.provider.provider_type != "anthropic_compatible":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Selected provider does not support Anthropic token counting compatibility.",
+        )
+
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_none=True,
+    )
+    upstream_payload["model"] = resolved_route.upstream_model
+    return AnthropicMessageCountTokensResponse.model_validate(
+        count_message_tokens(
+            resolved_route.provider,
+            api_key=provider_secret,
+            payload=upstream_payload,
+        )
+    )
 
 
 @router.post("/v1/messages", response_model=AnthropicMessageResponse)

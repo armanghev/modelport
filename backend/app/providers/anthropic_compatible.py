@@ -21,6 +21,16 @@ def build_models_url(provider: Provider) -> str:
     return urljoin(normalized_base, "v1/models")
 
 
+def build_model_url(provider: Provider, model_id: str) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, f"v1/models/{model_id}")
+
+
+def build_message_count_tokens_url(provider: Provider) -> str:
+    normalized_base = provider.base_url.rstrip("/") + "/"
+    return urljoin(normalized_base, "v1/messages/count_tokens")
+
+
 def build_headers(api_key: str | None, *, stream: bool = False) -> dict[str, str]:
     headers = {
         "Content-Type": "application/json",
@@ -62,6 +72,45 @@ def list_models(
             response = client.get(
                 build_models_url(provider),
                 headers=build_headers(api_key),
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def get_model(
+    provider: Provider,
+    api_key: str | None,
+    model_id: str,
+) -> dict:
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(
+                build_model_url(provider, model_id),
+                headers=build_headers(api_key),
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def count_message_tokens(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+) -> dict:
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                build_message_count_tokens_url(provider),
+                headers=build_headers(api_key),
+                json=payload,
             )
             response.raise_for_status()
             return response.json()

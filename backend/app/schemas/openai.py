@@ -73,3 +73,13 @@ class OpenAIChatCompletionResponse(BaseModel):
     usage: dict | None = None
     object: str | None = None
     created: int | None = None
+
+
+class OpenAIEmbeddingCreate(BaseModel):
+    provider: str | None = None
+    fallback_providers: list[str] = []
+    model: str
+    input: str | list[str]
+    encoding_format: str | None = None
+    dimensions: int | None = None
+    user: str | None = None

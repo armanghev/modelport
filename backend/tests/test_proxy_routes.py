@@ -1011,6 +1011,142 @@ def test_models_route_returns_anthropic_upstream_models_for_selected_provider(
     }
 
 
+def test_model_retrieve_route_returns_openai_compatible_model_for_anthropic_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fake_get_anthropic_model(provider, api_key, model_id):
+        assert provider.id == "anthropic"
+        assert api_key == "sk-anthropic-seeded"
+        assert model_id == "claude-sonnet-4-5-20250929"
+        return {
+            "id": "claude-sonnet-4-5-20250929",
+            "display_name": "Claude Sonnet 4.5",
+            "created_at": "2025-09-29T00:00:00Z",
+            "type": "model",
+        }
+
+    monkeypatch.setattr(
+        "app.api.openai.get_anthropic_model",
+        fake_get_anthropic_model,
+    )
+
+    response = client.get(
+        "/v1/models/claude-sonnet-4-5-20250929",
+        headers={
+            "Authorization": "Bearer test-local-token",
+            "X-ModelPort-Provider": "anthropic",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "claude-sonnet-4-5-20250929",
+        "object": "model",
+        "owned_by": "anthropic",
+        "created": 1759104000,
+    }
+
+
+def test_embeddings_route_proxies_openai_compatible_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured_payload: dict = {}
+
+    def fake_create_embedding(provider, api_key, payload):
+        captured_payload.update(payload)
+        return {
+            "object": "list",
+            "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2]}],
+            "model": "text-embedding-3-small",
+            "usage": {"prompt_tokens": 5, "total_tokens": 5},
+        }
+
+    monkeypatch.setattr("app.api.openai.create_embedding", fake_create_embedding)
+
+    response = client.post(
+        "/v1/embeddings",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "input": "hello",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_payload == {
+        "model": "text-embedding-3-small",
+        "input": "hello",
+    }
+    assert response.json()["data"][0]["embedding"] == [0.1, 0.2]
+
+
+def test_embeddings_route_rejects_anthropic_provider(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/v1/embeddings",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "input": "hello",
+        },
+    )
+
+    assert response.status_code == 501
+
+
+def test_messages_count_tokens_route_supports_anthropic_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    def fake_count_message_tokens(provider, api_key, payload):
+        captured.update(payload)
+        return {"input_tokens": 11}
+
+    monkeypatch.setattr(
+        "app.api.anthropic.count_message_tokens",
+        fake_count_message_tokens,
+    )
+
+    response = client.post(
+        "/v1/messages/count_tokens",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "system": "You are helpful.",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["model"] == "claude-sonnet-4-5"
+    assert captured["system"] == "You are helpful."
+    assert response.json() == {"input_tokens": 11}
+
+
+def test_messages_count_tokens_route_rejects_openai_provider(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/v1/messages/count_tokens",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+
+    assert response.status_code == 501
+
+
 def test_chat_completions_route_supports_anthropic_upstream(
     client: TestClient,
     monkeypatch,
