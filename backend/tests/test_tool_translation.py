@@ -432,6 +432,56 @@ def test_translate_anthropic_tool_stream_to_openai_chunks() -> None:
     assert final_chunks[0]["choices"][0]["finish_reason"] == "tool_calls"
 
 
+def test_stream_translator_handles_tool_arguments_before_metadata() -> None:
+    translator = AnthropicStreamTranslator(requested_model="gpt-4.1", input_tokens=10)
+
+    events = translator.consume_chunk(
+        {
+            "id": "chatcmpl_delayed_meta",
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "function": {"arguments": '{"path":"out.txt"}'},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }
+    )
+    events.extend(
+        translator.consume_chunk(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_delayed",
+                                    "function": {"name": "Write"},
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"completion_tokens": 4},
+            }
+        )
+    )
+    events.extend(translator.finish_events())
+    body = "".join(events)
+
+    assert '"type": "tool_use"' in body
+    assert '"name": "Write"' in body
+    assert '"partial_json": "{\\"path\\":\\"out.txt\\"}"' in body
+
+
 def test_translate_openai_request_with_tools_to_anthropic_internal_model() -> None:
     payload = OpenAIChatCompletionCreate(
         model="gpt-4o",
