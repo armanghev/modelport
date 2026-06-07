@@ -44,6 +44,7 @@ from app.responses.store import (
     PROXY_EMULATED,
     build_input_items_from_create_payload,
     cancel_emulated_response,
+    get_active_response_resource,
     get_response_resource,
     list_input_items,
     retrieve_emulated_response,
@@ -87,11 +88,11 @@ def resolve_stored_response_route(
     session: Session,
     response_id: str,
 ) -> tuple:
-    resource = get_response_resource(session, response_id)
+    resource = get_active_response_resource(session, response_id)
     if resource is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Response resource '{response_id}' was not found.",
+            detail=f"Response resource '{response_id}' was not found or has expired.",
         )
 
     resolved_route = resolve_provider_routes(

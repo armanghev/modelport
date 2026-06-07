@@ -172,6 +172,7 @@ class ProxyResponseResource(Base):
     response_json: Mapped[str | None] = mapped_column(Text)
     input_items_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 def _ensure_sqlite_parent_dir(database_url: str) -> None:
@@ -205,26 +206,36 @@ def initialize_database(session_factory: sessionmaker[Session]) -> None:
 
 def ensure_runtime_columns(engine) -> None:
     inspector = inspect(engine)
-    if "api_requests" not in inspector.get_table_names():
+    table_names = set(inspector.get_table_names())
+
+    if "api_requests" in table_names:
+        existing_columns = {column["name"] for column in inspector.get_columns("api_requests")}
+        statements: list[str] = []
+        if "ttfb_ms" not in existing_columns:
+            statements.append("ALTER TABLE api_requests ADD COLUMN ttfb_ms INTEGER")
+        if "completion_reason" not in existing_columns:
+            statements.append("ALTER TABLE api_requests ADD COLUMN completion_reason VARCHAR(64)")
+        if "request_body" not in existing_columns:
+            statements.append("ALTER TABLE api_requests ADD COLUMN request_body TEXT")
+        if "response_body" not in existing_columns:
+            statements.append("ALTER TABLE api_requests ADD COLUMN response_body TEXT")
+
+        if statements:
+            with engine.begin() as connection:
+                for statement in statements:
+                    connection.exec_driver_sql(statement)
+
+    if "proxy_response_resources" not in table_names:
         return
 
-    existing_columns = {column["name"] for column in inspector.get_columns("api_requests")}
-    statements: list[str] = []
-    if "ttfb_ms" not in existing_columns:
-        statements.append("ALTER TABLE api_requests ADD COLUMN ttfb_ms INTEGER")
-    if "completion_reason" not in existing_columns:
-        statements.append("ALTER TABLE api_requests ADD COLUMN completion_reason VARCHAR(64)")
-    if "request_body" not in existing_columns:
-        statements.append("ALTER TABLE api_requests ADD COLUMN request_body TEXT")
-    if "response_body" not in existing_columns:
-        statements.append("ALTER TABLE api_requests ADD COLUMN response_body TEXT")
-
-    if not statements:
-        return
-
-    with engine.begin() as connection:
-        for statement in statements:
-            connection.exec_driver_sql(statement)
+    proxy_response_columns = {
+        column["name"] for column in inspector.get_columns("proxy_response_resources")
+    }
+    if "expires_at" not in proxy_response_columns:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE proxy_response_resources ADD COLUMN expires_at DATETIME"
+            )
 
 
 def get_setting(session: Session, key: str, default: dict) -> dict:

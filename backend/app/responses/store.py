@@ -1,14 +1,39 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from app.database import ProxyResponseResource
+from app.database import ProxyResponseResource, utc_now
 from app.schemas.openai import OpenAIResponseCreate, OpenAIResponseInputMessage
 
 UPSTREAM_PASSTHROUGH = "upstream_passthrough"
 PROXY_EMULATED = "proxy_emulated"
+DEFAULT_PROXY_RESPONSE_TTL = timedelta(hours=24)
+
+
+def _ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def default_expires_at(*, now: datetime | None = None) -> datetime:
+    current = now or utc_now()
+    return current + DEFAULT_PROXY_RESPONSE_TTL
+
+
+def response_resource_is_expired(
+    resource: ProxyResponseResource,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if resource.expires_at is None:
+        return False
+    current = _ensure_utc(now or utc_now())
+    expires_at = _ensure_utc(resource.expires_at)
+    return expires_at <= current
 
 
 def build_input_items_from_create_payload(payload: OpenAIResponseCreate) -> list[dict]:
@@ -61,6 +86,7 @@ def save_emulated_response(
     response_body: dict,
     input_items: list[dict],
     status: str = "completed",
+    expires_at: datetime | None = None,
 ) -> ProxyResponseResource:
     resource = ProxyResponseResource(
         id=response_id,
@@ -71,6 +97,7 @@ def save_emulated_response(
         upstream_model=upstream_model,
         response_json=json.dumps(response_body),
         input_items_json=json.dumps(input_items),
+        expires_at=expires_at or default_expires_at(),
     )
     session.add(resource)
     session.flush()
@@ -85,6 +112,7 @@ def save_passthrough_response(
     requested_model: str,
     upstream_model: str,
     status: str,
+    expires_at: datetime | None = None,
 ) -> ProxyResponseResource:
     resource = ProxyResponseResource(
         id=response_id,
@@ -94,6 +122,7 @@ def save_passthrough_response(
         requested_model=requested_model,
         upstream_model=upstream_model,
         upstream_response_id=response_id,
+        expires_at=expires_at or default_expires_at(),
     )
     session.add(resource)
     session.flush()
@@ -104,15 +133,27 @@ def get_response_resource(session: Session, response_id: str) -> ProxyResponseRe
     return session.get(ProxyResponseResource, response_id)
 
 
-def retrieve_emulated_response(session: Session, response_id: str) -> dict | None:
+def get_active_response_resource(
+    session: Session,
+    response_id: str,
+    *,
+    now: datetime | None = None,
+) -> ProxyResponseResource | None:
     resource = get_response_resource(session, response_id)
+    if resource is None or response_resource_is_expired(resource, now=now):
+        return None
+    return resource
+
+
+def retrieve_emulated_response(session: Session, response_id: str) -> dict | None:
+    resource = get_active_response_resource(session, response_id)
     if resource is None or resource.storage_kind != PROXY_EMULATED or not resource.response_json:
         return None
     return json.loads(resource.response_json)
 
 
 def list_input_items(session: Session, response_id: str) -> dict | None:
-    resource = get_response_resource(session, response_id)
+    resource = get_active_response_resource(session, response_id)
     if resource is None:
         return None
     if resource.storage_kind == PROXY_EMULATED:
@@ -123,7 +164,7 @@ def list_input_items(session: Session, response_id: str) -> dict | None:
 
 
 def cancel_emulated_response(session: Session, response_id: str) -> dict:
-    resource = get_response_resource(session, response_id)
+    resource = get_active_response_resource(session, response_id)
     if resource is None or resource.storage_kind != PROXY_EMULATED or not resource.response_json:
         raise KeyError(response_id)
 
