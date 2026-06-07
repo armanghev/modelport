@@ -159,6 +159,21 @@ class AppSetting(TimestampMixin, Base):
     value_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class ProxyResponseResource(Base):
+    __tablename__ = "proxy_response_resources"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    storage_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    requested_model: Mapped[str] = mapped_column(String(255), nullable=False)
+    upstream_model: Mapped[str] = mapped_column(String(255), nullable=False)
+    upstream_response_id: Mapped[str | None] = mapped_column(String(255))
+    response_json: Mapped[str | None] = mapped_column(Text)
+    input_items_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 def _ensure_sqlite_parent_dir(database_url: str) -> None:
     prefix = "sqlite:///"
     if not database_url.startswith(prefix):
