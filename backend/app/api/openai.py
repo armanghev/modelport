@@ -88,7 +88,6 @@ def build_openai_upstream_payload(
 ) -> dict:
     upstream_payload = payload.model_dump(
         exclude={"provider", "fallback_providers"},
-        exclude_defaults=True,
         exclude_none=True,
     )
     upstream_payload["model"] = upstream_model
