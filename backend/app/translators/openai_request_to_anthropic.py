@@ -31,6 +31,8 @@ def translate_openai_tool_choice(tool_choice: str | dict | None) -> dict | None:
         return None
     if tool_choice == "auto":
         return {"type": "auto"}
+    if tool_choice == "none":
+        return {"type": "none"}
     if tool_choice in {"required", "any"}:
         return {"type": "any"}
     if isinstance(tool_choice, dict):
@@ -102,7 +104,7 @@ def translate_openai_chat_completion_request_to_anthropic(
         pending_tool_results.clear()
 
     for message in payload.messages:
-        if message.role == "system":
+        if message.role in {"system", "developer"}:
             normalized_content = normalize_openai_content(message.content)
             if normalized_content:
                 system_messages.append(normalized_content)
@@ -146,6 +148,9 @@ def translate_openai_chat_completion_request_to_anthropic(
         system=system,
         messages=messages,
         stream=payload.stream,
+        temperature=payload.temperature,
+        top_p=payload.top_p,
+        stop_sequences=[payload.stop] if isinstance(payload.stop, str) else payload.stop,
         tools=tools or None,
         tool_choice=tool_choice,
     )

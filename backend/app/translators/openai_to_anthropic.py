@@ -490,9 +490,55 @@ def translate_anthropic_stream_event_to_openai_chunks(
                     state["prompt_tokens"] = input_tokens
         return chunks
 
+    if "tool_indices" not in state:
+        state["tool_indices"] = {}
+
+    tool_indices = state["tool_indices"]
+    if not isinstance(tool_indices, dict):
+        tool_indices = {}
+        state["tool_indices"] = tool_indices
+
     chunk_id = str(state.get("id") or "chatcmpl_generated")
 
+    if event_type == "content_block_start":
+        content_block = payload.get("content_block")
+        index = payload.get("index")
+        if (
+            isinstance(content_block, dict)
+            and content_block.get("type") == "tool_use"
+            and isinstance(index, int)
+        ):
+            tool_indices[index] = index
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "model": requested_model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": index,
+                                        "id": str(content_block.get("id") or f"call_{index}"),
+                                        "type": "function",
+                                        "function": {
+                                            "name": str(content_block.get("name") or ""),
+                                            "arguments": "",
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        return chunks
+
     if event_type == "content_block_delta":
+        index = payload.get("index")
         delta = payload.get("delta")
         if isinstance(delta, dict) and delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
             chunks.append(
@@ -504,6 +550,36 @@ def translate_anthropic_stream_event_to_openai_chunks(
                         {
                             "index": 0,
                             "delta": {"content": delta["text"]},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        elif (
+            isinstance(delta, dict)
+            and delta.get("type") == "input_json_delta"
+            and isinstance(delta.get("partial_json"), str)
+            and isinstance(index, int)
+        ):
+            chunks.append(
+                {
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "model": requested_model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": index,
+                                        "type": "function",
+                                        "function": {
+                                            "arguments": delta["partial_json"],
+                                        },
+                                    }
+                                ]
+                            },
                             "finish_reason": None,
                         }
                     ],

@@ -20,7 +20,11 @@ from app.schemas.openai import (
 )
 from app.translators.anthropic_to_openai import translate_anthropic_message_to_openai
 from app.translators.openai_request_to_anthropic import translate_openai_chat_completion_request_to_anthropic
-from app.translators.openai_to_anthropic import AnthropicStreamTranslator, translate_openai_chat_completion_to_anthropic
+from app.translators.openai_to_anthropic import (
+    AnthropicStreamTranslator,
+    translate_anthropic_stream_event_to_openai_chunks,
+    translate_openai_chat_completion_to_anthropic,
+)
 
 
 def test_translate_streaming_payload_requests_usage_in_final_chunk() -> None:
@@ -71,6 +75,19 @@ def test_translate_tools_and_tool_choice_to_openai_payload() -> None:
         }
     ]
     assert translated["tool_choice"] == "auto"
+
+
+def test_translate_tool_choice_none_to_openai_payload() -> None:
+    payload = AnthropicMessageCreate(
+        model="gemini-2.5-pro",
+        max_tokens=1024,
+        messages=[AnthropicMessage(role="user", content="Write a file")],
+        tool_choice={"type": "none"},
+    )
+
+    translated = translate_anthropic_message_to_openai(payload, upstream_model="models/gemini-2.5-pro")
+
+    assert translated["tool_choice"] == "none"
 
 
 def test_translate_tool_use_and_tool_result_history_to_openai_messages() -> None:
@@ -158,6 +175,50 @@ def test_translate_openai_tool_calls_to_anthropic_tool_use_response() -> None:
     assert response.content[0].id == "call_abc"
     assert response.content[0].name == "Write"
     assert response.content[0].input == {"path": "claude.html", "contents": "<html>"}
+
+
+def test_translate_openai_tool_choice_none_to_anthropic_request() -> None:
+    payload = OpenAIChatCompletionCreate(
+        model="gpt-4.1",
+        messages=[OpenAIChatMessage(role="user", content="hello")],
+        tool_choice="none",
+    )
+
+    translated = translate_openai_chat_completion_request_to_anthropic(payload)
+
+    assert translated.tool_choice == {"type": "none"}
+
+
+def test_translate_openai_request_preserves_sampling_and_stop_parameters() -> None:
+    payload = OpenAIChatCompletionCreate(
+        model="gpt-4.1",
+        messages=[OpenAIChatMessage(role="user", content="hello")],
+        temperature=0.4,
+        top_p=0.8,
+        stop=["END", "STOP"],
+    )
+
+    translated = translate_openai_chat_completion_request_to_anthropic(payload)
+
+    assert translated.temperature == 0.4
+    assert translated.top_p == 0.8
+    assert translated.stop_sequences == ["END", "STOP"]
+
+
+def test_translate_openai_request_concatenates_system_and_developer_messages() -> None:
+    payload = OpenAIChatCompletionCreate(
+        model="gpt-4.1",
+        messages=[
+            OpenAIChatMessage(role="system", content="System"),
+            OpenAIChatMessage(role="developer", content="Developer"),
+            OpenAIChatMessage(role="user", content="hello"),
+        ],
+    )
+
+    translated = translate_openai_chat_completion_request_to_anthropic(payload)
+
+    assert translated.system == "System\n\nDeveloper"
+    assert translated.messages == [AnthropicMessage(role="user", content="hello")]
 
 
 def test_stream_translator_emits_tool_use_events() -> None:
@@ -335,6 +396,40 @@ def test_translate_parallel_openai_tool_calls_to_anthropic_response() -> None:
     assert response.content[0].input == {"command": "ls"}
     assert response.content[1].name == "Read"
     assert response.content[1].input == {"file_path": "claude.html"}
+
+
+def test_translate_anthropic_tool_stream_to_openai_chunks() -> None:
+    state: dict[str, object] = {}
+
+    assert (
+        translate_anthropic_stream_event_to_openai_chunks(
+            'data: {"type":"message_start","message":{"id":"msg_123","usage":{"input_tokens":12}}}',
+            state=state,
+            requested_model="claude-sonnet-4-5",
+        )
+        == []
+    )
+
+    start_chunks = translate_anthropic_stream_event_to_openai_chunks(
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_123","name":"Write","input":{}}}',
+        state=state,
+        requested_model="claude-sonnet-4-5",
+    )
+    assert start_chunks[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "Write"
+
+    delta_chunks = translate_anthropic_stream_event_to_openai_chunks(
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":\\"out.txt\\"}"}}',
+        state=state,
+        requested_model="claude-sonnet-4-5",
+    )
+    assert delta_chunks[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"] == '{"path":"out.txt"}'
+
+    final_chunks = translate_anthropic_stream_event_to_openai_chunks(
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}',
+        state=state,
+        requested_model="claude-sonnet-4-5",
+    )
+    assert final_chunks[0]["choices"][0]["finish_reason"] == "tool_calls"
 
 
 def test_translate_openai_request_with_tools_to_anthropic_internal_model() -> None:

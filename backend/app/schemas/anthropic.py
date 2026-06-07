@@ -49,6 +49,13 @@ class AnthropicMessageCreate(BaseModel):
     system: str | list[AnthropicTextBlock] | None = None
     messages: list[AnthropicMessage]
     stream: bool = False
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    stop_sequences: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+    service_tier: str | None = None
+    thinking: dict[str, Any] | None = None
     tools: list[AnthropicToolDefinition] | None = None
     tool_choice: dict[str, Any] | None = None
 

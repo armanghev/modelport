@@ -40,6 +40,7 @@ from app.tracking.usage_service import (
     extract_usage_snapshot,
 )
 from app.translators.anthropic_to_openai import translate_anthropic_message_to_openai
+from app.translators.models import translate_anthropic_models_to_openai
 from app.translators.openai_request_to_anthropic import (
     translate_openai_chat_completion_request_to_anthropic,
 )
@@ -53,6 +54,19 @@ router = APIRouter(tags=["proxy"])
 
 def build_anthropic_upstream_payload(
     payload,
+    *,
+    upstream_model: str,
+) -> dict:
+    upstream_payload = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_none=True,
+    )
+    upstream_payload["model"] = upstream_model
+    return upstream_payload
+
+
+def build_openai_upstream_payload(
+    payload: OpenAIChatCompletionCreate,
     *,
     upstream_model: str,
 ) -> dict:
@@ -92,7 +106,9 @@ def get_models(
         )
 
     if resolved_route.provider.provider_type == "anthropic_compatible":
-        return list_anthropic_models(resolved_route.provider, api_key=provider_secret)
+        return translate_anthropic_models_to_openai(
+            list_anthropic_models(resolved_route.provider, api_key=provider_secret)
+        )
 
     return list_models(resolved_route.provider, api_key=provider_secret)
 
@@ -156,8 +172,8 @@ def create_chat_completions(
 
         def event_stream():
             for route_index, resolved_route in enumerate(resolved_routes):
-                openai_payload = translate_anthropic_message_to_openai(
-                    internal_payload,
+                openai_payload = build_openai_upstream_payload(
+                    payload,
                     upstream_model=resolved_route.upstream_model,
                 )
                 ttfb_ms: int | None = None
@@ -504,8 +520,8 @@ def create_chat_completions(
             )
             return OpenAIChatCompletionResponse.model_validate(openai_response)
 
-        openai_payload = translate_anthropic_message_to_openai(
-            internal_payload,
+        openai_payload = build_openai_upstream_payload(
+            payload,
             upstream_model=resolved_route.upstream_model,
         )
         try:

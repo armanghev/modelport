@@ -60,6 +60,8 @@ def translate_tool_choice(tool_choice: dict[str, Any] | None) -> str | dict[str,
     choice_type = tool_choice.get("type")
     if choice_type == "auto":
         return "auto"
+    if choice_type == "none":
+        return "none"
     if choice_type == "any":
         return "required"
     if choice_type == "tool":
@@ -172,6 +174,12 @@ def translate_anthropic_message_to_openai(
         translated_payload["stream_options"] = {"include_usage": True}
     if payload.max_tokens is not None:
         translated_payload["max_tokens"] = payload.max_tokens
+    if payload.temperature is not None:
+        translated_payload["temperature"] = payload.temperature
+    if payload.top_p is not None:
+        translated_payload["top_p"] = payload.top_p
+    if payload.stop_sequences:
+        translated_payload["stop"] = payload.stop_sequences
     if payload.tools:
         translated_payload["tools"] = translate_tools(payload.tools)
     tool_choice = translate_tool_choice(payload.tool_choice)

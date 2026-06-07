@@ -1000,10 +1000,12 @@ def test_models_route_returns_anthropic_upstream_models_for_selected_provider(
 
     assert response.status_code == 200
     assert response.json() == {
+        "object": "list",
         "data": [
             {
                 "id": "claude-sonnet-4-5-20250929",
-                "display_name": "Claude Sonnet 4.5",
+                "object": "model",
+                "owned_by": "anthropic",
             }
         ]
     }
