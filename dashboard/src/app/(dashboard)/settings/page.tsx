@@ -358,7 +358,7 @@ export default function SettingsPage() {
           {errorMessage}
         </div>
       ) : null}
-      <section className="grid gap-4 xl:grid-cols-5">
+      <section className="flex flex-col gap-4">
         <SettingsCard
           title="API keys"
           description="Manage API keys for your providers."
@@ -476,7 +476,6 @@ export default function SettingsPage() {
         <SettingsCard
           title="Logging and tracking"
           description="Control what data is logged and tracked."
-          className="xl:col-span-2"
         >
           <div className="space-y-5">
             {tracking.map((item) => (
