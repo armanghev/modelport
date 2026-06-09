@@ -170,6 +170,7 @@ class ProviderDetail(BaseModel):
 
 class ProviderHealthCard(BaseModel):
     id: str
+    slug: str
     displayName: str
     type: ProviderType
     status: Literal["operational", "degraded", "offline"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 
@@ -10,7 +11,19 @@ ProviderType = Literal[
     "anthropic_compatible",
     "local_openai_compatible",
 ]
-CredentialSource = Literal["env", "database"]
+
+SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def normalize_provider_slug(value: str) -> str:
+    normalized = value.strip().lower()
+    normalized = re.sub(r"[^a-z0-9-]+", "-", normalized)
+    normalized = re.sub(r"-{2,}", "-", normalized).strip("-")
+    if not normalized or not SLUG_PATTERN.fullmatch(normalized):
+        raise ValueError(
+            "Provider slug must be lowercase letters, numbers, and dashes (e.g. openai or mock-local)."
+        )
+    return normalized
 
 
 class ORMModel(BaseModel):
@@ -24,16 +37,23 @@ class ProviderBase(BaseModel):
     enabled: bool = True
 
 
-class ProviderCreate(ProviderBase):
-    id: str
+class ProviderPresetResponse(BaseModel):
+    slug: str
+    display_name: str
+    provider_type: ProviderType
+    base_url: str
+    protocol: Literal["openai", "anthropic"]
 
-    @field_validator("id")
+
+class ProviderCreate(ProviderBase):
+    slug: str
+    api_key: str | None = None
+    credential_name: str | None = None
+
+    @field_validator("slug")
     @classmethod
-    def validate_id(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if not normalized.replace("-", "").replace("_", "").isalnum():
-            raise ValueError("Provider ids must be lowercase slugs.")
-        return normalized
+    def validate_slug(cls, value: str) -> str:
+        return normalize_provider_slug(value)
 
 
 class ProviderUpdate(BaseModel):
@@ -45,6 +65,7 @@ class ProviderUpdate(BaseModel):
 
 class ProviderResponse(ORMModel):
     id: str
+    slug: str
     display_name: str
     provider_type: ProviderType
     base_url: str
@@ -60,17 +81,13 @@ class ProviderResponse(ORMModel):
 class ProviderCredentialCreate(BaseModel):
     provider_id: str
     display_name: str
-    source: CredentialSource
-    api_key_env: str | None = None
-    api_key: str | None = None
+    api_key: str
     is_default: bool = False
     enabled: bool = True
 
 
 class ProviderCredentialUpdate(BaseModel):
     display_name: str | None = None
-    source: CredentialSource | None = None
-    api_key_env: str | None = None
     api_key: str | None = None
     is_default: bool | None = None
     enabled: bool | None = None
@@ -79,9 +96,8 @@ class ProviderCredentialUpdate(BaseModel):
 class ProviderCredentialResponse(ORMModel):
     id: str
     provider_id: str
+    provider_slug: str
     display_name: str
-    source: CredentialSource
-    api_key_env: str | None
     key_hint: str
     configured: bool
     is_default: bool
@@ -92,7 +108,6 @@ class ProviderCredentialResponse(ORMModel):
 
 class CredentialSecretResponse(BaseModel):
     id: str
-    source: CredentialSource
     configured: bool
     api_key: str | None
 
@@ -118,6 +133,7 @@ class PricingOverrideUpdate(BaseModel):
 class PricingOverrideResponse(ORMModel):
     id: str
     provider_id: str
+    provider_slug: str | None = None
     model: str
     input_per_1m_usd: float
     output_per_1m_usd: float
@@ -153,6 +169,7 @@ class SettingsResponse(BaseModel):
 
 class ProviderHealthCard(BaseModel):
     id: str
+    slug: str
     displayName: str
     type: ProviderType
     status: Literal["operational", "degraded", "offline"]
@@ -201,6 +218,7 @@ class ProviderModelSummary(BaseModel):
 
 class ProviderModelsEntry(BaseModel):
     provider_id: str
+    provider_uuid: str | None = None
     display_name: str
     provider_type: ProviderType
     base_url: str

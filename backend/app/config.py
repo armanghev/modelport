@@ -27,18 +27,17 @@ class DatabaseConfig(BaseModel):
     url: str = "sqlite:///./data/modelport.db"
 
 
-class ProviderSeedConfig(BaseModel):
+class ProviderPresetConfig(BaseModel):
     type: ProviderType
     display_name: str
     base_url: str
-    api_key_env: str | None = None
 
 
 class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    providers: dict[str, ProviderSeedConfig] = Field(default_factory=dict)
+    providers: dict[str, ProviderPresetConfig] = Field(default_factory=dict)
 
 
 def resolve_database_url(database_url: str, *, config_dir: Path) -> str:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,7 +50,8 @@ class SchemaVersion(Base):
 class Provider(TimestampMixin, Base):
     __tablename__ = "providers"
 
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     provider_type: Mapped[str] = mapped_column(String(64), nullable=False)
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
@@ -69,8 +69,6 @@ class ProviderCredential(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id"), nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    source: Mapped[str] = mapped_column(String(32), nullable=False)
-    api_key_env: Mapped[str | None] = mapped_column(String(255))
     encrypted_api_key: Mapped[str | None] = mapped_column(Text)
     key_hint: Mapped[str | None] = mapped_column(String(255))
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -197,11 +195,36 @@ def initialize_database(session_factory: sessionmaker[Session]) -> None:
     engine = session_factory.kw["bind"]
     Base.metadata.create_all(engine)
     ensure_runtime_columns(engine)
+    migrate_provider_schema_v2(engine, session_factory)
 
     with session_factory() as session:
         if session.get(SchemaVersion, 1) is None:
             session.add(SchemaVersion(version=1))
-            session.commit()
+        if session.get(SchemaVersion, 2) is None:
+            session.add(SchemaVersion(version=2))
+        session.commit()
+
+
+def migrate_provider_schema_v2(engine, session_factory: sessionmaker[Session]) -> None:
+    with session_factory() as session:
+        if session.get(SchemaVersion, 2) is not None:
+            return
+
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if "providers" in table_names:
+        provider_columns = {column["name"] for column in inspector.get_columns("providers")}
+        if "slug" not in provider_columns:
+            with engine.begin() as connection:
+                connection.exec_driver_sql("DROP TABLE IF EXISTS provider_credentials")
+                connection.exec_driver_sql("DROP TABLE IF EXISTS pricing_overrides")
+                connection.exec_driver_sql("DROP TABLE IF EXISTS provider_health_checks")
+                connection.exec_driver_sql("DROP TABLE IF EXISTS providers")
+
+    Provider.__table__.create(engine, checkfirst=True)
+    ProviderCredential.__table__.create(engine, checkfirst=True)
+    PricingOverride.__table__.create(engine, checkfirst=True)
+    ProviderHealthCheck.__table__.create(engine, checkfirst=True)
 
 
 def ensure_runtime_columns(engine) -> None:
@@ -257,21 +280,22 @@ def set_setting(session: Session, key: str, value: dict) -> AppSetting:
     return record
 
 
-def resolve_env_secret(credential: ProviderCredential) -> str | None:
-    if credential.source != "env" or not credential.api_key_env:
+def get_provider_by_slug(session: Session, slug: str) -> Provider | None:
+    normalized = slug.strip().lower()
+    if not normalized:
         return None
-    return os.environ.get(credential.api_key_env)
+    return session.scalar(select(Provider).where(Provider.slug == normalized))
+
+
+def get_provider_by_id(session: Session, provider_id: str) -> Provider | None:
+    return session.get(Provider, provider_id)
 
 
 def resolved_key_hint(credential: ProviderCredential) -> str:
-    if credential.source == "env":
-        return mask_secret(resolve_env_secret(credential))
-    return credential.key_hint or "Configured"
+    return credential.key_hint or "Not configured"
 
 
 def is_credential_configured(credential: ProviderCredential) -> bool:
-    if credential.source == "env":
-        return bool(resolve_env_secret(credential))
     return bool(credential.encrypted_api_key)
 
 
@@ -284,36 +308,10 @@ def clear_default_credentials(session: Session, provider_id: str, exclude_id: st
             credential.is_default = False
 
 
-def seed_admin_data(session_factory: sessionmaker[Session], config: AppConfig) -> None:
+def seed_admin_data(session_factory: sessionmaker[Session], _config: AppConfig) -> None:
     with session_factory() as session:
-        has_providers = session.scalar(select(Provider.id).limit(1))
-        if has_providers is not None:
+        if session.get(AppSetting, "tracking") is not None:
             return
-
-        for provider_id, provider_config in config.providers.items():
-            provider = Provider(
-                id=provider_id,
-                display_name=provider_config.display_name,
-                provider_type=provider_config.type,
-                base_url=provider_config.base_url,
-                enabled=True,
-            )
-            session.add(provider)
-            session.flush()
-
-            if provider_config.api_key_env:
-                secret = os.environ.get(provider_config.api_key_env)
-                session.add(
-                    ProviderCredential(
-                        provider_id=provider_id,
-                        display_name=f"{provider_config.display_name} Env",
-                        source="env",
-                        api_key_env=provider_config.api_key_env,
-                        key_hint=mask_secret(secret),
-                        is_default=True,
-                        enabled=True,
-                    )
-                )
 
         set_setting(
             session,
