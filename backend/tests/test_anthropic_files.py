@@ -10,7 +10,7 @@ def test_files_upload_route_proxies_anthropic_provider(
     captured: dict = {}
 
     def fake_create_file(provider, api_key, *, filename, content, content_type):
-        captured["provider_id"] = provider.id
+        captured["provider_id"] = provider.slug
         captured["api_key"] = api_key
         captured["filename"] = filename
         captured["content"] = content
@@ -50,7 +50,7 @@ def test_files_list_route_proxies_anthropic_provider(
     def fake_list_files(provider, api_key, *, after_id=None, before_id=None, limit=None, scope_id=None):
         captured.update(
             {
-                "provider_id": provider.id,
+                "provider_id": provider.slug,
                 "after_id": after_id,
                 "before_id": before_id,
                 "limit": limit,

@@ -13,7 +13,7 @@ def test_message_batches_create_route_proxies_anthropic_provider(
     captured: dict = {}
 
     def fake_create_message_batch(provider, api_key, payload):
-        captured["provider_id"] = provider.id
+        captured["provider_id"] = provider.slug
         captured["api_key"] = api_key
         captured["payload"] = payload
         return {
@@ -74,7 +74,7 @@ def test_message_batches_retrieve_route_proxies_anthropic_provider(
     monkeypatch,
 ) -> None:
     def fake_get_message_batch(provider, api_key, batch_id):
-        assert provider.id == "anthropic"
+        assert provider.slug == "anthropic"
         assert batch_id == "msgbatch_123"
         return {
             "id": "msgbatch_123",
@@ -108,7 +108,7 @@ def test_message_batches_list_route_proxies_anthropic_provider(
     def fake_list_message_batches(provider, api_key, *, after_id=None, before_id=None, limit=None):
         captured.update(
             {
-                "provider_id": provider.id,
+                "provider_id": provider.slug,
                 "after_id": after_id,
                 "before_id": before_id,
                 "limit": limit,

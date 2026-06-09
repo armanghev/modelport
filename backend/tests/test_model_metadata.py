@@ -178,12 +178,12 @@ def test_parse_openrouter_upstream_models_preserves_rich_fields() -> None:
 
 
 def test_enrich_provider_model_uses_inline_openrouter_metadata(client) -> None:
-    from app.database import Provider
+    from app.database import get_provider_by_slug
     from app.model_metadata_service import build_pricing_index, build_usage_index
 
     session_factory = client.app.state.session_factory
     with session_factory() as session:
-        provider = session.get(Provider, "openai")
+        provider = get_provider_by_slug(session, "openai")
         assert provider is not None
         parsed = parse_openrouter_model(
             {
@@ -240,11 +240,11 @@ def test_match_model_metadata_normalizes_provider_prefixed_ids(client) -> None:
 
 
 def test_enrich_provider_model_merges_metadata_pricing_and_usage(client) -> None:
-    from app.database import PricingOverride, Provider
+    from app.database import PricingOverride, get_provider_by_slug
 
     session_factory = client.app.state.session_factory
     with session_factory() as session:
-        provider = session.get(Provider, "openai")
+        provider = get_provider_by_slug(session, "openai")
         assert provider is not None
         session.add(
             ModelMetadata(
@@ -264,7 +264,7 @@ def test_enrich_provider_model_merges_metadata_pricing_and_usage(client) -> None
         )
         session.add(
             PricingOverride(
-                provider_id="openai",
+                provider_id=provider.id,
                 model="gpt-4.1",
                 input_per_1m_usd=2.0,
                 output_per_1m_usd=8.0,
@@ -342,11 +342,11 @@ def test_apply_gemini_native_model_fields_merges_description_and_context() -> No
 
 
 def test_enrich_provider_model_uses_upstream_description_when_metadata_missing(client) -> None:
-    from app.database import Provider
+    from app.database import get_provider_by_slug
 
     session_factory = client.app.state.session_factory
     with session_factory() as session:
-        provider = session.get(Provider, "gemini")
+        provider = get_provider_by_slug(session, "gemini")
         assert provider is not None
         from app.model_metadata_service import build_pricing_index, build_usage_index
 

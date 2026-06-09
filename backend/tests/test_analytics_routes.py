@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from app.database import ApiRequest, ModelMetadata, ProviderHealthCheck
 
+from tests.test_helpers import cards_by_slug, provider_uuid
+
 
 def seed_analytics_data(client: TestClient) -> None:
     now = datetime.now(UTC)
@@ -156,7 +158,7 @@ def seed_analytics_data(client: TestClient) -> None:
         session.add_all(
             [
                 ProviderHealthCheck(
-                    provider_id="openai",
+                    provider_id=provider_uuid(client, "openai"),
                     status="operational",
                     latency_ms=120,
                     available_model_count=42,
@@ -164,7 +166,7 @@ def seed_analytics_data(client: TestClient) -> None:
                     checked_at=now - timedelta(seconds=10),
                 ),
                 ProviderHealthCheck(
-                    provider_id="openrouter",
+                    provider_id=provider_uuid(client, "openrouter"),
                     status="degraded",
                     latency_ms=260,
                     available_model_count=18,
@@ -172,7 +174,7 @@ def seed_analytics_data(client: TestClient) -> None:
                     checked_at=now - timedelta(seconds=12),
                 ),
                 ProviderHealthCheck(
-                    provider_id="ollama",
+                    provider_id=provider_uuid(client, "ollama"),
                     status="operational",
                     latency_ms=90,
                     available_model_count=6,
@@ -203,7 +205,10 @@ def test_overview_analytics_endpoint_returns_aggregates(client: TestClient) -> N
     assert payload["topModels"][0]["displayName"] == "GPT-4.1"
     assert payload["topModels"][0]["provider"] == "OpenAI"
     assert payload["recentRequests"][0]["upstreamRequestId"] == "req_analytics_01"
-    assert payload["recentRequests"][1]["status"] == "error"
+    recent_by_id = {
+        row["upstreamRequestId"]: row for row in payload["recentRequests"]
+    }
+    assert recent_by_id["req_analytics_04"]["status"] == "error"
     assert set(payload["tokenUsage"]) == {"1h", "6h", "24h", "7d", "30d"}
     assert len(payload["tokenUsage"]["30d"]["points"]) == 30
 
@@ -222,8 +227,8 @@ def test_requests_analytics_endpoint_returns_filters_rows_and_totals(client: Tes
     assert payload["filters"]["providers"] == ["Ollama", "OpenAI", "OpenRouter"]
     assert payload["filters"]["statuses"] == ["error", "success"]
     assert payload["rows"][0]["provider"] == "OpenAI"
-    assert payload["rows"][1]["status"] == "error"
-    assert payload["rows"][1]["costUsd"] == 0.001
+    error_row = next(row for row in payload["rows"] if row["status"] == "error")
+    assert error_row["costUsd"] == 0.001
 
 
 def test_models_analytics_endpoint_groups_usage_by_provider_and_model(client: TestClient) -> None:
@@ -268,8 +273,8 @@ def test_provider_health_endpoint_includes_request_counts(client: TestClient) ->
 
     assert response.status_code == 200
     payload = response.json()
-    cards_by_id = {card["id"]: card for card in payload["cards"]}
-    assert cards_by_id["openai"]["requestsToday"] == 2
-    assert cards_by_id["openrouter"]["requestsToday"] == 2
-    assert cards_by_id["ollama"]["requestsToday"] == 0
-    assert cards_by_id["openrouter"]["status"] == "degraded"
+    cards = cards_by_slug(payload["cards"])
+    assert cards["openai"]["requestsToday"] == 2
+    assert cards["openrouter"]["requestsToday"] == 2
+    assert cards["ollama"]["requestsToday"] == 0
+    assert cards["openrouter"]["status"] == "degraded"

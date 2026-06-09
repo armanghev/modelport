@@ -6,26 +6,31 @@ from fastapi.testclient import TestClient
 
 from app.database import ProviderHealthCheck
 
+from tests.test_helpers import cards_by_slug, provider_uuid
+
 
 def test_provider_routes_list_create_and_patch(client: TestClient) -> None:
     list_response = client.get("/admin/providers")
     assert list_response.status_code == 200
-    assert any(provider["id"] == "openai" for provider in list_response.json())
+    assert any(provider["slug"] == "openai" for provider in list_response.json())
 
     create_response = client.post(
         "/admin/providers",
         json={
-            "id": "groq",
+            "slug": "groq",
             "display_name": "Groq",
             "provider_type": "openai_compatible",
             "base_url": "https://api.groq.com/openai/v1",
+            "api_key": "sk-groq-secret",
+            "credential_name": "Groq Default",
         },
     )
     assert create_response.status_code == 201
-    assert create_response.json()["id"] == "groq"
+    assert create_response.json()["slug"] == "groq"
+    groq_uuid = create_response.json()["id"]
 
     patch_response = client.patch(
-        "/admin/providers/groq",
+        f"/admin/providers/{groq_uuid}",
         json={
             "display_name": "Groq Cloud",
             "enabled": False,
@@ -41,7 +46,7 @@ def test_provider_list_includes_latest_health_state(client: TestClient) -> None:
     with session_factory() as session:
         session.add(
             ProviderHealthCheck(
-                provider_id="openai",
+                provider_id=provider_uuid(client, "openai"),
                 status="degraded",
                 latency_ms=321,
                 available_model_count=7,
@@ -54,17 +59,107 @@ def test_provider_list_includes_latest_health_state(client: TestClient) -> None:
     list_response = client.get("/admin/providers")
 
     assert list_response.status_code == 200
-    openai_provider = next(provider for provider in list_response.json() if provider["id"] == "openai")
+    openai_provider = next(provider for provider in list_response.json() if provider["slug"] == "openai")
     assert openai_provider["health_status"] == "degraded"
     assert openai_provider["last_error"] == "rate limited"
     assert openai_provider["last_checked_at"] is not None
 
 
+def test_provider_delete_removes_provider_without_credentials(client: TestClient) -> None:
+    create_provider_response = client.post(
+        "/admin/providers",
+        json={
+            "slug": "mock-local",
+            "display_name": "Mock Local",
+            "provider_type": "openai_compatible",
+            "base_url": "http://127.0.0.1:8011/v1",
+        },
+    )
+    assert create_provider_response.status_code == 201
+    provider_id = create_provider_response.json()["id"]
+
+    delete_response = client.delete(f"/admin/providers/{provider_id}")
+    assert delete_response.status_code == 204
+
+    providers_response = client.get("/admin/providers")
+    assert all(provider["slug"] != "mock-local" for provider in providers_response.json())
+
+
+def test_credential_delete_removes_credential_and_orphaned_provider(client: TestClient) -> None:
+    create_provider_response = client.post(
+        "/admin/providers",
+        json={
+            "slug": "tempprovider",
+            "display_name": "Temp Provider",
+            "provider_type": "openai_compatible",
+            "base_url": "https://api.example.com/v1",
+            "api_key": "sk-temp-secret",
+            "credential_name": "Temp Credential",
+        },
+    )
+    assert create_provider_response.status_code == 201
+    temp_uuid = create_provider_response.json()["id"]
+    credential_id = next(
+        credential["id"]
+        for credential in client.get("/admin/provider-credentials").json()
+        if credential["provider_id"] == temp_uuid
+    )
+
+    delete_response = client.delete(f"/admin/provider-credentials/{credential_id}")
+    assert delete_response.status_code == 204
+
+    providers_response = client.get("/admin/providers")
+    assert all(provider["slug"] != "tempprovider" for provider in providers_response.json())
+
+    credentials_response = client.get("/admin/provider-credentials")
+    assert all(credential["id"] != credential_id for credential in credentials_response.json())
+
+
+def test_credential_delete_keeps_provider_when_other_credentials_remain(client: TestClient) -> None:
+    openai_uuid = provider_uuid(client, "openai")
+    primary_credential = client.post(
+        "/admin/provider-credentials",
+        json={
+            "provider_id": openai_uuid,
+            "display_name": "OpenAI Backup",
+            "api_key": "sk-backup-secret",
+            "is_default": False,
+            "enabled": True,
+        },
+    )
+    assert primary_credential.status_code == 201
+    backup_credential_id = primary_credential.json()["id"]
+
+    credentials_response = client.get("/admin/provider-credentials")
+    default_openai_credential = next(
+        credential
+        for credential in credentials_response.json()
+        if credential["provider_id"] == openai_uuid and credential["is_default"]
+    )
+
+    delete_response = client.delete(
+        f"/admin/provider-credentials/{default_openai_credential['id']}",
+    )
+    assert delete_response.status_code == 204
+
+    providers_response = client.get("/admin/providers")
+    assert any(provider["slug"] == "openai" for provider in providers_response.json())
+
+    remaining_credentials = client.get("/admin/provider-credentials").json()
+    openai_credentials = [
+        credential for credential in remaining_credentials if credential["provider_id"] == openai_uuid
+    ]
+    assert len(openai_credentials) == 1
+    assert openai_credentials[0]["id"] == backup_credential_id
+    assert openai_credentials[0]["is_default"] is True
+
+
 def test_credential_routes_mask_and_reveal(client: TestClient) -> None:
     env_credentials = client.get("/admin/provider-credentials")
     assert env_credentials.status_code == 200
+    openai_uuid = provider_uuid(client, "openai")
     openai_credential = next(
-        credential for credential in env_credentials.json() if credential["provider_id"] == "openai"
+        credential for credential in env_credentials.json() if credential["provider_id"] == openai_uuid
     )
     assert openai_credential["key_hint"] == "sk************ed"
     assert "api_key" not in openai_credential
@@ -74,8 +169,7 @@ def test_credential_routes_mask_and_reveal(client: TestClient) -> None:
         json={"api_key": "sk-replaced-from-dashboard"},
     )
     assert update_response.status_code == 200
-    assert update_response.json()["source"] == "database"
-    assert update_response.json()["api_key_env"] is None
+    assert update_response.json()["configured"] is True
 
     reveal_response = client.get(f"/admin/provider-credentials/{openai_credential['id']}/secret")
     assert reveal_response.status_code == 200
@@ -86,7 +180,7 @@ def test_pricing_and_settings_routes(client: TestClient) -> None:
     pricing_create = client.post(
         "/admin/pricing",
         json={
-            "provider_id": "openai",
+            "provider_id": provider_uuid(client, "openai"),
             "model": "gpt-5.5",
             "input_per_1m_usd": 2.0,
             "output_per_1m_usd": 8.0,
@@ -145,7 +239,7 @@ def test_pricing_create_rejects_negative_rates(client: TestClient) -> None:
     response = client.post(
         "/admin/pricing",
         json={
-            "provider_id": "openrouter",
+            "provider_id": provider_uuid(client, "openrouter"),
             "model": "openrouter/auto",
             "input_per_1m_usd": -1.0,
             "output_per_1m_usd": 8.0,
@@ -163,7 +257,8 @@ def test_provider_health_endpoint_returns_dashboard_ready_cards(
         return {
             "cards": [
                 {
-                    "id": "openai",
+                    "id": "uuid-openai",
+                    "slug": "openai",
                     "displayName": "OpenAI",
                     "type": "openai_compatible",
                     "status": "operational",
@@ -177,7 +272,8 @@ def test_provider_health_endpoint_returns_dashboard_ready_cards(
                     "lastError": None,
                 },
                 {
-                    "id": "openrouter",
+                    "id": "uuid-openrouter",
+                    "slug": "openrouter",
                     "displayName": "OpenRouter",
                     "type": "openai_compatible",
                     "status": "operational",
@@ -191,7 +287,8 @@ def test_provider_health_endpoint_returns_dashboard_ready_cards(
                     "lastError": None,
                 },
                 {
-                    "id": "ollama",
+                    "id": "uuid-ollama",
+                    "slug": "ollama",
                     "displayName": "Ollama",
                     "type": "local_openai_compatible",
                     "status": "operational",
@@ -220,12 +317,12 @@ def test_provider_health_endpoint_returns_dashboard_ready_cards(
     assert payload["details"] == []
     assert "routingRules" not in payload
 
-    cards_by_id = {card["id"]: card for card in payload["cards"]}
-    assert cards_by_id["openai"]["status"] == "operational"
-    assert cards_by_id["openai"]["availableModelCount"] == 2
-    assert cards_by_id["openai"]["successRate"] == 100.0
-    assert cards_by_id["openrouter"]["availableModelCount"] == 1
-    assert cards_by_id["ollama"]["availableModelCount"] == 1
+    cards = cards_by_slug(payload["cards"])
+    assert cards["openai"]["status"] == "operational"
+    assert cards["openai"]["availableModelCount"] == 2
+    assert cards["openai"]["successRate"] == 100.0
+    assert cards["openrouter"]["availableModelCount"] == 1
+    assert cards["ollama"]["availableModelCount"] == 1
 
 
 def test_provider_health_endpoint_marks_unreachable_provider_offline(
@@ -235,10 +332,11 @@ def test_provider_health_endpoint_marks_unreachable_provider_offline(
     client.post(
         "/admin/providers",
         json={
-            "id": "broken-local",
+            "slug": "brokenlocal",
             "display_name": "Broken Local",
             "provider_type": "local_openai_compatible",
             "base_url": "http://localhost:9999/v1",
+            "api_key": "unused",
         },
     )
 
@@ -246,7 +344,8 @@ def test_provider_health_endpoint_marks_unreachable_provider_offline(
         return {
             "cards": [
                 {
-                    "id": "broken-local",
+                    "id": "uuid-brokenlocal",
+                    "slug": "brokenlocal",
                     "displayName": "Broken Local",
                     "type": "local_openai_compatible",
                     "status": "offline",
@@ -271,9 +370,9 @@ def test_provider_health_endpoint_marks_unreachable_provider_offline(
     health_response = client.get("/admin/providers/health")
 
     assert health_response.status_code == 200
-    cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
-    assert cards_by_id["broken-local"]["status"] == "offline"
-    assert "Connection refused" in cards_by_id["broken-local"]["lastError"]
+    cards = cards_by_slug(health_response.json()["cards"])
+    assert cards["brokenlocal"]["status"] == "offline"
+    assert "Connection refused" in cards["brokenlocal"]["lastError"]
 
 
 def test_provider_health_allows_local_provider_without_api_key(
@@ -309,21 +408,21 @@ def test_provider_health_allows_local_provider_without_api_key(
     health_response = client.get("/admin/providers/health")
 
     assert health_response.status_code == 200
-    cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
-    assert cards_by_id["ollama"]["status"] == "operational"
-    assert cards_by_id["ollama"]["availableModelCount"] == 1
+    cards = cards_by_slug(health_response.json()["cards"])
+    assert cards["ollama"]["status"] == "operational"
+    assert cards["ollama"]["availableModelCount"] == 1
 
 
 def test_provider_health_prefers_configured_enabled_credential(
     client: TestClient,
     monkeypatch,
 ) -> None:
+    openai_uuid = provider_uuid(client, "openai")
     created_credential = client.post(
         "/admin/provider-credentials",
         json={
-            "provider_id": "openai",
+            "provider_id": openai_uuid,
             "display_name": "OpenAI Primary",
-            "source": "database",
             "api_key": "sk-configured-secret",
             "is_default": False,
             "enabled": True,
@@ -334,7 +433,7 @@ def test_provider_health_prefers_configured_enabled_credential(
     default_openai_credential = next(
         credential
         for credential in credentials_response.json()
-        if credential["provider_id"] == "openai" and credential["is_default"]
+        if credential["provider_id"] == openai_uuid and credential["is_default"]
     )
     disable_response = client.patch(
         f"/admin/provider-credentials/{default_openai_credential['id']}",
@@ -370,9 +469,9 @@ def test_provider_health_prefers_configured_enabled_credential(
     health_response = client.get("/admin/providers/health")
 
     assert health_response.status_code == 200
-    cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
-    assert cards_by_id["openai"]["status"] == "operational"
-    assert cards_by_id["openai"]["availableModelCount"] == 1
+    cards = cards_by_slug(health_response.json()["cards"])
+    assert cards["openai"]["status"] == "operational"
+    assert cards["openai"]["availableModelCount"] == 1
 
 
 def test_provider_health_uses_anthropic_models_endpoint_and_headers(
@@ -424,9 +523,9 @@ def test_provider_health_uses_anthropic_models_endpoint_and_headers(
     health_response = client.get("/admin/providers/health")
 
     assert health_response.status_code == 200
-    cards_by_id = {card["id"]: card for card in health_response.json()["cards"]}
-    assert cards_by_id["anthropic"]["status"] == "operational"
-    assert cards_by_id["anthropic"]["availableModelCount"] == 1
+    cards = cards_by_slug(health_response.json()["cards"])
+    assert cards["anthropic"]["status"] == "operational"
+    assert cards["anthropic"]["availableModelCount"] == 1
 
 
 def test_provider_models_endpoint_returns_live_models_for_healthy_providers_only(

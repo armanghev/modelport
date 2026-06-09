@@ -39,27 +39,22 @@ def app_config(tmp_path: Path) -> Path:
                 '    type: "openai_compatible"',
                 '    display_name: "OpenAI"',
                 '    base_url: "https://api.openai.com/v1"',
-                '    api_key_env: "OPENAI_API_KEY"',
                 '  openrouter:',
                 '    type: "openai_compatible"',
                 '    display_name: "OpenRouter"',
                 '    base_url: "https://openrouter.ai/api/v1"',
-                '    api_key_env: "OPENROUTER_API_KEY"',
                 '  anthropic:',
                 '    type: "anthropic_compatible"',
                 '    display_name: "Anthropic"',
                 '    base_url: "https://api.anthropic.com"',
-                '    api_key_env: "ANTHROPIC_API_KEY"',
                 '  gemini:',
                 '    type: "openai_compatible"',
                 '    display_name: "Gemini"',
                 '    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"',
-                '    api_key_env: "GEMINI_API_KEY"',
                 '  ollama:',
                 '    type: "local_openai_compatible"',
                 '    display_name: "Ollama"',
                 '    base_url: "http://localhost:11434/v1"',
-                '    api_key_env: null',
             ]
         ),
         encoding="utf-8",
@@ -68,7 +63,7 @@ def app_config(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def client(app_config: Path, encryption_key: str) -> TestClient:
+def bare_client(app_config: Path, encryption_key: str) -> TestClient:
     previous_proxy_token = os.environ.get("MODELPORT_TOKEN")
     previous_openai = os.environ.get("OPENAI_API_KEY")
     previous_openrouter = os.environ.get("OPENROUTER_API_KEY")
@@ -116,3 +111,35 @@ def client(app_config: Path, encryption_key: str) -> TestClient:
         os.environ.pop("PROXY_ENCRYPTION_KEY", None)
     else:
         os.environ["PROXY_ENCRYPTION_KEY"] = previous_encryption
+
+
+@pytest.fixture()
+def client(bare_client: TestClient) -> TestClient:
+    seeded_api_keys = {
+        "openai": "sk-openai-seeded",
+        "openrouter": "sk-openrouter-seeded",
+        "anthropic": "sk-anthropic-seeded",
+        "gemini": "sk-gemini-seeded",
+    }
+    config = bare_client.app.state.config
+    existing_slugs = {
+        provider["slug"] for provider in bare_client.get("/admin/providers").json()
+    }
+
+    for slug, preset in config.providers.items():
+        if slug in existing_slugs:
+            continue
+        payload: dict[str, str] = {
+            "slug": slug,
+            "display_name": preset.display_name,
+            "provider_type": preset.type,
+            "base_url": preset.base_url,
+        }
+        api_key = seeded_api_keys.get(slug)
+        if api_key:
+            payload["api_key"] = api_key
+            payload["credential_name"] = f"{preset.display_name} Default"
+        create_response = bare_client.post("/admin/providers", json=payload)
+        assert create_response.status_code == 201
+
+    return bare_client

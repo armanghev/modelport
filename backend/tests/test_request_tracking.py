@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 from app.database import ApiRequest, build_session_factory
 
+from tests.test_helpers import provider_uuid
+
 
 def test_messages_route_persists_request_usage_and_cost(
     client: TestClient,
@@ -13,7 +15,7 @@ def test_messages_route_persists_request_usage_and_cost(
     pricing_response = client.post(
         "/admin/pricing",
         json={
-            "provider_id": "openai",
+            "provider_id": provider_uuid(client, "openai"),
             "model": "gpt-5.5",
             "input_per_1m_usd": 2.0,
             "output_per_1m_usd": 8.0,
@@ -204,7 +206,7 @@ def test_messages_route_persists_stream_request_with_gemini_usage_and_reasoning(
     pricing_response = client.post(
         "/admin/pricing",
         json={
-            "provider_id": "gemini",
+            "provider_id": provider_uuid(client, "gemini"),
             "model": "models/gemini-2.5-pro",
             "input_per_1m_usd": 1.25,
             "output_per_1m_usd": 10.0,
@@ -270,7 +272,7 @@ def test_messages_route_persists_stream_request_metadata(
     pricing_response = client.post(
         "/admin/pricing",
         json={
-            "provider_id": "openai",
+            "provider_id": provider_uuid(client, "openai"),
             "model": "gpt-5.5",
             "input_per_1m_usd": 2.0,
             "output_per_1m_usd": 8.0,
@@ -331,7 +333,7 @@ def test_chat_completions_route_persists_request_usage_and_cost(
     pricing_response = client.post(
         "/admin/pricing",
         json={
-            "provider_id": "openai",
+            "provider_id": provider_uuid(client, "openai"),
             "model": "gpt-5.5",
             "input_per_1m_usd": 2.0,
             "output_per_1m_usd": 8.0,

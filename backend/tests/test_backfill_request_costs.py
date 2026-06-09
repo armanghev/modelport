@@ -5,6 +5,8 @@ from sqlalchemy import select
 from app.backfill_request_costs import backfill_request_costs
 from app.database import ApiRequest
 
+from tests.test_helpers import provider_uuid
+
 
 def test_backfill_request_costs_updates_existing_rows(client) -> None:
     session_factory = client.app.state.session_factory
@@ -34,7 +36,7 @@ def test_backfill_request_costs_updates_existing_rows(client) -> None:
     client.post(
         "/admin/pricing",
         json={
-            "provider_id": "openai",
+            "provider_id": provider_uuid(client, "openai"),
             "model": "gpt-4.1",
             "input_per_1m_usd": 2.0,
             "output_per_1m_usd": 8.0,
@@ -59,6 +61,7 @@ def test_backfill_request_costs_updates_existing_rows(client) -> None:
 def test_backfill_clears_stale_negative_estimated_cost(client) -> None:
     from app.database import PricingOverride
 
+    openrouter_uuid = provider_uuid(client, "openrouter")
     session_factory = client.app.state.session_factory
     with session_factory() as session:
         session.add(
@@ -83,7 +86,7 @@ def test_backfill_clears_stale_negative_estimated_cost(client) -> None:
         )
         session.add(
             PricingOverride(
-                provider_id="openrouter",
+                provider_id=openrouter_uuid,
                 model="openrouter/auto",
                 input_per_1m_usd=-1_000_000.0,
                 output_per_1m_usd=-1_000_000.0,

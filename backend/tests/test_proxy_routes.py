@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from app.database import ProviderHealthCheck
 
+from tests.test_helpers import provider_uuid
+
 
 def test_messages_route_requires_proxy_token(client: TestClient) -> None:
     response = client.post(
@@ -122,7 +124,7 @@ def test_messages_route_supports_anthropic_upstream_without_openai_translation(
     captured: dict = {}
 
     def fake_create_anthropic_message(provider, api_key, payload):
-        captured["provider_id"] = provider.id
+        captured["provider_id"] = provider.slug
         captured["api_key"] = api_key
         captured["payload"] = payload
         return {
@@ -182,11 +184,12 @@ def test_messages_route_uses_database_backed_default_credential(
     client: TestClient,
     monkeypatch,
 ) -> None:
+    openai_uuid = provider_uuid(client, "openai")
     credentials_response = client.get("/admin/provider-credentials")
     default_openai_credential = next(
         credential
         for credential in credentials_response.json()
-        if credential["provider_id"] == "openai" and credential["is_default"]
+        if credential["provider_id"] == openai_uuid and credential["is_default"]
     )
     disable_response = client.patch(
         f"/admin/provider-credentials/{default_openai_credential['id']}",
@@ -197,9 +200,8 @@ def test_messages_route_uses_database_backed_default_credential(
     create_response = client.post(
         "/admin/provider-credentials",
         json={
-            "provider_id": "openai",
+            "provider_id": openai_uuid,
             "display_name": "OpenAI DB Key",
-            "source": "database",
             "api_key": "sk-db-backed-secret",
             "is_default": True,
             "enabled": True,
@@ -603,7 +605,7 @@ def test_messages_route_allows_localhost_openai_compatible_provider_without_key(
     provider_response = client.post(
         "/admin/providers",
         json={
-            "id": "lmstudio",
+            "slug": "lmstudio",
             "display_name": "LM Studio",
             "provider_type": "openai_compatible",
             "base_url": "http://127.0.0.1:12345/v1",
@@ -706,7 +708,7 @@ def test_messages_route_streams_anthropic_upstream_events_without_openai_chunk_t
     captured: dict = {}
 
     def fake_stream_anthropic_message_events(provider, api_key, payload):
-        captured["provider_id"] = provider.id
+        captured["provider_id"] = provider.slug
         captured["api_key"] = api_key
         captured["payload"] = payload
         yield "event: message_start"
@@ -974,7 +976,7 @@ def test_models_route_returns_anthropic_upstream_models_for_selected_provider(
     monkeypatch,
 ) -> None:
     def fake_list_anthropic_models(provider, api_key):
-        assert provider.id == "anthropic"
+        assert provider.slug == "anthropic"
         assert api_key == "sk-anthropic-seeded"
         return {
             "data": [
@@ -1016,7 +1018,7 @@ def test_model_retrieve_route_returns_openai_compatible_model_for_anthropic_prov
     monkeypatch,
 ) -> None:
     def fake_get_anthropic_model(provider, api_key, model_id):
-        assert provider.id == "anthropic"
+        assert provider.slug == "anthropic"
         assert api_key == "sk-anthropic-seeded"
         assert model_id == "claude-sonnet-4-5-20250929"
         return {
@@ -1220,7 +1222,7 @@ def test_get_response_route_proxies_openai_compatible_provider(
     retrieve_calls: list[str] = []
 
     def fake_create_response(provider, api_key, payload):
-        create_calls.append({"provider_id": provider.id, "payload": payload})
+        create_calls.append({"provider_id": provider.slug, "payload": payload})
         return {
             "id": "resp_upstream_123",
             "object": "response",
@@ -1589,7 +1591,7 @@ def test_chat_completions_route_supports_anthropic_upstream(
     captured: dict = {}
 
     def fake_create_anthropic_message(provider, api_key, payload):
-        captured["provider_id"] = provider.id
+        captured["provider_id"] = provider.slug
         captured["api_key"] = api_key
         captured["payload"] = payload
         return {
@@ -1813,7 +1815,7 @@ def test_chat_completions_route_streams_anthropic_upstream_as_openai_sse(
     captured: dict = {}
 
     def fake_stream_anthropic_message_events(provider, api_key, payload):
-        captured["provider_id"] = provider.id
+        captured["provider_id"] = provider.slug
         captured["api_key"] = api_key
         captured["payload"] = payload
         yield "event: message_start"
@@ -1907,7 +1909,7 @@ def test_messages_route_uses_fallback_provider_when_primary_is_degraded(
     with session_factory() as session:
         session.add(
             ProviderHealthCheck(
-                provider_id="openrouter",
+                provider_id=provider_uuid(client, "openrouter"),
                 status="degraded",
                 latency_ms=500,
                 available_model_count=3,
@@ -1917,7 +1919,7 @@ def test_messages_route_uses_fallback_provider_when_primary_is_degraded(
         )
         session.add(
             ProviderHealthCheck(
-                provider_id="openai",
+                provider_id=provider_uuid(client, "openai"),
                 status="operational",
                 latency_ms=120,
                 available_model_count=20,

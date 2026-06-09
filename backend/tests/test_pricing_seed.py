@@ -5,7 +5,7 @@ from pathlib import Path
 from app.pricing_seed import load_pricing_catalog, seed_pricing_overrides
 from sqlalchemy import select
 
-from app.database import PricingOverride
+from app.database import PricingOverride, get_provider_by_slug
 
 
 def test_seed_pricing_overrides_is_idempotent(client) -> None:
@@ -32,9 +32,11 @@ def test_seed_pricing_overrides_is_idempotent(client) -> None:
     assert first["catalog"] == second["catalog"]
 
     with session_factory() as session:
+        gemini = get_provider_by_slug(session, "gemini")
+        assert gemini is not None
         gemini_pro = session.scalar(
             select(PricingOverride).where(
-                PricingOverride.provider_id == "gemini",
+                PricingOverride.provider_id == gemini.id,
                 PricingOverride.model == "models/gemini-2.5-pro",
             )
         )
