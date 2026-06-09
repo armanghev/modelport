@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.analytics_service import build_provider_details, list_requests, requests_today_count
@@ -18,9 +18,10 @@ from app.database import (
     ProviderCredential,
     ProviderHealthCheck,
     clear_default_credentials,
+    get_provider_by_id,
+    get_provider_by_slug,
     get_setting,
     is_credential_configured,
-    resolve_env_secret,
     resolved_key_hint,
     set_setting,
 )
@@ -49,6 +50,7 @@ from app.schemas.admin import (
     PricingOverrideResponse,
     PricingOverrideUpdate,
     ProviderCreate,
+    ProviderPresetResponse,
     ProviderCredentialCreate,
     ProviderCredentialResponse,
     ProviderCredentialUpdate,
@@ -69,8 +71,15 @@ def get_session(request: Request) -> Session:
         yield session
 
 
-def require_provider(session: Session, provider_id: str) -> Provider:
-    provider = session.get(Provider, provider_id)
+def require_provider_by_id(session: Session, provider_id: str) -> Provider:
+    provider = get_provider_by_id(session, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.")
+    return provider
+
+
+def require_provider_by_slug(session: Session, slug: str) -> Provider:
+    provider = get_provider_by_slug(session, slug)
     if provider is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.")
     return provider
@@ -81,6 +90,14 @@ def require_credential(session: Session, credential_id: str) -> ProviderCredenti
     if credential is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential not found.")
     return credential
+
+
+def delete_provider_and_related(session: Session, provider_id: str) -> None:
+    session.execute(delete(PricingOverride).where(PricingOverride.provider_id == provider_id))
+    session.execute(delete(ProviderHealthCheck).where(ProviderHealthCheck.provider_id == provider_id))
+    provider = session.get(Provider, provider_id)
+    if provider is not None:
+        session.delete(provider)
 
 
 def require_pricing_override(session: Session, pricing_id: str) -> PricingOverride:
@@ -98,6 +115,7 @@ def serialize_provider(
     return ProviderResponse.model_validate(
         {
             "id": provider.id,
+            "slug": provider.slug,
             "display_name": provider.display_name,
             "provider_type": provider.provider_type,
             "base_url": provider.base_url,
@@ -112,14 +130,19 @@ def serialize_provider(
     )
 
 
-def serialize_credential(credential: ProviderCredential) -> ProviderCredentialResponse:
+def serialize_credential(
+    credential: ProviderCredential,
+    provider_slug: str | None = None,
+) -> ProviderCredentialResponse:
+    slug = provider_slug
+    if slug is None and credential.provider is not None:
+        slug = credential.provider.slug
     return ProviderCredentialResponse.model_validate(
         {
             "id": credential.id,
             "provider_id": credential.provider_id,
+            "provider_slug": slug or "",
             "display_name": credential.display_name,
-            "source": credential.source,
-            "api_key_env": credential.api_key_env,
             "key_hint": resolved_key_hint(credential),
             "configured": is_credential_configured(credential),
             "is_default": credential.is_default,
@@ -130,18 +153,27 @@ def serialize_credential(credential: ProviderCredential) -> ProviderCredentialRe
     )
 
 
-def serialize_pricing(record: PricingOverride) -> PricingOverrideResponse:
-    return PricingOverrideResponse.model_validate(record)
+def serialize_pricing(record: PricingOverride, provider_slug: str | None = None) -> PricingOverrideResponse:
+    return PricingOverrideResponse.model_validate(
+        {
+            "id": record.id,
+            "provider_id": record.provider_id,
+            "provider_slug": provider_slug,
+            "model": record.model,
+            "input_per_1m_usd": record.input_per_1m_usd,
+            "output_per_1m_usd": record.output_per_1m_usd,
+            "currency": record.currency,
+            "enabled": record.enabled,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+        }
+    )
 
 
 def resolve_credential_secret(credential: ProviderCredential | None) -> str | None:
-    if credential is None:
+    if credential is None or not credential.encrypted_api_key:
         return None
-    if credential.source == "env":
-        return resolve_env_secret(credential)
-    if credential.encrypted_api_key:
-        return decrypt_secret(credential.encrypted_api_key)
-    return None
+    return decrypt_secret(credential.encrypted_api_key)
 
 
 def get_default_credential(provider: Provider) -> ProviderCredential | None:
@@ -401,6 +433,7 @@ def serialize_provider_health_card(
 
     return {
         "id": provider.id,
+        "slug": provider.slug,
         "displayName": provider.display_name,
         "type": provider.provider_type,
         "status": status_value,
@@ -442,7 +475,7 @@ def collect_provider_health_payload(session: Session) -> dict:
                 provider,
                 latest_check,
                 recent_checks,
-                requests_today=requests_today_count(all_requests, provider.id, now),
+                requests_today=requests_today_count(all_requests, provider.slug, now),
             )
         )
         details.append(build_provider_details(all_requests, provider, now))
@@ -459,10 +492,26 @@ def apply_credential_secret(credential: ProviderCredential, api_key: str) -> Non
     except EncryptionConfigurationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    credential.source = "database"
-    credential.api_key_env = None
     credential.encrypted_api_key = encrypted_api_key
     credential.key_hint = key_hint
+
+
+@router.get("/provider-presets", response_model=list[ProviderPresetResponse])
+def list_provider_presets(request: Request) -> list[ProviderPresetResponse]:
+    config = request.app.state.config
+    presets: list[ProviderPresetResponse] = []
+    for slug, preset in config.providers.items():
+        protocol = "anthropic" if preset.type == "anthropic_compatible" else "openai"
+        presets.append(
+            ProviderPresetResponse(
+                slug=slug,
+                display_name=preset.display_name,
+                provider_type=preset.type,
+                base_url=preset.base_url,
+                protocol=protocol,
+            )
+        )
+    return presets
 
 
 @router.get("/providers", response_model=list[ProviderResponse])
@@ -561,7 +610,8 @@ def list_provider_models(session: Session = Depends(get_session)) -> ProviderMod
 
         results.append(
             ProviderModelsEntry(
-                provider_id=provider.id,
+                provider_id=provider.slug,
+                provider_uuid=provider.id,
                 display_name=provider.display_name,
                 provider_type=provider.provider_type,
                 base_url=provider.base_url,
@@ -602,11 +652,24 @@ def list_provider_models(session: Session = Depends(get_session)) -> ProviderMod
 
 @router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
 def create_provider(payload: ProviderCreate, session: Session = Depends(get_session)) -> ProviderResponse:
-    if session.get(Provider, payload.id) is not None:
+    if get_provider_by_slug(session, payload.slug) is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider already exists.")
 
-    provider = Provider(**payload.model_dump())
+    provider_fields = payload.model_dump(exclude={"api_key", "credential_name"})
+    provider = Provider(**provider_fields)
     session.add(provider)
+    session.flush()
+
+    if payload.api_key:
+        credential = ProviderCredential(
+            provider_id=provider.id,
+            display_name=payload.credential_name or f"{provider.display_name} API key",
+            is_default=True,
+            enabled=True,
+        )
+        apply_credential_secret(credential, payload.api_key)
+        session.add(credential)
+
     session.commit()
     session.refresh(provider)
     return serialize_provider(provider)
@@ -618,7 +681,7 @@ def update_provider(
     payload: ProviderUpdate,
     session: Session = Depends(get_session),
 ) -> ProviderResponse:
-    provider = require_provider(session, provider_id)
+    provider = require_provider_by_id(session, provider_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(provider, field, value)
     session.commit()
@@ -626,12 +689,34 @@ def update_provider(
     return serialize_provider(provider)
 
 
+@router.delete("/providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_provider(
+    provider_id: str,
+    session: Session = Depends(get_session),
+) -> None:
+    require_provider_by_id(session, provider_id)
+    delete_provider_and_related(session, provider_id)
+    session.commit()
+
+
 @router.get("/provider-credentials", response_model=list[ProviderCredentialResponse])
 def list_provider_credentials(session: Session = Depends(get_session)) -> list[ProviderCredentialResponse]:
     credentials = session.scalars(
         select(ProviderCredential).order_by(ProviderCredential.provider_id, ProviderCredential.display_name)
     ).all()
-    return [serialize_credential(credential) for credential in credentials]
+    providers_by_id = {
+        provider.id: provider
+        for provider in session.scalars(select(Provider)).all()
+    }
+    return [
+        serialize_credential(
+            credential,
+            provider_slug=providers_by_id[credential.provider_id].slug
+            if credential.provider_id in providers_by_id
+            else "",
+        )
+        for credential in credentials
+    ]
 
 
 @router.post(
@@ -643,22 +728,15 @@ def create_provider_credential(
     payload: ProviderCredentialCreate,
     session: Session = Depends(get_session),
 ) -> ProviderCredentialResponse:
-    require_provider(session, payload.provider_id)
-    if payload.source == "env" and not payload.api_key_env:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Env credentials require api_key_env.")
-    if payload.source == "database" and not payload.api_key:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Database credentials require api_key.")
+    require_provider_by_id(session, payload.provider_id)
 
     credential = ProviderCredential(
         provider_id=payload.provider_id,
         display_name=payload.display_name,
-        source=payload.source,
-        api_key_env=payload.api_key_env,
         enabled=payload.enabled,
         is_default=payload.is_default,
     )
-    if payload.source == "database":
-        apply_credential_secret(credential, payload.api_key or "")
+    apply_credential_secret(credential, payload.api_key)
 
     if credential.is_default:
         clear_default_credentials(session, payload.provider_id)
@@ -688,25 +766,36 @@ def update_provider_credential(
 
     if "api_key" in updates and updates["api_key"] is not None:
         apply_credential_secret(credential, updates["api_key"])
-    elif "source" in updates and updates["source"] == "env":
-        api_key_env = updates.get("api_key_env", credential.api_key_env)
-        if not api_key_env:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Env credentials require api_key_env.")
-        credential.source = "env"
-        credential.api_key_env = api_key_env
-        credential.encrypted_api_key = None
-        credential.key_hint = None
-    elif "api_key_env" in updates:
-        if credential.source != "env":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="api_key_env can only be edited for env credentials.",
-            )
-        credential.api_key_env = updates["api_key_env"]
 
     session.commit()
     session.refresh(credential)
     return serialize_credential(credential)
+
+
+@router.delete("/provider-credentials/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_provider_credential(
+    credential_id: str,
+    session: Session = Depends(get_session),
+) -> None:
+    credential = require_credential(session, credential_id)
+    provider_id = credential.provider_id
+    was_default = credential.is_default
+
+    session.delete(credential)
+    session.flush()
+
+    remaining_credentials = session.scalars(
+        select(ProviderCredential)
+        .where(ProviderCredential.provider_id == provider_id)
+        .order_by(ProviderCredential.display_name)
+    ).all()
+
+    if not remaining_credentials:
+        delete_provider_and_related(session, provider_id)
+    elif was_default:
+        remaining_credentials[0].is_default = True
+
+    session.commit()
 
 
 @router.get("/provider-credentials/{credential_id}/secret", response_model=CredentialSecretResponse)
@@ -715,21 +804,9 @@ def reveal_provider_credential(
     session: Session = Depends(get_session),
 ) -> CredentialSecretResponse:
     credential = require_credential(session, credential_id)
-    if credential.source == "env":
-        from app.database import resolve_env_secret
-
-        api_key = resolve_env_secret(credential)
-        return CredentialSecretResponse(
-            id=credential.id,
-            source="env",
-            configured=bool(api_key),
-            api_key=api_key,
-        )
-
     if not credential.encrypted_api_key:
         return CredentialSecretResponse(
             id=credential.id,
-            source="database",
             configured=False,
             api_key=None,
         )
@@ -741,7 +818,6 @@ def reveal_provider_credential(
 
     return CredentialSecretResponse(
         id=credential.id,
-        source="database",
         configured=True,
         api_key=api_key,
     )
@@ -750,7 +826,19 @@ def reveal_provider_credential(
 @router.get("/pricing", response_model=list[PricingOverrideResponse])
 def list_pricing(session: Session = Depends(get_session)) -> list[PricingOverrideResponse]:
     records = session.scalars(select(PricingOverride).order_by(PricingOverride.provider_id, PricingOverride.model)).all()
-    return [serialize_pricing(record) for record in records]
+    providers_by_id = {
+        provider.id: provider
+        for provider in session.scalars(select(Provider)).all()
+    }
+    return [
+        serialize_pricing(
+            record,
+            provider_slug=providers_by_id[record.provider_id].slug
+            if record.provider_id in providers_by_id
+            else None,
+        )
+        for record in records
+    ]
 
 
 @router.post("/pricing", response_model=PricingOverrideResponse, status_code=status.HTTP_201_CREATED)
@@ -758,7 +846,7 @@ def create_pricing_override(
     payload: PricingOverrideCreate,
     session: Session = Depends(get_session),
 ) -> PricingOverrideResponse:
-    require_provider(session, payload.provider_id)
+    require_provider_by_id(session, payload.provider_id)
     record = PricingOverride(**payload.model_dump())
     session.add(record)
     session.commit()
@@ -775,7 +863,7 @@ def update_pricing_override(
     record = require_pricing_override(session, pricing_id)
     updates = payload.model_dump(exclude_unset=True)
     if "provider_id" in updates and updates["provider_id"] is not None:
-        require_provider(session, updates["provider_id"])
+        require_provider_by_id(session, updates["provider_id"])
     for field, value in updates.items():
         setattr(record, field, value)
     session.commit()
@@ -817,10 +905,28 @@ def get_settings(session: Session = Depends(get_session)) -> SettingsResponse:
         select(PricingOverride).order_by(PricingOverride.provider_id, PricingOverride.model)
     ).all()
 
+    providers_by_id = {provider.id: provider for provider in providers}
+
     return SettingsResponse(
         providers=[serialize_provider(provider) for provider in providers],
-        provider_credentials=[serialize_credential(credential) for credential in credentials],
-        pricing_overrides=[serialize_pricing(record) for record in pricing],
+        provider_credentials=[
+            serialize_credential(
+                credential,
+                provider_slug=providers_by_id[credential.provider_id].slug
+                if credential.provider_id in providers_by_id
+                else "",
+            )
+            for credential in credentials
+        ],
+        pricing_overrides=[
+            serialize_pricing(
+                record,
+                provider_slug=providers_by_id[record.provider_id].slug
+                if record.provider_id in providers_by_id
+                else None,
+            )
+            for record in pricing
+        ],
         settings=SettingsEnvelope(
             tracking=get_setting(session, "tracking", {}),
             appearance=get_setting(session, "appearance", {}),

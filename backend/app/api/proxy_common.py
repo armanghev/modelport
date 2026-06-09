@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from sqlalchemy import select
 
-from app.database import Provider, ProviderCredential, ProviderHealthCheck, resolve_env_secret
+from app.database import Provider, ProviderCredential, ProviderHealthCheck
 from app.routing.model_prefixes import (
     ResolvedModelSelection,
     infer_provider_from_model,
@@ -71,13 +71,9 @@ def require_proxy_token(
 
 
 def resolve_credential_secret(credential: ProviderCredential | None) -> str | None:
-    if credential is None:
+    if credential is None or not credential.encrypted_api_key:
         return None
-    if credential.source == "env":
-        return resolve_env_secret(credential)
-    if credential.encrypted_api_key:
-        return decrypt_secret(credential.encrypted_api_key)
-    return None
+    return decrypt_secret(credential.encrypted_api_key)
 
 
 def provider_supports_anonymous_access(base_url: str, provider_type: str) -> bool:
@@ -85,8 +81,8 @@ def provider_supports_anonymous_access(base_url: str, provider_type: str) -> boo
 
 
 def get_known_provider_ids(session: Session) -> set[str]:
-    provider_ids = session.scalars(select(Provider.id)).all()
-    return {provider_id.strip().lower() for provider_id in provider_ids if provider_id}
+    slugs = session.scalars(select(Provider.slug)).all()
+    return {slug.strip().lower() for slug in slugs if slug}
 
 
 def resolve_requested_provider(request: Request, provider_id: str | None) -> str:

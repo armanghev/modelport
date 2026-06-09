@@ -40,7 +40,7 @@ def is_gemini_provider(provider: Provider) -> bool:
 
 
 def is_openrouter_provider(provider: Provider) -> bool:
-    return provider.id == "openrouter" or "openrouter.ai" in provider.base_url
+    return provider.slug == "openrouter" or "openrouter.ai" in provider.base_url
 
 
 def openrouter_models_request_kwargs() -> dict[str, Any]:
@@ -684,7 +684,7 @@ def enrich_provider_model(
     if not isinstance(display_name, str) or not display_name.strip():
         display_name = model_id
 
-    metadata = match_model_metadata(provider.id, model_id, metadata_index)
+    metadata = match_model_metadata(provider.slug, model_id, metadata_index)
     pricing = pricing_index.get((provider.id, model_id))
 
     enriched: dict[str, Any] = {
@@ -728,7 +728,7 @@ def enrich_provider_model(
         elif enriched["metadata_source"] == "openrouter":
             enriched["metadata_source"] = "openrouter"
 
-    usage = usage_index.get((provider.id, model_id))
+    usage = usage_index.get((provider.slug, model_id))
     if usage is None:
         usage = usage_index.get((provider.display_name, model_id))
     if usage is not None and usage.request_count > 0:

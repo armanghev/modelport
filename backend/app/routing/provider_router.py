@@ -6,7 +6,13 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database import Provider, ProviderCredential, ProviderHealthCheck, is_credential_configured
+from app.database import (
+    Provider,
+    ProviderCredential,
+    ProviderHealthCheck,
+    get_provider_by_slug,
+    is_credential_configured,
+)
 
 
 @dataclass
@@ -89,7 +95,7 @@ def resolve_provider_routes(
     offline_routes: list[ResolvedProviderRoute] = []
 
     for index, candidate_id in enumerate(candidate_ids):
-        provider = session.get(Provider, candidate_id)
+        provider = get_provider_by_slug(session, candidate_id)
         if provider is None:
             if index == 0:
                 raise HTTPException(
@@ -108,7 +114,7 @@ def resolve_provider_routes(
             upstream_model=resolved_upstream_model,
             provider=provider,
             credential=select_provider_credential(provider),
-            health_status=get_latest_provider_health_status(session, candidate_id),
+            health_status=get_latest_provider_health_status(session, provider.id),
         )
         if route.health_status == "offline":
             offline_routes.append(route)

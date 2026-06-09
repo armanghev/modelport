@@ -116,8 +116,8 @@ def list_requests(session: Session) -> list[ApiRequest]:
 
 
 def list_providers(session: Session) -> dict[str, Provider]:
-    providers = session.scalars(select(Provider).order_by(Provider.id)).all()
-    return {provider.id: provider for provider in providers}
+    providers = session.scalars(select(Provider).order_by(Provider.slug)).all()
+    return {provider.slug: provider for provider in providers}
 
 
 def provider_display_name(provider_id: str | None, providers_by_id: dict[str, Provider]) -> str:
@@ -526,7 +526,7 @@ def build_provider_details(
     provider: Provider,
     now: datetime,
 ) -> dict:
-    provider_requests = [record for record in requests if record.provider == provider.id]
+    provider_requests = [record for record in requests if record.provider == provider.slug]
     cycle_end = now
     cycle_start = now - timedelta(days=29)
     spend_usd = sum(
@@ -569,7 +569,7 @@ def build_provider_details(
     ]
 
     return {
-        "providerId": provider.id,
+        "providerId": provider.slug,
         "region": "global",
         "supportTier": "Standard",
         "billingCycle": {

@@ -9,7 +9,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig, load_config
-from app.database import PricingOverride, Provider, build_session_factory
+from app.database import PricingOverride, Provider, build_session_factory, get_provider_by_slug
+from sqlalchemy import select
 from app.model_metadata_service import (
     fetch_openrouter_models_api_payload,
     parse_openrouter_model,
@@ -58,20 +59,33 @@ def upsert_pricing_override(
     return record
 
 
+def resolve_provider_uuid(session: Session, slug: str) -> str | None:
+    provider = get_provider_by_slug(session, slug)
+    return provider.id if provider is not None else None
+
+
+def list_configured_provider_slugs(session: Session) -> set[str]:
+    slugs = session.scalars(select(Provider.slug)).all()
+    return {slug for slug in slugs if slug}
+
+
 def seed_catalog_pricing(
     session: Session,
     catalog: dict[str, dict[str, dict[str, float]]],
     *,
-    configured_provider_ids: set[str],
+    configured_provider_slugs: set[str],
 ) -> int:
     upserted = 0
-    for provider_id, models in catalog.items():
-        if provider_id not in configured_provider_ids:
+    for provider_slug, models in catalog.items():
+        if provider_slug not in configured_provider_slugs:
+            continue
+        provider_uuid = resolve_provider_uuid(session, provider_slug)
+        if provider_uuid is None:
             continue
         for model, rates in models.items():
             upsert_pricing_override(
                 session,
-                provider_id=provider_id,
+                provider_id=provider_uuid,
                 model=model,
                 input_per_1m_usd=float(rates["input_per_1m_usd"]),
                 output_per_1m_usd=float(rates["output_per_1m_usd"]),
@@ -114,15 +128,19 @@ def disable_invalid_pricing_overrides(session: Session) -> int:
     return len(rows)
 
 
-def seed_openrouter_pricing(session: Session, *, configured_provider_ids: set[str]) -> int:
-    if "openrouter" not in configured_provider_ids:
+def seed_openrouter_pricing(session: Session, *, configured_provider_slugs: set[str]) -> int:
+    if "openrouter" not in configured_provider_slugs:
+        return 0
+
+    provider_uuid = resolve_provider_uuid(session, "openrouter")
+    if provider_uuid is None:
         return 0
 
     upserted = 0
     for model_id, input_per_1m, output_per_1m in fetch_openrouter_pricing():
         upsert_pricing_override(
             session,
-            provider_id="openrouter",
+            provider_id=provider_uuid,
             model=model_id,
             input_per_1m_usd=input_per_1m,
             output_per_1m_usd=output_per_1m,
@@ -135,16 +153,16 @@ def seed_ollama_discovered_models(
     session: Session,
     catalog: dict[str, dict[str, dict[str, float]]],
     *,
-    configured_provider_ids: set[str],
+    configured_provider_slugs: set[str],
 ) -> int:
-    if "ollama" not in configured_provider_ids:
+    if "ollama" not in configured_provider_slugs:
         return 0
 
     default_rates = catalog.get("ollama", {}).get("*")
     if not isinstance(default_rates, dict):
         return 0
 
-    provider = session.get(Provider, "ollama")
+    provider = get_provider_by_slug(session, "ollama")
     if provider is None:
         return 0
 
@@ -173,7 +191,7 @@ def seed_ollama_discovered_models(
             continue
         upsert_pricing_override(
             session,
-            provider_id="ollama",
+            provider_id=provider.id,
             model=model_id,
             input_per_1m_usd=float(default_rates["input_per_1m_usd"]),
             output_per_1m_usd=float(default_rates["output_per_1m_usd"]),
@@ -184,7 +202,7 @@ def seed_ollama_discovered_models(
 
 def seed_pricing_overrides(
     session_factory: sessionmaker[Session],
-    config: AppConfig,
+    _config: AppConfig,
     *,
     catalog_path: Path = DEFAULT_CATALOG_PATH,
     sync_openrouter: bool = True,
@@ -192,16 +210,17 @@ def seed_pricing_overrides(
     sync_metadata: bool = True,
 ) -> dict[str, int]:
     catalog = load_pricing_catalog(catalog_path)
-    configured_provider_ids = set(config.providers.keys())
+    with session_factory() as session:
+        configured_provider_slugs = list_configured_provider_slugs(session)
 
     with session_factory() as session:
         catalog_count = seed_catalog_pricing(
             session,
             catalog,
-            configured_provider_ids=configured_provider_ids,
+            configured_provider_slugs=configured_provider_slugs,
         )
         openrouter_count = (
-            seed_openrouter_pricing(session, configured_provider_ids=configured_provider_ids)
+            seed_openrouter_pricing(session, configured_provider_slugs=configured_provider_slugs)
             if sync_openrouter
             else 0
         )
@@ -209,7 +228,7 @@ def seed_pricing_overrides(
             seed_ollama_discovered_models(
                 session,
                 catalog,
-                configured_provider_ids=configured_provider_ids,
+                configured_provider_slugs=configured_provider_slugs,
             )
             if discover_ollama
             else 0
