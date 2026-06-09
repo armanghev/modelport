@@ -93,7 +93,7 @@ function buildFallbackDetail(provider: ProviderHealth): ProviderDetail {
   });
 
   return {
-    providerId: provider.id,
+    providerId: provider.slug,
     region: "global",
     supportTier: "Standard",
     billingCycle: {

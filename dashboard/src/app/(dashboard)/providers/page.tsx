@@ -216,13 +216,13 @@ export default function ProvidersPage() {
   const selectedProvider = useMemo(
     () =>
       selectedProviderId
-        ? providerCards.find((provider) => provider.id === selectedProviderId) ?? null
+        ? providerCards.find((provider) => provider.slug === selectedProviderId) ?? null
         : null,
     [providerCards, selectedProviderId],
   );
 
   const selectedProviderDetail = useMemo(
-    () => (selectedProvider ? providerDetailsById.get(selectedProvider.id) ?? null : null),
+    () => (selectedProvider ? providerDetailsById.get(selectedProvider.slug) ?? null : null),
     [providerDetailsById, selectedProvider],
   );
 
@@ -297,9 +297,9 @@ export default function ProvidersPage() {
             <tbody>
               {pagedProviders.map((provider) => (
                 <tr
-                  key={provider.id}
+                  key={provider.slug}
                   className="cursor-pointer border-t border-border-subtle text-text-secondary transition-colors hover:bg-bg-card-muted/60"
-                  onClick={() => setSelectedProviderId(provider.id)}
+                  onClick={() => setSelectedProviderId(provider.slug)}
                 >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">

@@ -13,6 +13,7 @@ import {
   MoonIcon,
   PencilSimpleIcon,
   SunDimIcon,
+  TrashIcon,
 } from "@phosphor-icons/react";
 
 import {
@@ -37,10 +38,11 @@ import { Switch } from "@/components/ui/switch";
 import {
   createProvider,
   createProviderCredential,
+  deleteProvider,
+  deleteProviderCredential,
   fetchAdminSettings,
   mapAdminSettingsToUi,
   revealCredentialSecret,
-  slugifyProviderId,
   updateAppearanceSettings,
   updateProvider,
   updateProviderCredential,
@@ -249,30 +251,18 @@ export default function SettingsPage() {
   };
 
   const handleAddProvider = async (draft: ProviderConfigDraft) => {
-    const providerId = slugifyProviderId(draft.providerId || draft.provider);
-    const providerExists = settingsPayload?.providers.some(
-      (provider) => provider.id === providerId,
-    );
-
     try {
-      if (!providerExists) {
-        await createProvider({
-          id: providerId,
-          display_name: draft.provider,
-          provider_type: draft.providerType,
-          base_url: draft.baseUrl,
-        });
+      const payload: Parameters<typeof createProvider>[0] = {
+        slug: draft.slug,
+        display_name: draft.provider,
+        provider_type: draft.providerType,
+        base_url: draft.baseUrl,
+      };
+      if (draft.fullKey.trim()) {
+        payload.api_key = draft.fullKey.trim();
+        payload.credential_name = draft.credentialName;
       }
-
-      await createProviderCredential({
-        provider_id: providerId,
-        display_name: draft.credentialName,
-        source: draft.fullKey ? "database" : "env",
-        api_key: draft.fullKey || undefined,
-        api_key_env: draft.fullKey ? undefined : draft.envVar || undefined,
-        is_default: true,
-        enabled: true,
-      });
+      await createProvider(payload);
 
       await loadSettings();
       setErrorMessage(null);
@@ -283,35 +273,74 @@ export default function SettingsPage() {
     }
   };
 
+  const handleRemoveProvider = async (apiKey: ProviderConfigRow) => {
+    const isCredentialOnlyDelete =
+      apiKey.credentialId !== null &&
+      apiKeys.filter((item) => item.providerUuid === apiKey.providerUuid).length > 1;
+    const confirmed = window.confirm(
+      isCredentialOnlyDelete
+        ? `Remove ${apiKey.credentialName} for ${apiKey.provider}? This cannot be undone.`
+        : `Remove ${apiKey.provider}? This deletes the provider configuration. This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      if (apiKey.credentialId) {
+        await deleteProviderCredential(apiKey.credentialId);
+      } else {
+        await deleteProvider(apiKey.providerUuid);
+      }
+      setVisibleKeys((current) => {
+        const next = { ...current };
+        delete next[apiKey.id];
+        return next;
+      });
+      if (editingProvider?.id === apiKey.id) {
+        setEditingProvider(null);
+      }
+      await loadSettings();
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to remove provider configuration.",
+      );
+    }
+  };
+
   const handleEditProvider = async (draft: ProviderConfigDraft) => {
     if (!editingProvider) {
       return;
     }
 
     try {
-      await updateProvider(editingProvider.providerId, {
+      await updateProvider(editingProvider.providerUuid, {
         display_name: draft.provider,
         base_url: draft.baseUrl,
       });
 
-      const credentialPatch: Record<string, string | boolean> = {
-        display_name: draft.credentialName,
-        enabled: true,
-      };
+      if (editingProvider.credentialId) {
+        const credentialPatch: Record<string, string | boolean> = {
+          display_name: draft.credentialName,
+          enabled: true,
+        };
 
-      if (
-        draft.fullKey.trim() &&
-        draft.fullKey.trim() !== editingProvider.fullKey.trim()
-      ) {
-        credentialPatch.api_key = draft.fullKey.trim();
-      } else if (
-        editingProvider.source === "env" &&
-        draft.envVar.trim() !== editingProvider.envVar.trim()
-      ) {
-        credentialPatch.api_key_env = draft.envVar.trim();
+        if (draft.fullKey.trim()) {
+          credentialPatch.api_key = draft.fullKey.trim();
+        }
+
+        await updateProviderCredential(editingProvider.credentialId, credentialPatch);
+      } else if (draft.fullKey.trim()) {
+        await createProviderCredential({
+          provider_id: editingProvider.providerUuid,
+          display_name: draft.credentialName.trim() || "Default API key",
+          api_key: draft.fullKey.trim(),
+          is_default: true,
+          enabled: true,
+        });
       }
 
-      await updateProviderCredential(editingProvider.id, credentialPatch);
       await loadSettings();
       setEditingProvider(null);
       setErrorMessage(null);
@@ -376,11 +405,11 @@ export default function SettingsPage() {
                   <ProviderIcon provider={apiKey.provider} size={20} />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-text-primary">
-                      {apiKey.credentialName}
+                      {apiKey.provider}
                     </p>
                     <p className="truncate text-xs text-text-secondary">
-                      {apiKey.provider}
-                      {apiKey.envVar ? ` · ${apiKey.envVar}` : ` · ${apiKey.source}`}
+                      {apiKey.slug}
+                      {apiKey.credentialId ? ` · ${apiKey.credentialName}` : " · No API key"}
                     </p>
                   </div>
                 </div>
@@ -393,6 +422,7 @@ export default function SettingsPage() {
                   size="sm"
                   className="h-8 rounded-lg border-border-default px-3 text-sm"
                   onClick={() => void toggleKeyVisibility(apiKey.id)}
+                  disabled={!apiKey.configured}
                 >
                   {visibleKeys[apiKey.id] ? <EyeSlashIcon /> : <EyeIcon />}
                 </Button>
@@ -438,11 +468,12 @@ export default function SettingsPage() {
                       </button>
                       <button
                         type="button"
+                        disabled={!apiKey.configured}
                         onClick={() => {
                           setOpenMenuProvider(null);
                           void copyApiKey(apiKey.id);
                         }}
-                        className="flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-card-muted"
+                        className="flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-card-muted disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {copiedProvider === apiKey.id ? (
                           <CheckIcon size={14} />
@@ -450,6 +481,17 @@ export default function SettingsPage() {
                           <CopyIcon size={14} />
                         )}
                         {copiedProvider === apiKey.id ? "Copied API key" : "Copy API key"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenMenuProvider(null);
+                          void handleRemoveProvider(apiKey);
+                        }}
+                        className="flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm text-accent-red hover:bg-accent-red-bg"
+                      >
+                        <TrashIcon size={14} />
+                        Remove provider
                       </button>
                     </PopoverContent>
                   </Popover>

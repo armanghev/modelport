@@ -77,6 +77,7 @@ export interface ModelUsageSummary {
 
 export interface ProviderHealth {
   id: string;
+  slug: string;
   displayName: string;
   type: ProviderType;
   status: ProviderStatus;
@@ -1457,6 +1458,7 @@ export const dashboardMockData: DashboardMockData = {
     cards: [
       {
         id: "prov_openai",
+        slug: "openai",
         displayName: "OpenAI",
         type: "openai_compatible",
         status: "operational",
@@ -1471,6 +1473,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_azure_openai",
+        slug: "azureopenai",
         displayName: "Azure OpenAI",
         type: "openai_compatible",
         status: "operational",
@@ -1485,6 +1488,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_anthropic",
+        slug: "anthropic",
         displayName: "Anthropic",
         type: "anthropic_compatible",
         status: "operational",
@@ -1499,6 +1503,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_gemini",
+        slug: "gemini",
         displayName: "Gemini",
         type: "openai_compatible",
         status: "degraded",
@@ -1513,6 +1518,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_groq",
+        slug: "groq",
         displayName: "Groq",
         type: "openai_compatible",
         status: "operational",
@@ -1527,6 +1533,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_together",
+        slug: "together",
         displayName: "Together AI",
         type: "openai_compatible",
         status: "operational",
@@ -1541,6 +1548,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_mistral",
+        slug: "mistral",
         displayName: "Mistral",
         type: "openai_compatible",
         status: "operational",
@@ -1555,6 +1563,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_deepseek",
+        slug: "deepseek",
         displayName: "DeepSeek",
         type: "openai_compatible",
         status: "degraded",
@@ -1569,6 +1578,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_cerebras",
+        slug: "cerebras",
         displayName: "Cerebras",
         type: "openai_compatible",
         status: "operational",
@@ -1583,6 +1593,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_fireworks",
+        slug: "fireworks",
         displayName: "Fireworks",
         type: "openai_compatible",
         status: "degraded",
@@ -1597,6 +1608,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_openrouter",
+        slug: "openrouter",
         displayName: "OpenRouter",
         type: "openai_compatible",
         status: "operational",
@@ -1611,6 +1623,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_xai",
+        slug: "xai",
         displayName: "xAI",
         type: "openai_compatible",
         status: "degraded",
@@ -1625,6 +1638,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_ollama",
+        slug: "ollama",
         displayName: "Ollama",
         type: "local_openai_compatible",
         status: "degraded",
@@ -1639,6 +1653,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_vllm_local",
+        slug: "vllmlocal",
         displayName: "vLLM Local",
         type: "local_openai_compatible",
         status: "operational",
@@ -1653,6 +1668,7 @@ export const dashboardMockData: DashboardMockData = {
       },
       {
         id: "prov_lmstudio",
+        slug: "lmstudio",
         displayName: "LM Studio",
         type: "local_openai_compatible",
         status: "offline",

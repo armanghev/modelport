@@ -10,6 +10,7 @@ import { backendUrl as backendBaseUrl } from "@/lib/backend-url";
 
 export interface AdminProvider {
   id: string;
+  slug: string;
   display_name: string;
   provider_type: ProviderType;
   base_url: string;
@@ -19,9 +20,8 @@ export interface AdminProvider {
 export interface AdminCredential {
   id: string;
   provider_id: string;
+  provider_slug: string;
   display_name: string;
-  source: "env" | "database";
-  api_key_env: string | null;
   key_hint: string;
   configured: boolean;
   is_default: boolean;
@@ -31,6 +31,7 @@ export interface AdminCredential {
 export interface AdminPricingOverride {
   id: string;
   provider_id: string;
+  provider_slug: string | null;
   model: string;
   input_per_1m_usd: number;
   output_per_1m_usd: number;
@@ -58,26 +59,33 @@ export interface AdminSettingsPayload {
 
 export interface ProviderConfigRow {
   id: string;
-  providerId: string;
+  providerUuid: string;
+  credentialId: string | null;
+  slug: string;
   providerType: ProviderType;
   provider: string;
   credentialName: string;
-  envVar: string;
   configured: boolean;
   maskedKey: string;
   fullKey: string;
   baseUrl: string;
-  source: "env" | "database";
   isDefault: boolean;
   enabled: boolean;
 }
 
+export interface ProviderPreset {
+  slug: string;
+  display_name: string;
+  provider_type: ProviderType;
+  base_url: string;
+  protocol: "openai" | "anthropic";
+}
+
 export interface ProviderConfigDraft {
-  providerId: string;
+  slug: string;
   providerType: ProviderType;
   provider: string;
   credentialName: string;
-  envVar: string;
   fullKey: string;
   baseUrl: string;
 }
@@ -117,16 +125,9 @@ export interface ProviderCatalogModel {
   usage: ModelUsageSnippet | null;
 }
 
-export interface ProviderModelsTotals {
-  live_model_count: number;
-  provider_count: number;
-  priced_model_count: number;
-  used_model_count: number;
-  metadata_synced_at: string | null;
-}
-
 export interface ProviderCatalogEntry {
   provider_id: string;
+  provider_uuid?: string;
   display_name: string;
   provider_type: ProviderType;
   base_url: string;
@@ -137,7 +138,13 @@ export interface ProviderCatalogEntry {
 }
 
 export interface ProviderModelsPayload {
-  totals: ProviderModelsTotals;
+  totals: {
+    live_model_count: number;
+    provider_count: number;
+    priced_model_count: number;
+    used_model_count: number;
+    metadata_synced_at: string | null;
+  };
   providers: ProviderCatalogEntry[];
 }
 
@@ -183,11 +190,15 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(detail || `Request failed with status ${response.status}`);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return (await response.json()) as T;
 }
 
-function titleizeProvider(providerId: string) {
-  return providerId
+function titleizeProvider(slug: string) {
+  return slug
     .split(/[-_]/)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -206,19 +217,32 @@ function formatRefreshInterval(seconds: number | undefined): string {
   return `${Math.round(seconds / 60)}m`;
 }
 
-export function slugifyProviderId(value: string): string {
+const PROVIDER_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Normalize for submit — trims edges and collapses dashes. */
+export function normalizeProviderSlug(value: string): string {
   return value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
 
+/** Light filter while typing — keeps partial slugs like `mock-` editable. */
+export function sanitizeSlugInput(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9-]/g, "");
+}
+
+export function isValidProviderSlug(value: string): boolean {
+  return PROVIDER_SLUG_PATTERN.test(value);
+}
+
 export function inferProviderType(
-  providerId: string,
+  slug: string,
   baseUrl: string,
 ): ProviderType {
-  if (providerId.includes("anthropic") || /anthropic/i.test(baseUrl)) {
+  if (slug.includes("anthropic") || /anthropic/i.test(baseUrl)) {
     return "anthropic_compatible";
   }
 
@@ -235,39 +259,65 @@ export function mapAdminSettingsToUi(payload: AdminSettingsPayload): {
   tracking: SettingsTrackingOption[];
   appearance: SettingsAppearance;
 } {
-  const providerById = new Map(
+  const providerByUuid = new Map(
     payload.providers.map((provider) => [provider.id, provider]),
   );
 
+  const providersWithCredentials = new Set(
+    payload.provider_credentials.map((credential) => credential.provider_id),
+  );
+
+  const credentialRows: ProviderConfigRow[] = payload.provider_credentials.map((credential) => {
+    const provider = providerByUuid.get(credential.provider_id);
+    const slug = credential.provider_slug || provider?.slug || "";
+    return {
+      id: credential.id,
+      providerUuid: credential.provider_id,
+      credentialId: credential.id,
+      slug,
+      providerType:
+        provider?.provider_type ?? inferProviderType(slug, provider?.base_url ?? ""),
+      provider: provider?.display_name ?? titleizeProvider(slug),
+      credentialName: credential.display_name,
+      configured: credential.configured,
+      maskedKey: credential.key_hint,
+      fullKey: "",
+      baseUrl: provider?.base_url ?? "",
+      isDefault: credential.is_default,
+      enabled: credential.enabled,
+    };
+  });
+
+  const providerOnlyRows: ProviderConfigRow[] = payload.providers
+    .filter((provider) => !providersWithCredentials.has(provider.id))
+    .map((provider) => ({
+      id: provider.id,
+      providerUuid: provider.id,
+      credentialId: null,
+      slug: provider.slug,
+      providerType: provider.provider_type,
+      provider: provider.display_name,
+      credentialName: "No API key",
+      configured: false,
+      maskedKey: "Not configured",
+      fullKey: "",
+      baseUrl: provider.base_url,
+      isDefault: true,
+      enabled: provider.enabled,
+    }));
+
   return {
-    providerRows: payload.provider_credentials.map((credential) => {
-      const provider = providerById.get(credential.provider_id);
+    providerRows: [...credentialRows, ...providerOnlyRows],
+    pricingTable: payload.pricing_overrides.map((entry) => {
+      const provider = providerByUuid.get(entry.provider_id);
+      const slug = entry.provider_slug || provider?.slug || entry.provider_id;
       return {
-        id: credential.id,
-        providerId: credential.provider_id,
-        providerType:
-          provider?.provider_type ??
-          inferProviderType(credential.provider_id, provider?.base_url ?? ""),
-        provider:
-          provider?.display_name ?? titleizeProvider(credential.provider_id),
-        credentialName: credential.display_name,
-        envVar: credential.api_key_env ?? "",
-        configured: credential.configured,
-        maskedKey: credential.key_hint,
-        fullKey: "",
-        baseUrl: provider?.base_url ?? "",
-        source: credential.source,
-        isDefault: credential.is_default,
-        enabled: credential.enabled,
+        provider: provider?.display_name ?? titleizeProvider(slug),
+        model: entry.model,
+        inputPer1kUsd: entry.input_per_1m_usd / 1000,
+        outputPer1kUsd: entry.output_per_1m_usd / 1000,
       };
     }),
-    pricingTable: payload.pricing_overrides.map((entry) => ({
-      provider:
-        providerById.get(entry.provider_id)?.display_name ?? entry.provider_id,
-      model: entry.model,
-      inputPer1kUsd: entry.input_per_1m_usd / 1000,
-      outputPer1kUsd: entry.output_per_1m_usd / 1000,
-    })),
     tracking: Object.entries(payload.settings.tracking).map(([key, value]) => ({
       id: key,
       label: trackingLabelMap[key]?.label ?? titleizeProvider(key),
@@ -291,6 +341,10 @@ export async function fetchAdminSettings() {
   return fetchJson<AdminSettingsPayload>("/admin/settings");
 }
 
+export async function fetchProviderPresets() {
+  return fetchJson<ProviderPreset[]>("/admin/provider-presets");
+}
+
 export async function fetchProviderHealth() {
   return fetchJson<ProviderHealthPayload>("/admin/providers/health");
 }
@@ -306,10 +360,12 @@ export async function revealCredentialSecret(credentialId: string) {
 }
 
 export async function createProvider(payload: {
-  id: string;
+  slug: string;
   display_name: string;
   provider_type: ProviderType;
   base_url: string;
+  api_key?: string;
+  credential_name?: string;
 }) {
   return fetchJson<AdminProvider>("/admin/providers", {
     method: "POST",
@@ -318,7 +374,7 @@ export async function createProvider(payload: {
 }
 
 export async function updateProvider(
-  providerId: string,
+  providerUuid: string,
   payload: Partial<{
     display_name: string;
     provider_type: ProviderType;
@@ -326,7 +382,7 @@ export async function updateProvider(
     enabled: boolean;
   }>,
 ) {
-  return fetchJson<AdminProvider>(`/admin/providers/${providerId}`, {
+  return fetchJson<AdminProvider>(`/admin/providers/${providerUuid}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
@@ -335,9 +391,7 @@ export async function updateProvider(
 export async function createProviderCredential(payload: {
   provider_id: string;
   display_name: string;
-  source: "env" | "database";
-  api_key_env?: string;
-  api_key?: string;
+  api_key: string;
   is_default?: boolean;
   enabled?: boolean;
 }) {
@@ -351,8 +405,6 @@ export async function updateProviderCredential(
   credentialId: string,
   payload: Partial<{
     display_name: string;
-    source: "env" | "database";
-    api_key_env: string;
     api_key: string;
     is_default: boolean;
     enabled: boolean;
@@ -361,6 +413,18 @@ export async function updateProviderCredential(
   return fetchJson<AdminCredential>(`/admin/provider-credentials/${credentialId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteProviderCredential(credentialId: string) {
+  return fetchJson<void>(`/admin/provider-credentials/${credentialId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function deleteProvider(providerUuid: string) {
+  return fetchJson<void>(`/admin/providers/${providerUuid}`, {
+    method: "DELETE",
   });
 }
 
