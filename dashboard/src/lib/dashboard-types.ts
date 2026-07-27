@@ -63,16 +63,47 @@ export interface RequestRow {
   io?: RequestIoPayload | null;
 }
 
-export interface ModelUsageSummary {
-  id: string;
-  provider: string;
-  model: string;
-  displayName?: string;
-  requestCount: number;
-  tokenTotal: number;
-  costUsd: number;
+export interface RequestTotals {
+  requestsToday: number;
   avgLatencyMs: number;
   errorRate: number;
+  streamingRate: number;
+}
+
+export interface RequestFilters {
+  providers: string[];
+  models: string[];
+  clients: RequestRow["client"][];
+  statuses: RequestStatus[];
+  endpoints: RequestRow["endpoint"][];
+}
+
+export interface OverviewAnalyticsData {
+  metrics: OverviewMetric[];
+  tokenUsage: Record<UsageRange, TimeRangeUsage>;
+  topModels: TopModelShare[];
+  recentRequests: RequestRow[];
+}
+
+export interface RequestsAnalyticsData {
+  totals: RequestTotals;
+  filters: RequestFilters;
+  rows: RequestRow[];
+}
+
+export interface CostTotals {
+  todayUsd: number;
+  weekUsd: number;
+  monthUsd: number;
+}
+
+export interface CostsAnalyticsData {
+  note: string;
+  totals: CostTotals;
+  byProvider: CostBucket[];
+  byModel: CostBucket[];
+  dailyTrend: CostBucket[];
+  recentHighCostRequests: RequestRow[];
 }
 
 export interface ProviderHealth {
@@ -130,19 +161,6 @@ export interface PricingEntry {
   outputPer1kUsd: number;
 }
 
-export interface ApiKeyStatus {
-  provider: string;
-  envVar: string;
-  configured: boolean;
-  maskedKey: string;
-  fullKey: string;
-  baseUrl?: string;
-  headers?: Array<{
-    key: string;
-    value: string;
-  }>;
-}
-
 export interface SettingsTrackingOption {
   id: string;
   label: string;
@@ -155,68 +173,4 @@ export interface SettingsAppearance {
   themes: string[];
   autoRefreshInterval: string;
   autoRefreshIntervals: string[];
-}
-
-export interface DashboardMockData {
-  generatedAt: string;
-  proxy: {
-    name: string;
-    version: string;
-    status: "running" | "stopped" | "error";
-    systemHealthLabel: string;
-    baseUrl: string;
-  };
-  overview: {
-    metrics: OverviewMetric[];
-    tokenUsage: Record<UsageRange, TimeRangeUsage>;
-    topModels: TopModelShare[];
-    recentRequests: RequestRow[];
-  };
-  requests: {
-    totals: {
-      requestsToday: number;
-      avgLatencyMs: number;
-      errorRate: number;
-      streamingRate: number;
-    };
-    filters: {
-      providers: string[];
-      models: string[];
-      clients: RequestRow["client"][];
-      statuses: RequestStatus[];
-      endpoints: RequestRow["endpoint"][];
-    };
-    rows: RequestRow[];
-  };
-  models: {
-    totals: {
-      tokenTotal: number;
-      costUsd: number;
-      requestCount: number;
-      avgLatencyMs: number;
-      errorRate: number;
-    };
-    models: ModelUsageSummary[];
-  };
-  providers: {
-    cards: ProviderHealth[];
-    details: ProviderDetail[];
-  };
-  costs: {
-    note: string;
-    totals: {
-      todayUsd: number;
-      weekUsd: number;
-      monthUsd: number;
-    };
-    byProvider: CostBucket[];
-    byModel: CostBucket[];
-    dailyTrend: CostBucket[];
-  };
-  settings: {
-    apiKeys: ApiKeyStatus[];
-    pricingTable: PricingEntry[];
-    tracking: SettingsTrackingOption[];
-    appearance: SettingsAppearance;
-  };
 }

@@ -1,11 +1,13 @@
-import type { DashboardMockData, RequestRow } from "@/lib/dashboard-types";
+import type {
+  CostsAnalyticsData,
+  OverviewAnalyticsData,
+  RequestsAnalyticsData,
+} from "@/lib/dashboard-types";
 import { backendUrl as backendBaseUrl } from "@/lib/backend-url";
 
-export type OverviewAnalyticsPayload = DashboardMockData["overview"];
-export type RequestsAnalyticsPayload = DashboardMockData["requests"];
-export type CostsAnalyticsPayload = DashboardMockData["costs"] & {
-  recentHighCostRequests: RequestRow[];
-};
+export type OverviewAnalyticsPayload = OverviewAnalyticsData;
+export type RequestsAnalyticsPayload = RequestsAnalyticsData;
+export type CostsAnalyticsPayload = CostsAnalyticsData;
 
 function buildUrl(path: string) {
   return `${backendBaseUrl}${path}`;
