@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Annotated
 
@@ -63,7 +64,7 @@ def require_proxy_token(
         )
 
     presented_token = credentials.credentials.strip()
-    if not presented_token or presented_token != expected_token:
+    if not presented_token or not hmac.compare_digest(presented_token, expected_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid proxy token.",
