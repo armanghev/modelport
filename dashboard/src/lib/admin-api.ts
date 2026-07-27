@@ -45,8 +45,6 @@ export interface AdminSettingsPayload {
   pricing_overrides: AdminPricingOverride[];
   settings: {
     tracking: {
-      request_logging?: boolean;
-      cost_tracking?: boolean;
       io_logging?: boolean;
       retention_days?: number;
     };
@@ -153,21 +151,9 @@ const trackingLabelMap: Record<
   string,
   Pick<SettingsTrackingOption, "label" | "description">
 > = {
-  request_logging: {
-    label: "Request logging",
-    description: "Log details of all incoming requests.",
-  },
-  cost_tracking: {
-    label: "Cost tracking",
-    description: "Estimate and track provider costs for requests.",
-  },
   io_logging: {
     label: "I/O logging",
     description: "Store request and response bodies for debugging.",
-  },
-  retention_days: {
-    label: "Retention window",
-    description: "Keep analytics data for the configured number of days.",
   },
 };
 
@@ -257,6 +243,7 @@ export function mapAdminSettingsToUi(payload: AdminSettingsPayload): {
   providerRows: ProviderConfigRow[];
   pricingTable: PricingEntry[];
   tracking: SettingsTrackingOption[];
+  retentionDays: number;
   appearance: SettingsAppearance;
 } {
   const providerByUuid = new Map(
@@ -318,14 +305,17 @@ export function mapAdminSettingsToUi(payload: AdminSettingsPayload): {
         outputPer1kUsd: entry.output_per_1m_usd / 1000,
       };
     }),
-    tracking: Object.entries(payload.settings.tracking).map(([key, value]) => ({
-      id: key,
-      label: trackingLabelMap[key]?.label ?? titleizeProvider(key),
-      description:
-        trackingLabelMap[key]?.description ??
-        "Configuration controlled by the backend.",
-      enabled: typeof value === "boolean" ? value : Number(value ?? 0) > 0,
-    })),
+    tracking: Object.entries(payload.settings.tracking)
+      .filter(([, value]) => typeof value === "boolean")
+      .map(([key, value]) => ({
+        id: key,
+        label: trackingLabelMap[key]?.label ?? titleizeProvider(key),
+        description:
+          trackingLabelMap[key]?.description ??
+          "Configuration controlled by the backend.",
+        enabled: Boolean(value),
+      })),
+    retentionDays: payload.settings.tracking.retention_days ?? 30,
     appearance: {
       theme: payload.settings.appearance.theme ?? "system",
       themes: ["light", "dark", "system"],
@@ -429,8 +419,6 @@ export async function deleteProvider(providerUuid: string) {
 }
 
 export async function patchTrackingSettings(payload: {
-  request_logging?: boolean;
-  cost_tracking?: boolean;
   io_logging?: boolean;
   retention_days?: number;
 }) {

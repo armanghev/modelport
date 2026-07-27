@@ -47,7 +47,6 @@ import {
   updateProvider,
   updateProviderCredential,
   patchTrackingSettings,
-  type AdminSettingsPayload,
   type ProviderConfigDraft,
   type ProviderConfigRow,
 } from "@/lib/admin-api";
@@ -104,21 +103,13 @@ function ToggleRow({
   );
 }
 
-function formatTrackingPayload(
-  tracking: Array<{ id: string; enabled: boolean }>,
-) {
-  return {
-    request_logging:
-      tracking.find((item) => item.id === "request_logging")?.enabled ?? true,
-    cost_tracking:
-      tracking.find((item) => item.id === "cost_tracking")?.enabled ?? true,
-    io_logging:
-      tracking.find((item) => item.id === "io_logging")?.enabled ?? false,
-    retention_days:
-      tracking.find((item) => item.id === "retention_days")?.enabled ? 30 : 0,
-  };
+function parseRetentionDays(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 30;
+  }
+  return parsed;
 }
-
 function parseRefreshInterval(value: string) {
   if (value.endsWith("m")) {
     return Number.parseInt(value, 10) * 60;
@@ -128,12 +119,12 @@ function parseRefreshInterval(value: string) {
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
-  const [settingsPayload, setSettingsPayload] = useState<AdminSettingsPayload | null>(null);
   const [apiKeys, setApiKeys] = useState<ProviderConfigRow[]>([]);
   const [pricingTable, setPricingTable] = useState<Array<{ provider: string; model: string; inputPer1kUsd: number; outputPer1kUsd: number }>>([]);
   const [tracking, setTracking] = useState<
     Array<{ id: string; label: string; description: string; enabled: boolean }>
   >([]);
+  const [retentionDays, setRetentionDays] = useState(30);
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [copiedProvider, setCopiedProvider] = useState<string | null>(null);
   const [editingProvider, setEditingProvider] = useState<ProviderConfigRow | null>(null);
@@ -155,10 +146,10 @@ export default function SettingsPage() {
   const loadSettings = useCallback(async () => {
     const payload = await fetchAdminSettings();
     const mapped = mapAdminSettingsToUi(payload);
-    setSettingsPayload(payload);
     setApiKeys(mapped.providerRows);
     setPricingTable(mapped.pricingTable);
     setTracking(mapped.tracking);
+    setRetentionDays(mapped.retentionDays);
     setAutoRefreshInterval(mapped.appearance.autoRefreshInterval);
   }, []);
 
@@ -353,7 +344,11 @@ export default function SettingsPage() {
 
   const saveTracking = async () => {
     try {
-      await patchTrackingSettings(formatTrackingPayload(tracking));
+      await patchTrackingSettings({
+        io_logging:
+          tracking.find((item) => item.id === "io_logging")?.enabled ?? false,
+        retention_days: retentionDays,
+      });
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(
@@ -535,6 +530,24 @@ export default function SettingsPage() {
                 }
               />
             ))}
+            <div className="space-y-2">
+              <label htmlFor="retention-days" className="text-sm font-medium text-text-primary">
+                Retention window (days)
+              </label>
+              <p className="text-sm text-text-secondary">
+                Request logs older than this are purged on proxy startup.
+              </p>
+              <input
+                id="retention-days"
+                type="number"
+                min={1}
+                value={retentionDays}
+                onChange={(event) =>
+                  setRetentionDays(parseRetentionDays(event.target.value))
+                }
+                className="h-11 w-full max-w-xs rounded-lg border border-border-default bg-bg-card px-3 text-sm text-text-primary"
+              />
+            </div>
           </div>
 
           <div className="mt-6 flex justify-end">
