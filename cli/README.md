@@ -2,7 +2,7 @@
 
 Interactive CLI that points coding agents at your local ModelPort proxy (API URL, bearer token, and default models).
 
-Today it configures **Claude Code**. The layout is agent-pluggable so Cursor CLI, Codex, and others can be added later without changing the core flow.
+Today it configures **Claude Code** only (`--agent claude-code`).
 
 ## Quick start
 
@@ -62,12 +62,14 @@ modelport-configure \
   --yes
 ```
 
-`--provider` is optional and deprecated; routing comes from the model ids you pass.
-
 Run `modelport-configure --help` for all flags.
 
 ## Adding another agent
 
-1. Add `modelport_agent_config/agents/<agent_id>.py` implementing `AgentAdapter`.
-2. Register it in `modelport_agent_config/agents/registry.py`.
+There is no adapter registry today. `main.resolve_adapter()` accepts `claude-code` and returns `ClaudeCodeAdapter` from `agents/claude_code.py`; anything else errors.
+
+To add a second agent:
+
+1. Add `modelport_agent_config/agents/<agent_id>.py` with the same shape as `ClaudeCodeAdapter` (config path, settings patch, apply).
+2. Teach `resolve_adapter()` (or reintroduce a small registry) to return it for that `--agent` id.
 3. Map `ModelPortProfile` to that agent’s config files or env vars in `apply()`.
