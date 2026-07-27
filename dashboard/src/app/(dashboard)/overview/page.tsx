@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -11,10 +12,11 @@ import {
   type OverviewMetric,
   type RequestStatus,
   type UsagePoint,
-} from "@/lib/mock-dashboard-data";
+} from "@/lib/dashboard-types";
 import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { InteractiveAreaChart } from "@/components/dashboard/interactive-area-chart";
 import { fetchOverviewAnalytics } from "@/lib/analytics-api";
+import { formatCost, formatInteger, formatTimestamp } from "@/lib/format";
 
 type MetricIcon = typeof LightningIcon;
 
@@ -43,61 +45,47 @@ function formatLargeTokenValue(tokens: number): string {
   return tokens.toString();
 }
 
-function formatInteger(value: number): string {
-  return value.toLocaleString("en-US");
-}
-
-function formatTimestamp(value: string): string {
-  return new Date(value).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function formatCost(value: number): string {
-  return `$${value.toFixed(4)}`;
-}
-
-function buildSeriesFromPoints(
+function buildTotalTokenSeries(
   points: UsagePoint[],
   referenceDate: Date,
   stepMs: number,
 ) {
   const start = new Date(referenceDate.getTime() - stepMs * (points.length - 1));
 
-  return points.map((point, index) => {
-    const date = new Date(start.getTime() + stepMs * index);
-    const primary = Math.round(point.tokens * 0.62);
-    const secondary = point.tokens - primary;
-    const cacheRead = Math.round(point.tokens * 0.24);
-    const cacheWrite = Math.round(point.tokens * 0.08);
+  return points.map((point, index) => ({
+    date: new Date(start.getTime() + stepMs * index).toISOString(),
+    primary: point.tokens,
+    secondary: 0,
+  }));
+}
 
-    return {
-      date: date.toISOString(),
-      primary,
-      secondary,
-      cacheRead,
-      cacheWrite,
-    };
-  });
+function BackendUnreachable() {
+  return (
+    <div className="rounded-xl border border-accent-red/20 bg-accent-red-bg px-4 py-3 text-sm text-accent-red">
+      Backend unreachable. Start the ModelPort proxy and refresh this page.
+    </div>
+  );
 }
 
 export default async function OverviewPage() {
-  const overview = await fetchOverviewAnalytics();
+  let overview: Awaited<ReturnType<typeof fetchOverviewAnalytics>>;
+
+  try {
+    overview = await fetchOverviewAnalytics();
+  } catch {
+    return <BackendUnreachable />;
+  }
+
   const referenceDate = new Date();
   const dayMs = 24 * 60 * 60 * 1000;
   const hourMs = 60 * 60 * 1000;
   const minuteMs = 60 * 1000;
   const tokenAreaChartDataByRange = {
-    "30d": buildSeriesFromPoints(overview.tokenUsage["30d"].points, referenceDate, dayMs),
-    "7d": buildSeriesFromPoints(overview.tokenUsage["7d"].points, referenceDate, dayMs),
-    "1d": buildSeriesFromPoints(overview.tokenUsage["24h"].points, referenceDate, hourMs),
-    "6h": buildSeriesFromPoints(overview.tokenUsage["6h"].points, referenceDate, 15 * minuteMs),
-    "1h": buildSeriesFromPoints(overview.tokenUsage["1h"].points, referenceDate, 5 * minuteMs),
+    "30d": buildTotalTokenSeries(overview.tokenUsage["30d"].points, referenceDate, dayMs),
+    "7d": buildTotalTokenSeries(overview.tokenUsage["7d"].points, referenceDate, dayMs),
+    "1d": buildTotalTokenSeries(overview.tokenUsage["24h"].points, referenceDate, hourMs),
+    "6h": buildTotalTokenSeries(overview.tokenUsage["6h"].points, referenceDate, 15 * minuteMs),
+    "1h": buildTotalTokenSeries(overview.tokenUsage["1h"].points, referenceDate, 5 * minuteMs),
   };
   const tokenAreaChartData = tokenAreaChartDataByRange["30d"];
   const topMetricModelName = overview.metrics.find(
@@ -113,7 +101,6 @@ export default async function OverviewPage() {
 
   return (
     <div className="space-y-6">
-
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {overview.metrics.map((metric) => {
           const Icon = metricIcons[metric.id];
@@ -170,25 +157,23 @@ export default async function OverviewPage() {
         <InteractiveAreaChart
           className="xl:col-span-3"
           title="Token usage over time"
-          description="Showing token usage for the selected date range"
+          description="Showing total token usage for the selected date range"
           data={tokenAreaChartData}
           dataByRange={tokenAreaChartDataByRange}
-          primaryLabel="Input tokens"
-          secondaryLabel="Output tokens"
-          cacheReadLabel="Cache read"
-          cacheWriteLabel="Cache write"
+          primaryLabel="Total tokens"
           defaultRange="30d"
+          showSecondary={false}
         />
 
         <article className="card-surface p-5 xl:col-span-2">
           <div className="flex items-center justify-between">
             <h2 className="text-xl">Top models</h2>
-            <button
-              type="button"
+            <Link
+              href="/models"
               className="text-sm text-text-secondary hover:text-text-primary"
             >
               View all
-            </button>
+            </Link>
           </div>
 
           <div className="mt-5 space-y-4">
@@ -233,12 +218,12 @@ export default async function OverviewPage() {
       <section className="card-surface overflow-x-auto">
         <div className="flex items-center justify-between border-b border-border-subtle px-5 py-4">
           <h2 className="text-xl">Recent requests</h2>
-          <button
-            type="button"
+          <Link
+            href="/requests"
             className="text-sm text-text-secondary hover:text-text-primary"
           >
             View all requests
-          </button>
+          </Link>
         </div>
 
         <table className="min-w-full border-collapse text-left">
@@ -270,7 +255,7 @@ export default async function OverviewPage() {
                 <td className="px-5 py-3">
                   {formatInteger(request.totalTokens)}
                 </td>
-                <td className="px-5 py-3">{formatCost(request.costUsd)}</td>
+                <td className="px-5 py-3">{formatCost(request.costUsd, 4)}</td>
                 <td className="px-5 py-3">
                   <span
                     className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${statusStyles[request.status]}`}

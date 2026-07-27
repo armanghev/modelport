@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
 import {
   CaretLeftIcon,
@@ -14,7 +15,7 @@ import {
   InteractiveAreaChart,
   type InteractiveAreaChartPoint,
 } from "@/components/dashboard/interactive-area-chart";
-import { renderProviderIcon } from "@/components/brand/render-provider-icon";
+import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import {
   Select,
   SelectContent,
@@ -26,7 +27,13 @@ import {
   fetchCostsAnalytics,
   fetchRequestsAnalytics,
 } from "@/lib/analytics-api";
-import { type RequestRow } from "@/lib/mock-dashboard-data";
+import { type RequestRow } from "@/lib/dashboard-types";
+import {
+  buildPageButtons,
+  formatCost,
+  formatInteger,
+  formatTimestamp,
+} from "@/lib/format";
 
 type CostBreakdownView = "provider" | "model";
 
@@ -35,30 +42,6 @@ interface CostBreakdownItem {
   label: string;
   amountUsd: number;
   provider?: string;
-}
-
-function formatCost(value: number, minimumFractionDigits = 2): string {
-  return value.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits,
-    maximumFractionDigits: minimumFractionDigits,
-  });
-}
-
-function formatLongTimestamp(value: string): string {
-  return new Date(value).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function formatInteger(value: number): string {
-  return value.toLocaleString("en-US");
 }
 
 function getProviderDisplayName(provider: string): string {
@@ -95,14 +78,6 @@ function buildCostRangeSeries(
       secondary: 0,
     };
   });
-}
-
-function buildPageButtons(currentPage: number, totalPages: number): number[] {
-  const buttons = new Set<number>([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
-
-  return Array.from(buttons)
-    .filter((page) => page >= 1 && page <= totalPages)
-    .sort((a, b) => a - b);
 }
 
 function CostMetricCard({
@@ -161,13 +136,11 @@ export default function CostsPage() {
         setCostsPayload(nextCosts);
         setRequestRows(nextRequests.rows);
         setErrorMessage(null);
-      } catch (error) {
+      } catch {
         if (!active) {
           return;
         }
-        setErrorMessage(
-          error instanceof Error ? error.message : "Failed to load cost analytics.",
-        );
+        setErrorMessage("Backend unreachable. Start the ModelPort proxy and refresh this page.");
       } finally {
         if (active) {
           setIsLoading(false);
@@ -314,7 +287,7 @@ export default function CostsPage() {
                 <div key={item.id} className="grid grid-cols-10 items-center gap-2">
                   <div className="col-span-5 flex min-w-0 items-center gap-2">
                     <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-text-primary">
-                      {renderProviderIcon(item.provider ?? item.label, 20)}
+                      <ProviderIcon provider={item.provider ?? item.label} size={20} />
                     </span>
                     <p className="truncate text-base font-semibold text-text-primary">
                       {item.label}
@@ -353,12 +326,12 @@ export default function CostsPage() {
       <section className="card-surface overflow-hidden">
         <header className="flex items-center justify-between border-b border-border-subtle px-5 py-4">
           <h2 className="text-xl">Recent high-cost requests</h2>
-          <button
-            type="button"
+          <Link
+            href="/requests"
             className="text-sm text-text-secondary hover:text-text-primary"
           >
             View all requests
-          </button>
+          </Link>
         </header>
 
         <div className="overflow-x-auto">
@@ -379,12 +352,12 @@ export default function CostsPage() {
                   className="border-t border-border-subtle text-sm text-text-secondary"
                 >
                   <td className="px-5 py-3.5 whitespace-nowrap">
-                    {formatLongTimestamp(row.timestamp)}
+                    {formatTimestamp(row.timestamp)}
                   </td>
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-3">
                       <span className="inline-flex h-6 w-6 items-center justify-center rounded-sm bg-bg-card-muted">
-                        {renderProviderIcon(row.provider)}
+                        <ProviderIcon provider={row.provider} />
                       </span>
                       <span className="font-medium text-text-primary">
                         {getProviderDisplayName(row.provider)}

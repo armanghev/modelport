@@ -7,16 +7,14 @@ import {
   CaretLeftIcon,
   CaretRightIcon,
   CaretUpIcon,
-  DownloadSimpleIcon,
   MagnifyingGlassIcon,
 } from "@phosphor-icons/react";
 import { ClaudeCode, GeminiCLI, Codex, Cursor, OpenAI } from "@lobehub/icons";
 
-import { renderProviderIcon } from "@/components/brand/render-provider-icon";
+import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { RequestDetailSheet } from "@/components/dashboard/requests/request-detail-sheet";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -26,7 +24,12 @@ import {
 } from "@/components/ui/select";
 import { fetchRequestsAnalytics } from "@/lib/analytics-api";
 import { fetchAdminSettings, patchTrackingSettings } from "@/lib/admin-api";
-import { type RequestRow, type RequestStatus } from "@/lib/mock-dashboard-data";
+import { type RequestRow, type RequestStatus } from "@/lib/dashboard-types";
+import {
+  formatCost,
+  formatInteger,
+  formatTimestamp,
+} from "@/lib/format";
 
 type RequestOutcome = RequestStatus;
 type SortDirection = "asc" | "desc";
@@ -62,30 +65,12 @@ const TIME_RANGE_IN_MS: Record<RequestTimeRange, number> = {
   "7d": 7 * 24 * 60 * 60 * 1000,
 };
 
-function formatTimestamp(value: string): string {
-  return new Date(value).toLocaleString("en-US", {
-    month: "2-digit",
-    day: "2-digit",
-    year: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function formatDuration(latencyMs: number): string {
   if (latencyMs >= 1000) {
     return `${(latencyMs / 1000).toFixed(2)} s`;
   }
 
   return `${latencyMs} ms`;
-}
-
-function formatCost(value: number): string {
-  return `$${value.toFixed(4)}`;
-}
-
-function formatInteger(value: number): string {
-  return value.toLocaleString("en-US");
 }
 
 function getOutcome(row: RequestRow): RequestOutcome {
@@ -199,13 +184,11 @@ export default function RequestsPage() {
           current === "all" || nextPayload.filters.statuses.includes(current) ? current : "all",
         );
         setErrorMessage(null);
-      } catch (error) {
+      } catch {
         if (!active) {
           return;
         }
-        setErrorMessage(
-          error instanceof Error ? error.message : "Failed to load request analytics.",
-        );
+        setErrorMessage("Backend unreachable. Start the ModelPort proxy and refresh this page.");
       } finally {
         if (active && showLoading) {
           setIsLoading(false);
@@ -510,15 +493,6 @@ export default function RequestsPage() {
           </Select>
         </div>
 
-        <Button
-          type="button"
-          variant="outline"
-          size="lg"
-          className="h-11 w-full rounded-lg border-border-default px-4 text-sm sm:w-auto"
-        >
-          <DownloadSimpleIcon size={16} />
-          Export
-        </Button>
       </section>
 
       <section className="card-surface max-w-full overflow-hidden">
@@ -572,7 +546,7 @@ export default function RequestsPage() {
                     selectedRowId === row.id && detailOpen && "bg-bg-card-muted",
                   )}
                 >
-                  <td className="px-5 py-3.5 whitespace-nowrap">{formatTimestamp(row.timestamp)}</td>
+                  <td className="px-5 py-3.5 whitespace-nowrap">{formatTimestamp(row.timestamp, "table")}</td>
                   <td className="px-5 py-3.5">
                     <div className="flex min-w-0 items-center gap-3">
                       {renderClientIcon(row.client)}
@@ -581,7 +555,7 @@ export default function RequestsPage() {
                   </td>
                   <td className="px-5 py-3.5">
                     <div className="flex min-w-0 items-center gap-2.5">
-                      {renderProviderIcon(row.provider)}
+                      <ProviderIcon provider={row.provider} />
                       <span className="truncate">{row.provider}</span>
                     </div>
                   </td>
@@ -597,7 +571,7 @@ export default function RequestsPage() {
                     </div>
                   </td>
                   <td className="px-5 py-3.5 whitespace-nowrap">{formatDuration(row.latencyMs)}</td>
-                  <td className="px-5 py-3.5 whitespace-nowrap">{formatCost(row.costUsd)}</td>
+                  <td className="px-5 py-3.5 whitespace-nowrap">{formatCost(row.costUsd, 4)}</td>
                   <td className="px-5 py-3.5 whitespace-nowrap">
                     <span
                       className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${requestOutcomeStyles[outcome]}`}
