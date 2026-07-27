@@ -1,4 +1,4 @@
 {
   "title": "Deployment",
-  "pages": ["self-hosting", "docker", "production-setup"]
+  "pages": ["self-hosting"]
 }
