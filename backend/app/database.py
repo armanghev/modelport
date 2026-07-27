@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import (
@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    delete,
     inspect,
     select,
 )
@@ -276,6 +277,17 @@ def set_setting(session: Session, key: str, value: dict) -> AppSetting:
         record.value_json = payload
     session.flush()
     return record
+
+
+def purge_expired_tracking_data(session_factory: sessionmaker[Session]) -> None:
+    with session_factory() as session:
+        retention_days = get_setting(session, "tracking", {}).get("retention_days")
+        if not isinstance(retention_days, int) or retention_days <= 0:
+            return
+        cutoff = utc_now() - timedelta(days=retention_days)
+        session.execute(delete(ApiRequest).where(ApiRequest.created_at < cutoff))
+        session.execute(delete(ProxyResponseResource).where(ProxyResponseResource.created_at < cutoff))
+        session.commit()
 
 
 def get_provider_by_slug(session: Session, slug: str) -> Provider | None:

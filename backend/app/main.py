@@ -12,7 +12,7 @@ from app.api.analytics import router as analytics_router
 from app.api.anthropic import router as anthropic_router
 from app.api.openai import router as openai_router
 from app.config import load_config
-from app.database import build_session_factory, initialize_database, seed_admin_data
+from app.database import build_session_factory, initialize_database, purge_expired_tracking_data, seed_admin_data
 from app.compatibility.exception_handlers import register_exception_handlers
 from app.openapi import configure_openapi
 from app.pricing_seed import DEFAULT_CATALOG_PATH, seed_pricing_overrides
@@ -32,6 +32,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
         app.state.session_factory = session_factory
         initialize_database(session_factory)
         seed_admin_data(session_factory)
+        purge_expired_tracking_data(session_factory)
         catalog_path = resolved_config_path.parent / DEFAULT_CATALOG_PATH.name
         if catalog_path.exists():
             seed_pricing_overrides(session_factory, catalog_path=catalog_path)
