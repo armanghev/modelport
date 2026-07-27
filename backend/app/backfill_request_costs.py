@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import load_config
-from app.database import ApiRequest, PricingOverride, build_session_factory
+from app.database import ApiRequest, PricingOverride, build_session_factory, get_provider_by_slug
 from app.tracking.cost_service import calculate_estimated_cost_usd
 from app.tracking.pricing import find_pricing_override
 
@@ -56,13 +56,18 @@ def resolve_pricing_override(
     if not provider_id:
         return None
 
+    provider = get_provider_by_slug(session, provider_id)
+    if provider is None:
+        return None
+    provider_uuid = provider.id
+
     for model in model_lookup_candidates(provider_id, resolved_model, requested_model):
-        pricing = find_pricing_override(session, provider_id=provider_id, model=model)
+        pricing = find_pricing_override(session, provider_id=provider_uuid, model=model)
         if pricing is not None:
             return pricing
 
     if provider_id == "ollama":
-        return find_pricing_override(session, provider_id=provider_id, model="*")
+        return find_pricing_override(session, provider_id=provider_uuid, model="*")
 
     return None
 

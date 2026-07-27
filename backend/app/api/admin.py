@@ -83,13 +83,6 @@ def require_provider_by_id(session: Session, provider_id: str) -> Provider:
     return provider
 
 
-def require_provider_by_slug(session: Session, slug: str) -> Provider:
-    provider = get_provider_by_slug(session, slug)
-    if provider is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.")
-    return provider
-
-
 def require_credential(session: Session, credential_id: str) -> ProviderCredential:
     credential = session.get(ProviderCredential, credential_id)
     if credential is None:
@@ -180,16 +173,6 @@ def build_health_check_url(provider: Provider) -> str:
     if provider.provider_type == "anthropic_compatible":
         return urljoin(normalized_base, "v1/models")
     return urljoin(normalized_base, "models")
-
-
-def parse_model_count(payload: dict) -> int:
-    data = payload.get("data")
-    if isinstance(data, list):
-        return len(data)
-    models = payload.get("models")
-    if isinstance(models, list):
-        return len(models)
-    return 0
 
 
 def parse_provider_models(payload: dict, provider: Provider | None = None) -> list[dict]:

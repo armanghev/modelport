@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -33,23 +32,6 @@ PROVIDER_DISPLAY_PREFIXES: dict[str, tuple[str, ...]] = {
     "google": ("Google",),
     "openai": ("OpenAI",),
 }
-
-
-@dataclass(slots=True)
-class RequestAnalyticsRow:
-    id: str
-    timestamp: str
-    client: str
-    endpoint: str
-    provider: str
-    model: str
-    input_tokens: int
-    output_tokens: int
-    total_tokens: int
-    cost_usd: float
-    latency_ms: int
-    streaming: bool
-    status: str
 
 
 def round_decimal(value: float, digits: int = 4) -> float:

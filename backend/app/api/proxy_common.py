@@ -200,13 +200,6 @@ def ensure_provider_secret_available(
         )
 
 
-def missing_provider_secret_error() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="No configured credential available for the selected provider.",
-    )
-
-
 def resolve_first_proxy_route(
     session: Session,
     *,
@@ -336,7 +329,6 @@ __all__ = [
     "ensure_provider_secret_available",
     "get_session",
     "log_tracked_proxy_request",
-    "missing_provider_secret_error",
     "provider_supports_anonymous_access",
     "persist_provider_health_status",
     "classify_provider_failure_status",

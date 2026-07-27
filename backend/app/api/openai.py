@@ -160,19 +160,6 @@ def resolve_stored_response_route(
     return resource, resolved_route, provider_secret
 
 
-def build_openai_upstream_payload(
-    payload: OpenAIChatCompletionCreate,
-    *,
-    upstream_model: str,
-) -> dict:
-    upstream_payload = payload.model_dump(
-        exclude={"provider", "fallback_providers"},
-        exclude_none=True,
-    )
-    upstream_payload["model"] = upstream_model
-    return upstream_payload
-
-
 @router.get("/v1/models")
 def get_models(
     request: Request,
@@ -916,7 +903,7 @@ def create_chat_completions(
 
         def event_stream():
             for route_index, resolved_route in enumerate(resolved_routes):
-                openai_payload = build_openai_upstream_payload(
+                openai_payload = build_upstream_payload(
                     payload,
                     upstream_model=resolved_route.upstream_model,
                 )
@@ -1190,7 +1177,7 @@ def create_chat_completions(
             )
             return OpenAIChatCompletionResponse.model_validate(openai_response)
 
-        openai_payload = build_openai_upstream_payload(
+        openai_payload = build_upstream_payload(
             payload,
             upstream_model=resolved_route.upstream_model,
         )
