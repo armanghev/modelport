@@ -199,10 +199,11 @@ def test_pricing_and_settings_routes(client: TestClient) -> None:
 
     tracking_patch = client.patch(
         "/admin/settings/tracking",
-        json={"request_logging": True, "cost_tracking": True, "retention_days": 14},
+        json={"io_logging": True, "retention_days": 14},
     )
     assert tracking_patch.status_code == 200
     assert tracking_patch.json()["retention_days"] == 14
+    assert tracking_patch.json()["io_logging"] is True
 
     appearance_patch = client.patch(
         "/admin/settings/appearance",

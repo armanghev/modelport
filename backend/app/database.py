@@ -315,8 +315,6 @@ def seed_admin_data(session_factory: sessionmaker[Session]) -> None:
             session,
             "tracking",
             {
-                "request_logging": True,
-                "cost_tracking": True,
                 "io_logging": False,
                 "retention_days": 30,
             },

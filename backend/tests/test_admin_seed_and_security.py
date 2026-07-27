@@ -25,7 +25,7 @@ def test_startup_seeds_default_settings_only(bare_client: TestClient, app_config
     settings_response = bare_client.get("/admin/settings")
     assert settings_response.status_code == 200
     payload = settings_response.json()
-    assert payload["settings"]["tracking"]["request_logging"] is True
+    assert payload["settings"]["tracking"]["io_logging"] is False
     assert payload["settings"]["appearance"]["theme"] == "system"
 
     session_factory = build_session_factory(f"sqlite:///{app_config.parent / 'test.db'}")

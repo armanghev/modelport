@@ -70,6 +70,12 @@ from app.security import EncryptionConfigurationError, decrypt_secret, encrypt_s
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+_TRACKING_SETTING_KEYS = frozenset({"io_logging", "retention_days"})
+
+
+def normalize_tracking_settings(settings: dict) -> dict:
+    return {key: value for key, value in settings.items() if key in _TRACKING_SETTING_KEYS}
+
 
 def require_provider_by_id(session: Session, provider_id: str) -> Provider:
     provider = get_provider_by_id(session, provider_id)
@@ -838,7 +844,7 @@ def update_tracking_settings(
     payload: TrackingSettings,
     session: Session = Depends(get_session),
 ) -> dict:
-    current = get_setting(session, "tracking", {})
+    current = normalize_tracking_settings(get_setting(session, "tracking", {}))
     current.update(payload.model_dump(exclude_unset=True))
     set_setting(session, "tracking", current)
     session.commit()
@@ -890,7 +896,7 @@ def get_settings(session: Session = Depends(get_session)) -> SettingsResponse:
             for record in pricing
         ],
         settings=SettingsEnvelope(
-            tracking=get_setting(session, "tracking", {}),
+            tracking=normalize_tracking_settings(get_setting(session, "tracking", {})),
             appearance=get_setting(session, "appearance", {}),
         ),
     )
