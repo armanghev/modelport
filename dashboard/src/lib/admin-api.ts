@@ -429,7 +429,6 @@ export async function patchTrackingSettings(payload: {
 }
 
 export async function updateAppearanceSettings(payload: {
-  theme: string;
   refresh_interval_seconds: number;
 }) {
   return fetchJson("/admin/settings/appearance", {

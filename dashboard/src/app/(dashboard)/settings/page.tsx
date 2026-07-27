@@ -360,7 +360,6 @@ export default function SettingsPage() {
   const saveAppearance = async () => {
     try {
       await updateAppearanceSettings({
-        theme: selectedTheme,
         refresh_interval_seconds: parseRefreshInterval(autoRefreshInterval) || 30,
       });
       setErrorMessage(null);
