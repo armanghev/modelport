@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { renderProviderIcon } from "@/components/brand/render-provider-icon";
+import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import {
   buildModelDetailPath,
   formatContextLength,
@@ -43,7 +43,7 @@ export function ModelCard({ row }: { row: ModelDirectoryRow }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center text-text-primary">
-              {renderProviderIcon(providerName)}
+              <ProviderIcon provider={providerName} />
             </span>
             <p className="truncate text-sm font-semibold text-text-primary">
               {model.display_name}

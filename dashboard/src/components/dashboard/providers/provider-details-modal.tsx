@@ -4,21 +4,22 @@ import { useEffect, useMemo } from "react";
 
 import { XIcon } from "@phosphor-icons/react";
 
+import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import {
   InteractiveAreaChart,
   type InteractiveAreaChartPoint,
 } from "@/components/dashboard/interactive-area-chart";
+import { formatInteger } from "@/lib/format";
 import {
   type ProviderDetail,
   type ProviderHealth,
   type ProviderStatus,
-} from "@/lib/mock-dashboard-data";
+} from "@/lib/dashboard-types";
 
 interface ProviderDetailsModalProps {
   provider: ProviderHealth | null;
   detail: ProviderDetail | null;
   onClose: () => void;
-  renderProviderIcon: (provider: string, size?: number) => React.ReactNode;
 }
 
 const statusStyles: Record<ProviderStatus, string> = {
@@ -52,10 +53,6 @@ function formatCurrency(value: number): string {
   })}`;
 }
 
-function formatInteger(value: number): string {
-  return value.toLocaleString("en-US");
-}
-
 function toRangeData(points: InteractiveAreaChartPoint[], count: number) {
   return points.slice(Math.max(0, points.length - count));
 }
@@ -68,58 +65,10 @@ function formatAxisTick(value: number): string {
   return value.toString();
 }
 
-function buildFallbackDetail(provider: ProviderHealth): ProviderDetail {
-  const cycleEnd = new Date(provider.lastCheckedAt);
-  const cycleStart = new Date(cycleEnd);
-  cycleStart.setDate(Math.max(1, cycleEnd.getDate() - 29));
-
-  const spendUsd = Number((provider.requestsToday * 1.18).toFixed(2));
-  const budgetUsd = Number((spendUsd * 1.35).toFixed(2));
-  const forecastUsd = Number((spendUsd * 1.12).toFixed(2));
-
-  const requestTrend = Array.from({ length: 30 }, (_, index) => {
-    const date = new Date(cycleStart);
-    date.setDate(cycleStart.getDate() + index);
-    const baseline = Math.max(8, Math.round(provider.requestsToday * 0.55));
-    const wave = Math.round((Math.sin(index / 3) + 1) * provider.requestsToday * 0.1);
-    const requests = baseline + wave + index;
-
-    return {
-      date: date.toISOString(),
-      requests,
-      successfulRequests: Math.round(requests * (provider.successRate / 100)),
-      costUsd: Number((requests * 0.02).toFixed(2)),
-    };
-  });
-
-  return {
-    providerId: provider.slug,
-    region: "global",
-    supportTier: "Standard",
-    billingCycle: {
-      planName: "Pay as you go",
-      periodStart: cycleStart.toISOString(),
-      periodEnd: cycleEnd.toISOString(),
-      nextInvoiceDate: cycleEnd.toISOString(),
-      budgetUsd,
-      spentUsd: spendUsd,
-      forecastUsd,
-    },
-    costBreakdown: [
-      { label: "Completions", amountUsd: Number((spendUsd * 0.64).toFixed(2)) },
-      { label: "Embeddings", amountUsd: Number((spendUsd * 0.21).toFixed(2)) },
-      { label: "Other", amountUsd: Number((spendUsd * 0.15).toFixed(2)) },
-    ],
-    requestTrend,
-    notes: "Fallback mock detail derived from provider health metrics.",
-  };
-}
-
 export function ProviderDetailsModal({
   provider,
   detail,
   onClose,
-  renderProviderIcon,
 }: ProviderDetailsModalProps) {
   useEffect(() => {
     if (!provider) {
@@ -153,25 +102,17 @@ export function ProviderDetailsModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [provider, onClose]);
 
-  const effectiveDetail = useMemo(() => {
-    if (!provider) {
-      return null;
-    }
-
-    return detail ?? buildFallbackDetail(provider);
-  }, [detail, provider]);
-
   const chartData: InteractiveAreaChartPoint[] = useMemo(() => {
-    if (!effectiveDetail) {
+    if (!detail?.requestTrend.length) {
       return [];
     }
 
-    return effectiveDetail.requestTrend.map((point) => ({
+    return detail.requestTrend.map((point) => ({
       date: point.date,
       primary: point.requests,
       secondary: point.successfulRequests,
     }));
-  }, [effectiveDetail]);
+  }, [detail]);
 
   const chartDataByRange = useMemo(() => {
     if (chartData.length === 0) {
@@ -187,14 +128,12 @@ export function ProviderDetailsModal({
     } as const;
   }, [chartData]);
 
-  if (!provider || !effectiveDetail) {
+  if (!provider) {
     return null;
   }
 
-  const totalBreakdownCost = effectiveDetail.costBreakdown.reduce(
-    (sum, item) => sum + item.amountUsd,
-    0,
-  );
+  const totalBreakdownCost =
+    detail?.costBreakdown.reduce((sum, item) => sum + item.amountUsd, 0) ?? 0;
 
   return (
     <div
@@ -216,7 +155,7 @@ export function ProviderDetailsModal({
             <div className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
               <span className="inline-flex items-center gap-2 rounded-md border border-border-subtle bg-bg-card-muted px-2.5 py-1 text-xs font-medium text-text-primary">
                 <span className="inline-flex h-4 w-4 items-center justify-center text-text-primary">
-                  {renderProviderIcon(provider.displayName, 16)}
+                  <ProviderIcon provider={provider.displayName} size={16} />
                 </span>
                 {provider.baseUrl}
               </span>
@@ -239,19 +178,27 @@ export function ProviderDetailsModal({
         <div className="mt-5 grid gap-3 md:grid-cols-4">
           <article className="card-surface-soft p-4">
             <p className="text-xs text-text-secondary">Region</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">{effectiveDetail.region}</p>
+            <p className="mt-1 text-sm font-semibold text-text-primary">
+              {detail?.region ?? "—"}
+            </p>
           </article>
           <article className="card-surface-soft p-4">
             <p className="text-xs text-text-secondary">Support tier</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">{effectiveDetail.supportTier}</p>
+            <p className="mt-1 text-sm font-semibold text-text-primary">
+              {detail?.supportTier ?? "—"}
+            </p>
           </article>
           <article className="card-surface-soft p-4">
             <p className="text-xs text-text-secondary">Requests today</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">{formatInteger(provider.requestsToday)}</p>
+            <p className="mt-1 text-sm font-semibold text-text-primary">
+              {formatInteger(provider.requestsToday)}
+            </p>
           </article>
           <article className="card-surface-soft p-4">
             <p className="text-xs text-text-secondary">Success rate</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">{provider.successRate.toFixed(1)}%</p>
+            <p className="mt-1 text-sm font-semibold text-text-primary">
+              {provider.successRate.toFixed(1)}%
+            </p>
           </article>
         </div>
 
@@ -259,57 +206,75 @@ export function ProviderDetailsModal({
           <article className="card-surface-soft p-4">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-text-secondary">Request trend</p>
-              <p className="text-xs text-text-muted">Primary: total requests · Secondary: successful requests</p>
+              <p className="text-xs text-text-muted">
+                Primary: total requests · Secondary: successful requests
+              </p>
             </div>
-            <InteractiveAreaChart
-              className="mt-2"
-              data={chartData}
-              dataByRange={chartDataByRange}
-              title="Request trend"
-              description="Provider request volume over billing cycle"
-              primaryLabel="Requests"
-              secondaryLabel="Successful"
-              defaultRange="30d"
-              showHeader={false}
-              showLegend={true}
-              showYAxis
-              showVerticalGrid
-              chartHeightClassName="h-64"
-              yAxisTickFormatter={formatAxisTick}
-              tooltipIncludeTime
-              surface={false}
-            />
+            {chartData.length > 0 ? (
+              <InteractiveAreaChart
+                className="mt-2"
+                data={chartData}
+                dataByRange={chartDataByRange}
+                title="Request trend"
+                description="Provider request volume over billing cycle"
+                primaryLabel="Requests"
+                secondaryLabel="Successful"
+                defaultRange="30d"
+                showHeader={false}
+                showLegend={true}
+                showYAxis
+                showVerticalGrid
+                chartHeightClassName="h-64"
+                yAxisTickFormatter={formatAxisTick}
+                tooltipIncludeTime
+                surface={false}
+              />
+            ) : (
+              <p className="mt-4 text-sm text-text-muted">
+                Request trend data is not available for this provider.
+              </p>
+            )}
           </article>
         </div>
 
         <article className="card-surface-soft mt-4 p-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-semibold text-text-primary">Estimated cost breakdown</p>
-            <p className="text-sm text-text-muted">{formatCurrency(totalBreakdownCost)}</p>
+            {detail?.costBreakdown.length ? (
+              <p className="text-sm text-text-muted">{formatCurrency(totalBreakdownCost)}</p>
+            ) : null}
           </div>
-          <div className="mt-3 space-y-3">
-            {effectiveDetail.costBreakdown.map((item) => {
-              const pct =
-                totalBreakdownCost > 0
-                  ? (item.amountUsd / totalBreakdownCost) * 100
-                  : 0;
+          {detail?.costBreakdown.length ? (
+            <div className="mt-3 space-y-3">
+              {detail.costBreakdown.map((item) => {
+                const pct =
+                  totalBreakdownCost > 0
+                    ? (item.amountUsd / totalBreakdownCost) * 100
+                    : 0;
 
-              return (
-                <div key={item.label}>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-text-secondary">{item.label}</span>
-                    <span className="font-medium text-text-primary">{formatCurrency(item.amountUsd)}</span>
+                return (
+                  <div key={item.label}>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-text-secondary">{item.label}</span>
+                      <span className="font-medium text-text-primary">
+                        {formatCurrency(item.amountUsd)}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 rounded-full bg-bg-card-muted">
+                      <div
+                        className="h-full rounded-full bg-accent-slate"
+                        style={{ width: `${Math.max(4, pct)}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="mt-1 h-1.5 rounded-full bg-bg-card-muted">
-                    <div
-                      className="h-full rounded-full bg-accent-slate"
-                      style={{ width: `${Math.max(4, pct)}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-text-muted">
+              Cost breakdown is not available for this provider.
+            </p>
+          )}
         </article>
       </div>
     </div>

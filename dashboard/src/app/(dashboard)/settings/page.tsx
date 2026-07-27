@@ -46,7 +46,7 @@ import {
   updateAppearanceSettings,
   updateProvider,
   updateProviderCredential,
-  updateTrackingSettings,
+  patchTrackingSettings,
   type AdminSettingsPayload,
   type ProviderConfigDraft,
   type ProviderConfigRow,
@@ -353,7 +353,7 @@ export default function SettingsPage() {
 
   const saveTracking = async () => {
     try {
-      await updateTrackingSettings(formatTrackingPayload(tracking));
+      await patchTrackingSettings(formatTrackingPayload(tracking));
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(

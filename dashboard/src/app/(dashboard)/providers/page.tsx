@@ -13,14 +13,15 @@ import {
   ShieldCheckIcon,
 } from "@phosphor-icons/react";
 import { ProviderDetailsModal } from "@/components/dashboard/providers/provider-details-modal";
-import { renderProviderIcon } from "@/components/brand/render-provider-icon";
+import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { Button } from "@/components/ui/button";
 import { fetchProviderHealth } from "@/lib/admin-api";
 import {
   type ProviderDetail,
   type ProviderHealth,
   type ProviderStatus,
-} from "@/lib/mock-dashboard-data";
+} from "@/lib/dashboard-types";
+import { buildPageButtons, formatTimestamp } from "@/lib/format";
 
 type TrendDirection = "up" | "down";
 
@@ -68,23 +69,6 @@ function formatProviderType(type: ProviderHealth["type"]): string {
   }
 
   return "OpenAI-compatible";
-}
-
-function formatTimestamp(value: string): string {
-  return new Date(value).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function buildPageButtons(currentPage: number, totalPages: number): number[] {
-  const buttons = new Set<number>([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
-
-  return Array.from(buttons)
-    .filter((page) => page >= 1 && page <= totalPages)
-    .sort((a, b) => a - b);
 }
 
 export default function ProvidersPage() {
@@ -304,7 +288,7 @@ export default function ProvidersPage() {
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">
                       <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-bg-card-muted text-text-primary">
-                        {renderProviderIcon(provider.displayName, 18)}
+                        <ProviderIcon provider={provider.displayName} size={18} />
                       </span>
                       <div className="min-w-0">
                         <p className="truncate font-medium text-text-primary">{provider.displayName}</p>
@@ -323,7 +307,7 @@ export default function ProvidersPage() {
                   <td className="px-5 py-3">{provider.successRate.toFixed(1)}%</td>
                   <td className="px-5 py-3">{provider.avgLatencyMs.toLocaleString("en-US")} ms</td>
                   <td className="px-5 py-3">{provider.requestsToday.toLocaleString("en-US")}</td>
-                  <td className="px-5 py-3">{formatTimestamp(provider.lastCheckedAt)}</td>
+                  <td className="px-5 py-3">{formatTimestamp(provider.lastCheckedAt, "provider")}</td>
                 </tr>
               ))}
             </tbody>
@@ -377,7 +361,6 @@ export default function ProvidersPage() {
         provider={selectedProvider}
         detail={selectedProviderDetail}
         onClose={() => setSelectedProviderId(null)}
-        renderProviderIcon={renderProviderIcon}
       />
     </div>
   );

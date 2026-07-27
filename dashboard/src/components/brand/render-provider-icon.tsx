@@ -106,7 +106,3 @@ export function ProviderIcon({
     (fallback ?? <ProviderIconFallback provider={provider} className={className} />)
   );
 }
-
-export function renderProviderIcon(provider: string, size = 20) {
-  return <ProviderIcon provider={provider} size={size} />;
-}
