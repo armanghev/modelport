@@ -1,23 +1,12 @@
 "use client";
 
-import Link from "next/link";
-
-import { ArrowLeftIcon } from "@phosphor-icons/react";
-
-import { renderProviderIcon } from "@/components/brand/render-provider-icon";
-import { InteractiveAreaChart } from "@/components/dashboard/interactive-area-chart";
-import {
-  buildDailyUsageValues,
-  buildHourlyUsageValues,
-} from "@/lib/model-usage";
+import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import {
   formatContextLength,
-  formatCost,
-  formatInteger,
   formatPricePerMillion,
   type ModelDirectoryRow,
 } from "@/lib/models-directory";
-import type { ProviderCatalogModel } from "@/lib/admin-api";
+import { formatCost, formatInteger } from "@/lib/format";
 
 function DetailMetric({
   label,
@@ -53,41 +42,13 @@ function ChipList({ items, emptyLabel }: { items: string[]; emptyLabel: string }
   );
 }
 
-function buildUsageChartData(model: ProviderCatalogModel) {
-  const requestCount = model.usage?.requestCount ?? 0;
-  const tokenTotal = model.usage?.tokenTotal ?? 0;
-  const usageBars = Array.from({ length: 7 }, (_, index) => 0.35 + index * 0.08);
-  const dailyValues = buildDailyUsageValues(usageBars, tokenTotal);
-  const hourlyValues = buildHourlyUsageValues(
-    dailyValues,
-    tokenTotal + requestCount,
-  );
-
-  const end = new Date();
-  end.setMinutes(0, 0, 0);
-
-  return hourlyValues.map((value, index) => {
-    const date = new Date(
-      end.getTime() - (hourlyValues.length - 1 - index) * 60 * 60 * 1000,
-    );
-    return {
-      date: date.toISOString(),
-      primary: value,
-      secondary: value,
-    };
-  });
-}
-
 export function ModelDetailView({
   row,
-  backHref = "/models",
 }: {
   row: ModelDirectoryRow;
-  backHref?: string;
 }) {
   const { model, providerName, providerId, baseUrl, fetchedAt } = row;
   const usage = model.usage;
-  const chartData = buildUsageChartData(model);
   const architectureEntries = Object.entries(model.architecture ?? {}).filter(
     ([, value]) => value != null && value !== "",
   );
@@ -100,7 +61,7 @@ export function ModelDetailView({
             <p className="text-sm text-text-secondary">Model details</p>
             <div className="flex items-center gap-3">
               <span className="inline-flex h-10 w-10 items-center justify-center text-text-primary">
-                {renderProviderIcon(providerName)}
+                <ProviderIcon provider={providerName} />
               </span>
               <div className="min-w-0">
                 <h2 className="truncate text-2xl leading-tight">{model.display_name}</h2>
@@ -221,41 +182,6 @@ export function ModelDetailView({
             ) : null}
           </div>
         </article>
-      </section>
-
-      <section className="card-surface p-5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-text-primary">Usage trend</h3>
-            <p className="mt-1 text-xs text-text-muted">
-              Synthetic trend based on tracked request volume when direct time-series is unavailable.
-            </p>
-          </div>
-        </div>
-        {usage && usage.requestCount > 0 ? (
-          <InteractiveAreaChart
-            className="mt-4"
-            data={chartData}
-            dataByRange={{ "7d": chartData }}
-            title="Usage trend"
-            description="Hourly usage over the last seven days"
-            primaryLabel="Token usage"
-            defaultRange="7d"
-            showHeader={false}
-            showRangeSelector={false}
-            showLegend={false}
-            showSecondary={false}
-            surface={false}
-            showYAxis
-            showVerticalGrid
-            chartHeightClassName="h-64"
-            tooltipIncludeTime
-          />
-        ) : (
-          <p className="mt-4 text-sm text-text-muted">
-            This model has not been used through the proxy yet.
-          </p>
-        )}
       </section>
 
       <section className="card-surface p-5">
