@@ -8,9 +8,8 @@ import yaml
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import AppConfig, load_config
+from app.config import load_config
 from app.database import PricingOverride, Provider, build_session_factory, get_provider_by_slug
-from sqlalchemy import select
 from app.model_metadata_service import (
     fetch_openrouter_models_api_payload,
     parse_openrouter_model,
@@ -202,7 +201,6 @@ def seed_ollama_discovered_models(
 
 def seed_pricing_overrides(
     session_factory: sessionmaker[Session],
-    _config: AppConfig,
     *,
     catalog_path: Path = DEFAULT_CATALOG_PATH,
     sync_openrouter: bool = True,
@@ -267,7 +265,6 @@ def main() -> None:
     session_factory = build_session_factory(config.database.url)
     counts = seed_pricing_overrides(
         session_factory,
-        config,
         catalog_path=Path(args.catalog),
         sync_openrouter=not args.skip_openrouter,
         discover_ollama=not args.skip_ollama_discovery,

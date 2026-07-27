@@ -19,9 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
-from app.config import AppConfig
 from app.ids import generate_api_request_id
-from app.security import mask_secret
 
 
 def utc_now() -> datetime:
@@ -308,7 +306,7 @@ def clear_default_credentials(session: Session, provider_id: str, exclude_id: st
             credential.is_default = False
 
 
-def seed_admin_data(session_factory: sessionmaker[Session], _config: AppConfig) -> None:
+def seed_admin_data(session_factory: sessionmaker[Session]) -> None:
     with session_factory() as session:
         if session.get(AppSetting, "tracking") is not None:
             return

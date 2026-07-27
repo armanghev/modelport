@@ -11,19 +11,16 @@ from app.database import PricingOverride, get_provider_by_slug
 def test_seed_pricing_overrides_is_idempotent(client) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     catalog_path = repo_root / "pricing_catalog.yaml"
-    config = client.app.state.config
     session_factory = client.app.state.session_factory
 
     first = seed_pricing_overrides(
         session_factory,
-        config,
         catalog_path=catalog_path,
         sync_openrouter=False,
         discover_ollama=False,
     )
     second = seed_pricing_overrides(
         session_factory,
-        config,
         catalog_path=catalog_path,
         sync_openrouter=False,
         discover_ollama=False,
