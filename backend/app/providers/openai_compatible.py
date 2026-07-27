@@ -11,84 +11,70 @@ from app.errors.upstream import (
 )
 
 
-def build_chat_completions_url(provider: Provider) -> str:
+def _url(provider: Provider, path: str) -> str:
     normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "chat/completions")
+    return urljoin(normalized_base, path)
 
 
-def build_models_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "models")
+def _auth_headers(api_key: str | None, *, stream: bool = False) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if stream:
+        headers["Accept"] = "text/event-stream"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
 
-def build_model_url(provider: Provider, model_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"models/{model_id}")
+def _request_json(
+    method: str,
+    provider: Provider,
+    api_key: str | None,
+    path: str,
+    *,
+    timeout: float = 60.0,
+    json: dict | None = None,
+    params: dict | None = None,
+) -> dict:
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            request_kwargs: dict = {"headers": _auth_headers(api_key)}
+            if params is not None:
+                request_kwargs["params"] = params
+            if json is not None:
+                request_kwargs["json"] = json
+            response = getattr(client, method.lower())(_url(provider, path), **request_kwargs)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
 
 
-def build_embeddings_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "embeddings")
-
-
-def build_completions_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "completions")
-
-
-def build_moderations_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "moderations")
-
-
-def build_image_generations_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "images/generations")
-
-
-def build_image_edits_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "images/edits")
-
-
-def build_image_variations_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "images/variations")
-
-
-def build_audio_transcriptions_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "audio/transcriptions")
-
-
-def build_audio_translations_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "audio/translations")
-
-
-def build_audio_speech_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "audio/speech")
-
-
-def build_responses_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "responses")
-
-
-def build_response_url(provider: Provider, response_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"responses/{response_id}")
-
-
-def build_response_input_items_url(provider: Provider, response_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"responses/{response_id}/input_items")
-
-
-def build_response_cancel_url(provider: Provider, response_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"responses/{response_id}/cancel")
+def _request_bytes(
+    method: str,
+    provider: Provider,
+    api_key: str | None,
+    path: str,
+    *,
+    timeout: float = 60.0,
+    json: dict | None = None,
+    default_content_type: str = "application/octet-stream",
+) -> tuple[bytes, str]:
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = getattr(client, method.lower())(
+                _url(provider, path),
+                headers=_auth_headers(api_key),
+                json=json,
+            )
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", default_content_type)
+            return response.content, content_type
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
 
 
 def is_gemini_openai_provider(provider: Provider) -> bool:
@@ -155,7 +141,7 @@ def post_chat_completion(
     payload: dict,
 ) -> dict:
     response = client.post(
-        build_chat_completions_url(provider),
+        _url(provider, "chat/completions"),
         headers=headers,
         json=payload,
     )
@@ -168,9 +154,7 @@ def create_chat_completion(
     api_key: str | None,
     payload: dict,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = _auth_headers(api_key)
 
     try:
         with httpx.Client(timeout=60.0) as client:
@@ -189,19 +173,7 @@ def list_models(
     provider: Provider,
     api_key: str | None,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(build_models_url(provider), headers=headers)
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("GET", provider, api_key, "models", timeout=30.0)
 
 
 def get_model(
@@ -209,19 +181,7 @@ def get_model(
     api_key: str | None,
     model_id: str,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(build_model_url(provider, model_id), headers=headers)
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("GET", provider, api_key, f"models/{model_id}", timeout=30.0)
 
 
 def create_embedding(
@@ -229,23 +189,7 @@ def create_embedding(
     api_key: str | None,
     payload: dict,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_embeddings_url(provider),
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("POST", provider, api_key, "embeddings", json=payload)
 
 
 def create_completion(
@@ -253,29 +197,13 @@ def create_completion(
     api_key: str | None,
     payload: dict,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_completions_url(provider),
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("POST", provider, api_key, "completions", json=payload)
 
 
 def post_openai_multipart_json(
     provider: Provider,
     api_key: str | None,
-    url: str,
+    path: str,
     *,
     form_fields: dict[str, str],
     files: dict[str, tuple[str, bytes, str]],
@@ -287,7 +215,7 @@ def post_openai_multipart_json(
     try:
         with httpx.Client(timeout=120.0) as client:
             response = client.post(
-                url,
+                _url(provider, path),
                 headers=headers,
                 data=form_fields,
                 files={
@@ -308,23 +236,7 @@ def create_image_generation(
     api_key: str | None,
     payload: dict,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=120.0) as client:
-            response = client.post(
-                build_image_generations_url(provider),
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("POST", provider, api_key, "images/generations", timeout=120.0, json=payload)
 
 
 def create_image_edit(
@@ -337,7 +249,7 @@ def create_image_edit(
     return post_openai_multipart_json(
         provider,
         api_key,
-        build_image_edits_url(provider),
+        "images/edits",
         form_fields=form_fields,
         files=files,
     )
@@ -353,7 +265,7 @@ def create_image_variation(
     return post_openai_multipart_json(
         provider,
         api_key,
-        build_image_variations_url(provider),
+        "images/variations",
         form_fields=form_fields,
         files=files,
     )
@@ -369,7 +281,7 @@ def create_audio_transcription(
     return post_openai_multipart_json(
         provider,
         api_key,
-        build_audio_transcriptions_url(provider),
+        "audio/transcriptions",
         form_fields=form_fields,
         files=files,
     )
@@ -385,7 +297,7 @@ def create_audio_translation(
     return post_openai_multipart_json(
         provider,
         api_key,
-        build_audio_translations_url(provider),
+        "audio/translations",
         form_fields=form_fields,
         files=files,
     )
@@ -396,24 +308,15 @@ def create_audio_speech(
     api_key: str | None,
     payload: dict,
 ) -> tuple[bytes, str]:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=120.0) as client:
-            response = client.post(
-                build_audio_speech_url(provider),
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "audio/mpeg")
-            return response.content, content_type
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_bytes(
+        "POST",
+        provider,
+        api_key,
+        "audio/speech",
+        timeout=120.0,
+        json=payload,
+        default_content_type="audio/mpeg",
+    )
 
 
 def create_moderation(
@@ -421,23 +324,7 @@ def create_moderation(
     api_key: str | None,
     payload: dict,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_moderations_url(provider),
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("POST", provider, api_key, "moderations", json=payload)
 
 
 def create_response(
@@ -445,23 +332,7 @@ def create_response(
     api_key: str | None,
     payload: dict,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_responses_url(provider),
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("POST", provider, api_key, "responses", json=payload)
 
 
 def get_response(
@@ -469,22 +340,7 @@ def get_response(
     api_key: str | None,
     response_id: str,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.get(
-                build_response_url(provider, response_id),
-                headers=headers,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("GET", provider, api_key, f"responses/{response_id}")
 
 
 def list_response_input_items(
@@ -496,10 +352,6 @@ def list_response_input_items(
     limit: int | None = None,
     order: str | None = None,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
     params: dict[str, str | int] = {}
     if after is not None:
         params["after"] = after
@@ -508,19 +360,13 @@ def list_response_input_items(
     if order is not None:
         params["order"] = order
 
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.get(
-                build_response_input_items_url(provider, response_id),
-                headers=headers,
-                params=params or None,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json(
+        "GET",
+        provider,
+        api_key,
+        f"responses/{response_id}/input_items",
+        params=params or None,
+    )
 
 
 def cancel_response(
@@ -528,22 +374,7 @@ def cancel_response(
     api_key: str | None,
     response_id: str,
 ) -> dict:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_response_cancel_url(provider, response_id),
-                headers=headers,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("POST", provider, api_key, f"responses/{response_id}/cancel")
 
 
 def stream_response_events(
@@ -551,18 +382,13 @@ def stream_response_events(
     api_key: str | None,
     payload: dict,
 ):
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream",
-    }
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = _auth_headers(api_key, stream=True)
 
     try:
         with httpx.Client(timeout=60.0) as client:
             with client.stream(
                 "POST",
-                build_responses_url(provider),
+                _url(provider, "responses"),
                 headers=headers,
                 json=payload,
             ) as response:
@@ -582,18 +408,13 @@ def stream_completion_chunks(
     api_key: str | None,
     payload: dict,
 ):
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream",
-    }
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = _auth_headers(api_key, stream=True)
 
     try:
         with httpx.Client(timeout=60.0) as client:
             with client.stream(
                 "POST",
-                build_completions_url(provider),
+                _url(provider, "completions"),
                 headers=headers,
                 json=payload,
             ) as response:
@@ -617,18 +438,13 @@ def stream_chat_completion_chunks(
     api_key: str | None,
     payload: dict,
 ):
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream",
-    }
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = _auth_headers(api_key, stream=True)
 
     try:
         with httpx.Client(timeout=60.0) as client:
             with client.stream(
                 "POST",
-                build_chat_completions_url(provider),
+                _url(provider, "chat/completions"),
                 headers=headers,
                 json=payload,
             ) as response:

@@ -9,19 +9,9 @@ from fastapi import HTTPException
 from app.database import Provider
 from app.providers.anthropic_compatible import (
     FILES_API_BETA,
-    build_file_content_url,
-    build_file_url,
+    _url,
     build_files_headers,
-    build_files_url,
     build_headers,
-    build_message_batch_cancel_url,
-    build_message_batch_results_url,
-    build_message_batch_url,
-    build_message_batches_url,
-    build_message_count_tokens_url,
-    build_model_url,
-    build_messages_url,
-    build_models_url,
     cancel_message_batch,
     count_message_tokens,
     create_file,
@@ -46,32 +36,26 @@ def make_anthropic_provider() -> Provider:
 def test_build_urls_for_anthropic_upstream() -> None:
     provider = make_anthropic_provider()
 
-    assert build_messages_url(provider) == "https://api.anthropic.com/v1/messages"
-    assert build_models_url(provider) == "https://api.anthropic.com/v1/models"
-    assert build_model_url(provider, "claude-sonnet-4-5-20250929") == "https://api.anthropic.com/v1/models/claude-sonnet-4-5-20250929"
+    assert _url(provider, "v1/messages") == "https://api.anthropic.com/v1/messages"
+    assert _url(provider, "v1/models") == "https://api.anthropic.com/v1/models"
+    assert _url(provider, "v1/models/claude-sonnet-4-5-20250929") == "https://api.anthropic.com/v1/models/claude-sonnet-4-5-20250929"
+    assert _url(provider, "v1/messages/count_tokens") == "https://api.anthropic.com/v1/messages/count_tokens"
+    assert _url(provider, "v1/messages/batches") == "https://api.anthropic.com/v1/messages/batches"
     assert (
-        build_message_count_tokens_url(provider)
-        == "https://api.anthropic.com/v1/messages/count_tokens"
-    )
-    assert build_message_batches_url(provider) == "https://api.anthropic.com/v1/messages/batches"
-    assert (
-        build_message_batch_url(provider, "msgbatch_123")
+        _url(provider, "v1/messages/batches/msgbatch_123")
         == "https://api.anthropic.com/v1/messages/batches/msgbatch_123"
     )
     assert (
-        build_message_batch_cancel_url(provider, "msgbatch_123")
+        _url(provider, "v1/messages/batches/msgbatch_123/cancel")
         == "https://api.anthropic.com/v1/messages/batches/msgbatch_123/cancel"
     )
     assert (
-        build_message_batch_results_url(provider, "msgbatch_123")
+        _url(provider, "v1/messages/batches/msgbatch_123/results")
         == "https://api.anthropic.com/v1/messages/batches/msgbatch_123/results"
     )
-    assert build_files_url(provider) == "https://api.anthropic.com/v1/files"
-    assert build_file_url(provider, "file_123") == "https://api.anthropic.com/v1/files/file_123"
-    assert (
-        build_file_content_url(provider, "file_123")
-        == "https://api.anthropic.com/v1/files/file_123/content"
-    )
+    assert _url(provider, "v1/files") == "https://api.anthropic.com/v1/files"
+    assert _url(provider, "v1/files/file_123") == "https://api.anthropic.com/v1/files/file_123"
+    assert _url(provider, "v1/files/file_123/content") == "https://api.anthropic.com/v1/files/file_123/content"
 
 
 def test_build_headers_for_anthropic_requests() -> None:
@@ -373,7 +357,7 @@ def test_stream_message_events_passes_through_sse_lines(monkeypatch) -> None:
 @pytest.mark.parametrize("factory", ["http_status", "transport", "value"])
 def test_create_message_maps_upstream_errors(monkeypatch, factory: str) -> None:
     provider = make_anthropic_provider()
-    request = httpx.Request("POST", build_messages_url(provider))
+    request = httpx.Request("POST", _url(provider, "v1/messages"))
     response = httpx.Response(503, request=request, text="temporary outage")
     expected = HTTPException(status_code=502, detail={"message": f"mapped {factory}"})
     captured: dict[str, object] = {}
@@ -428,7 +412,7 @@ def test_create_message_maps_upstream_errors(monkeypatch, factory: str) -> None:
 @pytest.mark.parametrize("factory", ["http_status", "transport", "value"])
 def test_list_models_maps_upstream_errors(monkeypatch, factory: str) -> None:
     provider = make_anthropic_provider()
-    request = httpx.Request("GET", build_models_url(provider))
+    request = httpx.Request("GET", _url(provider, "v1/models"))
     response = httpx.Response(502, request=request, text="bad gateway")
     expected = HTTPException(status_code=502, detail={"message": f"mapped {factory}"})
     captured: dict[str, object] = {}
@@ -483,7 +467,7 @@ def test_list_models_maps_upstream_errors(monkeypatch, factory: str) -> None:
 @pytest.mark.parametrize("factory", ["http_status", "transport"])
 def test_stream_message_events_maps_upstream_errors(monkeypatch, factory: str) -> None:
     provider = make_anthropic_provider()
-    request = httpx.Request("POST", build_messages_url(provider))
+    request = httpx.Request("POST", _url(provider, "v1/messages"))
     response = httpx.Response(504, request=request, text="gateway timeout")
     expected = HTTPException(status_code=502, detail={"message": f"mapped {factory}"})
     captured: dict[str, object] = {}

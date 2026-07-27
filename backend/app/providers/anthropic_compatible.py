@@ -11,59 +11,9 @@ from app.errors.upstream import (
 )
 
 
-def build_messages_url(provider: Provider) -> str:
+def _url(provider: Provider, path: str) -> str:
     normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "v1/messages")
-
-
-def build_models_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "v1/models")
-
-
-def build_model_url(provider: Provider, model_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"v1/models/{model_id}")
-
-
-def build_message_count_tokens_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "v1/messages/count_tokens")
-
-
-def build_message_batches_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "v1/messages/batches")
-
-
-def build_message_batch_url(provider: Provider, batch_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"v1/messages/batches/{batch_id}")
-
-
-def build_message_batch_cancel_url(provider: Provider, batch_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"v1/messages/batches/{batch_id}/cancel")
-
-
-def build_message_batch_results_url(provider: Provider, batch_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"v1/messages/batches/{batch_id}/results")
-
-
-def build_files_url(provider: Provider) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, "v1/files")
-
-
-def build_file_url(provider: Provider, file_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"v1/files/{file_id}")
-
-
-def build_file_content_url(provider: Provider, file_id: str) -> str:
-    normalized_base = provider.base_url.rstrip("/") + "/"
-    return urljoin(normalized_base, f"v1/files/{file_id}/content")
+    return urljoin(normalized_base, path)
 
 
 FILES_API_BETA = "files-api-2025-04-14"
@@ -91,42 +41,70 @@ def build_files_headers(api_key: str | None) -> dict[str, str]:
     return headers
 
 
-def create_message(
+def _request_json(
+    method: str,
     provider: Provider,
     api_key: str | None,
-    payload: dict,
+    path: str,
+    *,
+    timeout: float = 60.0,
+    json: dict | None = None,
+    params: dict | None = None,
+    files: bool = False,
 ) -> dict:
+    headers = build_files_headers(api_key) if files else build_headers(api_key)
     try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_messages_url(provider),
-                headers=build_headers(api_key),
-                json=payload,
-            )
+        with httpx.Client(timeout=timeout) as client:
+            request_kwargs: dict = {"headers": headers}
+            if params is not None:
+                request_kwargs["params"] = params
+            if json is not None:
+                request_kwargs["json"] = json
+            response = getattr(client, method.lower())(_url(provider, path), **request_kwargs)
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as exc:
         raise http_exception_from_upstream_http_error(exc) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def _request_bytes(
+    method: str,
+    provider: Provider,
+    api_key: str | None,
+    path: str,
+    *,
+    timeout: float = 60.0,
+    files: bool = False,
+    default_content_type: str = "application/octet-stream",
+) -> tuple[bytes, str]:
+    headers = build_files_headers(api_key) if files else build_headers(api_key)
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = getattr(client, method.lower())(_url(provider, path), headers=headers)
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", default_content_type)
+            return response.content, content_type
+    except httpx.HTTPStatusError as exc:
+        raise http_exception_from_upstream_http_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise http_exception_from_upstream_transport_error(exc) from exc
+
+
+def create_message(
+    provider: Provider,
+    api_key: str | None,
+    payload: dict,
+) -> dict:
+    return _request_json("POST", provider, api_key, "v1/messages", json=payload)
 
 
 def list_models(
     provider: Provider,
     api_key: str | None,
 ) -> dict:
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(
-                build_models_url(provider),
-                headers=build_headers(api_key),
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("GET", provider, api_key, "v1/models", timeout=30.0)
 
 
 def get_model(
@@ -134,18 +112,7 @@ def get_model(
     api_key: str | None,
     model_id: str,
 ) -> dict:
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(
-                build_model_url(provider, model_id),
-                headers=build_headers(api_key),
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("GET", provider, api_key, f"v1/models/{model_id}", timeout=30.0)
 
 
 def count_message_tokens(
@@ -153,19 +120,7 @@ def count_message_tokens(
     api_key: str | None,
     payload: dict,
 ) -> dict:
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_message_count_tokens_url(provider),
-                headers=build_headers(api_key),
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("POST", provider, api_key, "v1/messages/count_tokens", json=payload)
 
 
 def create_message_batch(
@@ -173,19 +128,7 @@ def create_message_batch(
     api_key: str | None,
     payload: dict,
 ) -> dict:
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_message_batches_url(provider),
-                headers=build_headers(api_key),
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("POST", provider, api_key, "v1/messages/batches", json=payload)
 
 
 def list_message_batches(
@@ -204,19 +147,13 @@ def list_message_batches(
     if limit is not None:
         params["limit"] = limit
 
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.get(
-                build_message_batches_url(provider),
-                headers=build_headers(api_key),
-                params=params or None,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json(
+        "GET",
+        provider,
+        api_key,
+        "v1/messages/batches",
+        params=params or None,
+    )
 
 
 def get_message_batch(
@@ -224,18 +161,7 @@ def get_message_batch(
     api_key: str | None,
     batch_id: str,
 ) -> dict:
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.get(
-                build_message_batch_url(provider, batch_id),
-                headers=build_headers(api_key),
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("GET", provider, api_key, f"v1/messages/batches/{batch_id}")
 
 
 def cancel_message_batch(
@@ -243,18 +169,7 @@ def cancel_message_batch(
     api_key: str | None,
     batch_id: str,
 ) -> dict:
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                build_message_batch_cancel_url(provider, batch_id),
-                headers=build_headers(api_key),
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("POST", provider, api_key, f"v1/messages/batches/{batch_id}/cancel")
 
 
 def delete_message_batch(
@@ -262,11 +177,12 @@ def delete_message_batch(
     api_key: str | None,
     batch_id: str,
 ) -> None:
+    headers = build_headers(api_key)
     try:
         with httpx.Client(timeout=60.0) as client:
             response = client.delete(
-                build_message_batch_url(provider, batch_id),
-                headers=build_headers(api_key),
+                _url(provider, f"v1/messages/batches/{batch_id}"),
+                headers=headers,
             )
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -280,19 +196,13 @@ def get_message_batch_results(
     api_key: str | None,
     batch_id: str,
 ) -> tuple[bytes, str]:
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.get(
-                build_message_batch_results_url(provider, batch_id),
-                headers=build_headers(api_key),
-            )
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "application/x-jsonlines")
-            return response.content, content_type
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_bytes(
+        "GET",
+        provider,
+        api_key,
+        f"v1/messages/batches/{batch_id}/results",
+        default_content_type="application/x-jsonlines",
+    )
 
 
 def create_file(
@@ -307,7 +217,7 @@ def create_file(
     try:
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
-                build_files_url(provider),
+                _url(provider, "v1/files"),
                 headers=build_files_headers(api_key),
                 files=files,
             )
@@ -338,19 +248,14 @@ def list_files(
     if scope_id is not None:
         params["scope_id"] = scope_id
 
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.get(
-                build_files_url(provider),
-                headers=build_files_headers(api_key),
-                params=params or None,
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json(
+        "GET",
+        provider,
+        api_key,
+        "v1/files",
+        params=params or None,
+        files=True,
+    )
 
 
 def get_file(
@@ -358,18 +263,7 @@ def get_file(
     api_key: str | None,
     file_id: str,
 ) -> dict:
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.get(
-                build_file_url(provider, file_id),
-                headers=build_files_headers(api_key),
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("GET", provider, api_key, f"v1/files/{file_id}", files=True)
 
 
 def get_file_content(
@@ -377,19 +271,7 @@ def get_file_content(
     api_key: str | None,
     file_id: str,
 ) -> tuple[bytes, str]:
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.get(
-                build_file_content_url(provider, file_id),
-                headers=build_files_headers(api_key),
-            )
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "application/octet-stream")
-            return response.content, content_type
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_bytes("GET", provider, api_key, f"v1/files/{file_id}/content", files=True)
 
 
 def delete_file(
@@ -397,18 +279,7 @@ def delete_file(
     api_key: str | None,
     file_id: str,
 ) -> dict:
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            response = client.delete(
-                build_file_url(provider, file_id),
-                headers=build_files_headers(api_key),
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise http_exception_from_upstream_http_error(exc) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise http_exception_from_upstream_transport_error(exc) from exc
+    return _request_json("DELETE", provider, api_key, f"v1/files/{file_id}", files=True)
 
 
 def stream_message_events(
@@ -420,7 +291,7 @@ def stream_message_events(
         with httpx.Client(timeout=60.0) as client:
             with client.stream(
                 "POST",
-                build_messages_url(provider),
+                _url(provider, "v1/messages"),
                 headers=build_headers(api_key, stream=True),
                 json=payload,
             ) as response:
