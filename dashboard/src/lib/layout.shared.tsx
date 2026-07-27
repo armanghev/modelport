@@ -1,7 +1,7 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
 
 import { DashboardThemeSwitch } from '@/components/dashboard/dashboard-theme-switch';
-import { appName, docsRoute, gitConfig } from '@/lib/shared';
+import { appName, gitConfig } from '@/lib/shared';
 
 export function baseLayoutOptions(): BaseLayoutProps {
   return {
@@ -10,14 +10,6 @@ export function baseLayoutOptions(): BaseLayoutProps {
       url: '/overview',
     },
     githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
-    links: [
-      {
-        type: 'main',
-        text: 'Documentation',
-        url: docsRoute,
-        on: 'nav',
-      },
-    ],
     themeSwitch: {
       enabled: true,
       mode: 'light-dark',

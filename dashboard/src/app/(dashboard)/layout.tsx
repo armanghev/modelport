@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 
-import { DashboardSidebarFooter } from '@/components/dashboard/dashboard-sidebar-footer';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { dashboardTree } from '@/lib/dashboard-tree';
 import { baseLayoutOptions } from '@/lib/layout.shared';
@@ -12,7 +11,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       tree={dashboardTree}
       {...baseLayoutOptions()}
       sidebar={{
-        footer: <DashboardSidebarFooter />,
         className: 'bg-fd-card!',
       }}
     >

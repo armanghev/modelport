@@ -32,11 +32,6 @@ export function PageHeader() {
           {currentPageData.description}
         </p>
       </div>
-
-      <div className="flex items-center gap-2 text-sm text-fd-muted-foreground">
-        <span className="inline-block size-2 rounded-full bg-fd-success" />
-        <span>All systems operational</span>
-      </div>
     </header>
   );
 }
