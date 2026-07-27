@@ -141,16 +141,6 @@ class CostsAnalyticsResponse(BaseModel):
     recentHighCostRequests: list[RequestRow]
 
 
-class ProviderBillingCycle(BaseModel):
-    planName: str
-    periodStart: str
-    periodEnd: str
-    nextInvoiceDate: str
-    budgetUsd: float
-    spentUsd: float
-    forecastUsd: float
-
-
 class ProviderTrendPoint(BaseModel):
     date: str
     requests: int
@@ -160,9 +150,6 @@ class ProviderTrendPoint(BaseModel):
 
 class ProviderDetail(BaseModel):
     providerId: str
-    region: str
-    supportTier: str
-    billingCycle: ProviderBillingCycle
     costBreakdown: list[CostBucket]
     requestTrend: list[ProviderTrendPoint]
     notes: str

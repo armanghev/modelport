@@ -527,15 +527,7 @@ def build_provider_details(
     now: datetime,
 ) -> dict:
     provider_requests = [record for record in requests if record.provider == provider.slug]
-    cycle_end = now
     cycle_start = now - timedelta(days=29)
-    spend_usd = sum(
-        record.estimated_cost_usd or 0.0
-        for record in provider_requests
-        if coerce_utc(record.created_at) >= cycle_start
-    )
-    budget_usd = round_decimal(max(spend_usd * 1.35, 25.0), 2)
-    forecast_usd = round_decimal(spend_usd * 1.12, 2)
 
     request_trend = []
     for index in range(30):
@@ -570,17 +562,6 @@ def build_provider_details(
 
     return {
         "providerId": provider.slug,
-        "region": "global",
-        "supportTier": "Standard",
-        "billingCycle": {
-            "planName": "Pay as you go",
-            "periodStart": cycle_start.isoformat(),
-            "periodEnd": cycle_end.isoformat(),
-            "nextInvoiceDate": cycle_end.isoformat(),
-            "budgetUsd": budget_usd,
-            "spentUsd": round_decimal(spend_usd, 2),
-            "forecastUsd": forecast_usd,
-        },
         "costBreakdown": cost_breakdown,
         "requestTrend": request_trend,
         "notes": "Derived from proxy request logs and recent provider health checks.",
