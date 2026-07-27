@@ -31,4 +31,4 @@ def test_filter_models_for_provider_matches_query() -> None:
 
 def test_routed_model_id_returns_catalog_id() -> None:
     model = _catalog()["gemini"][0]
-    assert routed_model_id("gemini", model) == "models/gemini-2.5-flash"
+    assert routed_model_id(model) == "models/gemini-2.5-flash"

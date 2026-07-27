@@ -58,9 +58,8 @@ def filter_models_for_provider(
     return filtered
 
 
-def routed_model_id(provider_id: str, model: ProviderModel) -> str:
+def routed_model_id(model: ProviderModel) -> str:
     """Return the model id stored for Claude Code; backend infers provider from it."""
-    _ = provider_id
     return model.id
 
 
@@ -158,7 +157,7 @@ def _select_provider_model_numeric(
             if raw_model.isdigit():
                 m_choice = int(raw_model)
                 if 1 <= m_choice <= len(models):
-                    return routed_model_id(provider_id, models[m_choice - 1])
+                    return routed_model_id(models[m_choice - 1])
                 if m_choice == custom_index:
                     custom = prompt_text("Model id")
                     return custom or None
@@ -382,7 +381,7 @@ def _select_provider_model_interactive(
         if models:
             for model in models:
                 if model.id == value:
-                    result["value"] = routed_model_id(tab.provider_id, model)
+                    result["value"] = routed_model_id(model)
                     event.app.exit()
                     return
         result["value"] = value
