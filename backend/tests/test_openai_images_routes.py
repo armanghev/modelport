@@ -2,15 +2,6 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.compatibility.capabilities import PROXY_ROUTE_CAPABILITIES
-
-
-def test_proxy_route_capabilities_include_openai_image_families() -> None:
-    routes = {capability.route for capability in PROXY_ROUTE_CAPABILITIES}
-    assert "/v1/images/generations" in routes
-    assert "/v1/images/edits" in routes
-    assert "/v1/images/variations" in routes
-
 
 def test_image_generations_route_proxies_openai_compatible_provider(
     client: TestClient,

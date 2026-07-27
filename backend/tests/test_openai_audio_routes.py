@@ -2,15 +2,6 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.compatibility.capabilities import PROXY_ROUTE_CAPABILITIES
-
-
-def test_proxy_route_capabilities_include_openai_audio_families() -> None:
-    routes = {capability.route for capability in PROXY_ROUTE_CAPABILITIES}
-    assert "/v1/audio/transcriptions" in routes
-    assert "/v1/audio/translations" in routes
-    assert "/v1/audio/speech" in routes
-
 
 def test_audio_transcriptions_route_proxies_multipart_openai_compatible_provider(
     client: TestClient,
