@@ -107,13 +107,7 @@ export function formatPricePerMillion(value: number | null | undefined): string 
   return `$${value.toFixed(2)}/M`;
 }
 
-export function formatInteger(value: number): string {
-  return value.toLocaleString("en-US");
-}
-
-export function formatCost(value: number): string {
-  return `$${value.toFixed(2)}`;
-}
+export { formatCost, formatInteger } from "@/lib/format";
 
 export function modelHasPricing(model: ProviderCatalogModel): boolean {
   return (

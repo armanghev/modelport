@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { CodeIcon } from "@phosphor-icons/react";
 
@@ -18,7 +18,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import type { RequestRow, RequestStatus } from "@/lib/mock-dashboard-data";
+import type { RequestRow, RequestStatus } from "@/lib/dashboard-types";
+import {
+  formatCost,
+  formatInteger,
+  formatTimestamp,
+} from "@/lib/format";
 
 type RequestOutcome = RequestStatus;
 
@@ -38,31 +43,12 @@ const requestOutcomeStyles: Record<RequestOutcome, string> = {
   cancelled: "bg-bg-card-muted text-text-muted",
 };
 
-function formatTimestamp(value: string): string {
-  return new Date(value).toLocaleString("en-US", {
-    month: "2-digit",
-    day: "2-digit",
-    year: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 function formatDuration(latencyMs: number): string {
   if (latencyMs >= 1000) {
     return `${(latencyMs / 1000).toFixed(2)} s`;
   }
 
   return `${latencyMs} ms`;
-}
-
-function formatCost(value: number): string {
-  return `$${value.toFixed(4)}`;
-}
-
-function formatInteger(value: number): string {
-  return value.toLocaleString("en-US");
 }
 
 function CopyIdButton({ value, label }: { value: string; label: string }) {
@@ -157,11 +143,32 @@ function IoResponseBlock({
   formattedJson: string;
   missingLabel: string;
 }) {
-  const [showRaw, setShowRaw] = useState(false);
+  return (
+    <IoResponseBlockContent
+      key={payload ?? "missing"}
+      tokenLabel={tokenLabel}
+      payload={payload}
+      displayText={displayText}
+      formattedJson={formattedJson}
+      missingLabel={missingLabel}
+    />
+  );
+}
 
-  useEffect(() => {
-    setShowRaw(false);
-  }, [payload]);
+function IoResponseBlockContent({
+  tokenLabel,
+  payload,
+  displayText,
+  formattedJson,
+  missingLabel,
+}: {
+  tokenLabel: string;
+  payload: string | null;
+  displayText: string;
+  formattedJson: string;
+  missingLabel: string;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
 
   if (!payload) {
     return (
@@ -333,7 +340,7 @@ export function RequestDetailSheet({
           </div>
           {row ? (
             <SheetDescription className="text-sm text-text-secondary">
-              {formatTimestamp(row.timestamp)} · {row.endpoint}
+              {formatTimestamp(row.timestamp, "detail")} · {row.endpoint}
             </SheetDescription>
           ) : null}
         </SheetHeader>
@@ -407,7 +414,7 @@ export function RequestDetailSheet({
                     </p>
                   }
                 />
-                <DetailMetric label="Estimated cost" value={formatCost(row.costUsd)} />
+                <DetailMetric label="Estimated cost" value={formatCost(row.costUsd, 4)} />
                 <DetailMetric label="Status" value={outcomeLabel} />
               </div>
             </section>

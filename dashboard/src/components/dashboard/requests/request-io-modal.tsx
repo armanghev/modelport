@@ -13,7 +13,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Input } from "@/components/ui/input";
-import type { RequestRow } from "@/lib/mock-dashboard-data";
+import type { RequestRow } from "@/lib/dashboard-types";
+import { formatCost, formatInteger } from "@/lib/format";
 import {
   buildIoInspectorData,
   buildMessageInspectorJson,
@@ -36,16 +37,8 @@ interface RequestIoModalProps {
 
 type InspectorView = "messages" | "raw";
 
-function formatInteger(value: number): string {
-  return value.toLocaleString("en-US");
-}
-
 function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
-}
-
-function formatCost(value: number): string {
-  return `$${value.toFixed(4)}`;
 }
 
 function RoleBadge({
@@ -129,7 +122,7 @@ function formatCostDisplay(value: number): string {
   if (value < 0.00005) {
     return "$0";
   }
-  return formatCost(value);
+  return formatCost(value, 4);
 }
 
 function TokenDistributionBar({
@@ -335,9 +328,23 @@ function JsonViewerPanel({
 }
 
 export function RequestIoModal({ row, open, onClose }: RequestIoModalProps) {
+  if (!open || !row) {
+    return null;
+  }
+
+  return <RequestIoModalBody key={row.id} row={row} onClose={onClose} />;
+}
+
+function RequestIoModalBody({
+  row,
+  onClose,
+}: {
+  row: RequestRow;
+  onClose: () => void;
+}) {
   const [view, setView] = useState<InspectorView>("messages");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(
+  const [selectedMessageIdOverride, setSelectedMessageIdOverride] = useState<string | null>(
     null,
   );
   const [showMessageRaw, setShowMessageRaw] = useState(false);
@@ -383,17 +390,30 @@ export function RequestIoModal({ row, open, onClose }: RequestIoModalProps) {
     );
   }, [inspector, searchQuery]);
 
-  const selectedMessage = useMemo(() => {
+  const selectedMessageId = useMemo(() => {
     if (filteredMessages.length === 0) {
       return null;
     }
-    if (selectedMessageId) {
-      return (
-        filteredMessages.find((message) => message.id === selectedMessageId) ??
-        filteredMessages[0]
-      );
+
+    if (
+      selectedMessageIdOverride &&
+      filteredMessages.some((message) => message.id === selectedMessageIdOverride)
+    ) {
+      return selectedMessageIdOverride;
     }
-    return filteredMessages[0];
+
+    return filteredMessages[0]?.id ?? null;
+  }, [filteredMessages, selectedMessageIdOverride]);
+
+  const selectedMessage = useMemo(() => {
+    if (!selectedMessageId) {
+      return null;
+    }
+
+    return (
+      filteredMessages.find((message) => message.id === selectedMessageId) ??
+      null
+    );
   }, [filteredMessages, selectedMessageId]);
 
   const selectedIndex = selectedMessage
@@ -406,10 +426,6 @@ export function RequestIoModal({ row, open, onClose }: RequestIoModalProps) {
   );
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
@@ -419,31 +435,9 @@ export function RequestIoModal({ row, open, onClose }: RequestIoModalProps) {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  }, [onClose]);
 
-  useEffect(() => {
-    if (!open) {
-      setView("messages");
-      setSearchQuery("");
-      setSelectedMessageId(null);
-      setShowMessageRaw(false);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (filteredMessages.length === 0) {
-      setSelectedMessageId(null);
-      return;
-    }
-    if (
-      !selectedMessageId ||
-      !filteredMessages.some((message) => message.id === selectedMessageId)
-    ) {
-      setSelectedMessageId(filteredMessages[0]?.id ?? null);
-    }
-  }, [filteredMessages, selectedMessageId]);
-
-  if (!open || !row || !inspector) {
+  if (!inspector) {
     return null;
   }
 
@@ -460,7 +454,7 @@ export function RequestIoModal({ row, open, onClose }: RequestIoModalProps) {
     const nextIndex =
       (selectedIndex + direction + filteredMessages.length) %
       filteredMessages.length;
-    setSelectedMessageId(filteredMessages[nextIndex]?.id ?? null);
+    setSelectedMessageIdOverride(filteredMessages[nextIndex]?.id ?? null);
   };
 
   const tokenStats = (
@@ -599,7 +593,7 @@ export function RequestIoModal({ row, open, onClose }: RequestIoModalProps) {
                           return (
                             <tr
                               key={message.id}
-                              onClick={() => setSelectedMessageId(message.id)}
+                              onClick={() => setSelectedMessageIdOverride(message.id)}
                               className={
                                 isSelected
                                   ? "cursor-pointer border-t border-border-subtle bg-bg-card-muted"

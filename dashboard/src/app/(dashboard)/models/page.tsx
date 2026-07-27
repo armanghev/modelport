@@ -31,22 +31,7 @@ import {
   type ModelDirectoryFilters,
   type ModelSortKey,
 } from "@/lib/models-directory";
-
-function formatTimestamp(value: string | null | undefined): string {
-  if (!value) {
-    return "Not synced";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "Unknown";
-  }
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(parsed);
-}
+import { formatOptionalTimestamp } from "@/lib/format";
 
 function FilterSelect({
   id,
@@ -207,7 +192,7 @@ export default function ModelsPage() {
             </span>
           </div>
           <p className="mt-2 text-sm text-text-muted">
-            Metadata sync {formatTimestamp(totals?.metadata_synced_at)}
+            Metadata sync {formatOptionalTimestamp(totals?.metadata_synced_at)}
           </p>
         </article>
       </section>
