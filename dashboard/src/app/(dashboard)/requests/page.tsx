@@ -157,6 +157,7 @@ export default function RequestsPage() {
 
   useEffect(() => {
     let active = true;
+    let intervalId: number | undefined;
 
     const loadRequests = async (showLoading: boolean) => {
       if (showLoading) {
@@ -196,36 +197,35 @@ export default function RequestsPage() {
       }
     };
 
-    void loadRequests(true);
-    const intervalId = window.setInterval(() => {
-      void loadRequests(false);
-    }, 30_000);
-
-    return () => {
-      active = false;
-      window.clearInterval(intervalId);
+    const startPolling = (intervalMs: number) => {
+      void loadRequests(true);
+      intervalId = window.setInterval(() => {
+        void loadRequests(false);
+      }, intervalMs);
     };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
 
     void fetchAdminSettings()
-      .then((payload) => {
+      .then((settings) => {
         if (!active) {
           return;
         }
-        setIoLoggingEnabled(payload.settings.tracking.io_logging ?? false);
+        setIoLoggingEnabled(settings.settings.tracking.io_logging ?? false);
+        const seconds = settings.settings.appearance.refresh_interval_seconds ?? 30;
+        startPolling(seconds * 1000);
       })
       .catch(() => {
         if (!active) {
           return;
         }
         setIoLoggingEnabled(false);
+        startPolling(30_000);
       });
 
     return () => {
       active = false;
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+      }
     };
   }, []);
 
