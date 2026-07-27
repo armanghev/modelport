@@ -9,11 +9,15 @@ data/
 .pytest_cache/
 *.egg-info/
 TASKS.md
-taskman/
 DESIGN.md
 /.claude/
 /.cursor/
 
+# Local-only / clone-private paths
+/local/
+/mock-api/
+PRODUCT.md
+/.code-review-graph/
+
 # Local TLS certificates (mkcert). Never commit these.
-local/.certs/
 *.pem
