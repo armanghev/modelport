@@ -98,11 +98,9 @@ export interface CostTotals {
 }
 
 export interface CostsAnalyticsData {
-  note: string;
   totals: CostTotals;
   byProvider: CostBucket[];
   byModel: CostBucket[];
-  dailyTrend: CostBucket[];
   recentHighCostRequests: RequestRow[];
 }
 
@@ -122,16 +120,6 @@ export interface ProviderHealth {
   lastError: string | null;
 }
 
-export interface ProviderBillingCycle {
-  planName: string;
-  periodStart: string;
-  periodEnd: string;
-  nextInvoiceDate: string;
-  budgetUsd: number;
-  spentUsd: number;
-  forecastUsd: number;
-}
-
 export interface ProviderTrendPoint {
   date: string;
   requests: number;
@@ -141,12 +129,8 @@ export interface ProviderTrendPoint {
 
 export interface ProviderDetail {
   providerId: string;
-  region: string;
-  supportTier: string;
-  billingCycle: ProviderBillingCycle;
   costBreakdown: CostBucket[];
   requestTrend: ProviderTrendPoint[];
-  notes: string;
 }
 
 export interface CostBucket {
@@ -169,8 +153,6 @@ export interface SettingsTrackingOption {
 }
 
 export interface SettingsAppearance {
-  theme: string;
-  themes: string[];
   autoRefreshInterval: string;
   autoRefreshIntervals: string[];
 }

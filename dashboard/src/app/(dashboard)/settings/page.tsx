@@ -16,10 +16,7 @@ import {
   TrashIcon,
 } from "@phosphor-icons/react";
 
-import {
-  AddProviderModal,
-  EditProviderModal,
-} from "@/components/dashboard/settings/add-provider-modal";
+import { ProviderModal } from "@/components/dashboard/settings/add-provider-modal";
 import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { Button } from "@/components/ui/button";
 import {
@@ -128,6 +125,7 @@ export default function SettingsPage() {
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [copiedProvider, setCopiedProvider] = useState<string | null>(null);
   const [editingProvider, setEditingProvider] = useState<ProviderConfigRow | null>(null);
+  const [addProviderOpen, setAddProviderOpen] = useState(false);
   const [openMenuProvider, setOpenMenuProvider] = useState<string | null>(null);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState("30s");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -495,18 +493,37 @@ export default function SettingsPage() {
           </div>
 
           <div className="mt-4">
-            <AddProviderModal onAddProvider={(provider) => void handleAddProvider(provider)} />
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              className="h-10 rounded-lg border-border-default px-4 text-sm"
+              onClick={() => setAddProviderOpen(true)}
+            >
+              Add provider
+            </Button>
+            <ProviderModal
+              key={`add-${addProviderOpen ? "open" : "closed"}`}
+              mode="add"
+              open={addProviderOpen}
+              onOpenChange={setAddProviderOpen}
+              onSubmit={(provider) => void handleAddProvider(provider)}
+            />
           </div>
-          <EditProviderModal
-            open={editingProvider !== null}
-            provider={editingProvider}
-            onOpenChange={(open) => {
-              if (!open) {
-                setEditingProvider(null);
-              }
-            }}
-            onEditProvider={(nextProvider) => void handleEditProvider(nextProvider)}
-          />
+          {editingProvider ? (
+            <ProviderModal
+              key={`edit-${editingProvider.id}-open`}
+              mode="edit"
+              open
+              onOpenChange={(open) => {
+                if (!open) {
+                  setEditingProvider(null);
+                }
+              }}
+              onSubmit={(nextProvider) => void handleEditProvider(nextProvider)}
+              initialProvider={editingProvider}
+            />
+          ) : null}
         </SettingsCard>
 
         <SettingsCard

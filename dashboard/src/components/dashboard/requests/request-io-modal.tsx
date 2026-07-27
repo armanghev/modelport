@@ -118,13 +118,6 @@ function ToolCallsSection({ toolCalls }: { toolCalls: ParsedIoToolCall[] }) {
   );
 }
 
-function formatCostDisplay(value: number): string {
-  if (value < 0.00005) {
-    return "$0";
-  }
-  return formatCost(value, 4);
-}
-
 function TokenDistributionBar({
   messages,
   totalTokens,
@@ -223,7 +216,7 @@ function InspectorTokenStats({
           <div className="flex items-center justify-between gap-4">
             <span className="text-text-secondary">Cost</span>
             <span className="tabular-nums text-text-primary">
-              {formatCostDisplay(costUsd)}
+              {costUsd < 0.00005 ? "$0" : formatCost(costUsd, 4)}
             </span>
           </div>
           <div className="border-t border-border-subtle pt-2">

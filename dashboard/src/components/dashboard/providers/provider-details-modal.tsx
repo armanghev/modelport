@@ -157,19 +157,7 @@ export function ProviderDetailsModal({
           </button>
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
-          <article className="card-surface-soft p-4">
-            <p className="text-xs text-text-secondary">Region</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">
-              {detail?.region ?? "—"}
-            </p>
-          </article>
-          <article className="card-surface-soft p-4">
-            <p className="text-xs text-text-secondary">Support tier</p>
-            <p className="mt-1 text-sm font-semibold text-text-primary">
-              {detail?.supportTier ?? "—"}
-            </p>
-          </article>
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
           <article className="card-surface-soft p-4">
             <p className="text-xs text-text-secondary">Requests today</p>
             <p className="mt-1 text-sm font-semibold text-text-primary">

@@ -291,8 +291,6 @@ export function mapAdminSettingsToUi(payload: AdminSettingsPayload): {
       })),
     retentionDays: payload.settings.tracking.retention_days ?? 30,
     appearance: {
-      theme: payload.settings.appearance.theme ?? "system",
-      themes: ["light", "dark", "system"],
       autoRefreshInterval: formatRefreshInterval(
         payload.settings.appearance.refresh_interval_seconds,
       ),

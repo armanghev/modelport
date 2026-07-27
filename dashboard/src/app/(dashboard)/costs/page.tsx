@@ -44,14 +44,6 @@ interface CostBreakdownItem {
   provider?: string;
 }
 
-function getProviderDisplayName(provider: string): string {
-  if (provider === "Gemini") {
-    return "Google";
-  }
-
-  return provider;
-}
-
 function buildCostRangeSeries(
   rows: RequestRow[],
   hours: number,
@@ -360,7 +352,7 @@ export default function CostsPage() {
                         <ProviderIcon provider={row.provider} />
                       </span>
                       <span className="font-medium text-text-primary">
-                        {getProviderDisplayName(row.provider)}
+                        {row.provider}
                       </span>
                     </div>
                   </td>

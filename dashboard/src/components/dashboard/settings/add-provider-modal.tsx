@@ -23,17 +23,6 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 
-interface AddProviderModalProps {
-  onAddProvider: (provider: ProviderConfigDraft) => void;
-}
-
-interface EditProviderModalProps {
-  open: boolean;
-  provider: ProviderConfigRow | null;
-  onOpenChange: (open: boolean) => void;
-  onEditProvider: (provider: ProviderConfigDraft) => void;
-}
-
 interface ProviderModalProps {
   mode: "add" | "edit";
   open: boolean;
@@ -66,7 +55,7 @@ function protocolToProviderType(protocol: ProviderProtocol) {
   return protocol === "anthropic" ? "anthropic_compatible" : "openai_compatible";
 }
 
-function ProviderModal({
+export function ProviderModal({
   mode,
   open,
   onOpenChange,
@@ -466,49 +455,3 @@ function ProviderModal({
   );
 }
 
-export function AddProviderModal({ onAddProvider }: AddProviderModalProps) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <>
-      <Button
-        type="button"
-        variant="outline"
-        size="lg"
-        className="h-10 rounded-lg border-border-default px-4 text-sm"
-        onClick={() => setOpen(true)}
-      >
-        Add provider
-      </Button>
-      <ProviderModal
-        key={`add-${open ? "open" : "closed"}`}
-        mode="add"
-        open={open}
-        onOpenChange={setOpen}
-        onSubmit={onAddProvider}
-      />
-    </>
-  );
-}
-
-export function EditProviderModal({
-  open,
-  provider,
-  onOpenChange,
-  onEditProvider,
-}: EditProviderModalProps) {
-  if (!provider) {
-    return null;
-  }
-
-  return (
-    <ProviderModal
-      key={`edit-${provider.id}-${open ? "open" : "closed"}`}
-      mode="edit"
-      open={open}
-      onOpenChange={onOpenChange}
-      onSubmit={onEditProvider}
-      initialProvider={provider}
-    />
-  );
-}
