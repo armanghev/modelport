@@ -5,7 +5,7 @@ import type {
   ProviderType,
   SettingsAppearance,
   SettingsTrackingOption,
-} from "@/lib/mock-dashboard-data";
+} from "@/lib/dashboard-types";
 import { backendUrl as backendBaseUrl } from "@/lib/backend-url";
 
 export interface AdminProvider {
@@ -438,15 +438,6 @@ export async function patchTrackingSettings(payload: {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
-}
-
-export async function updateTrackingSettings(payload: {
-  request_logging: boolean;
-  cost_tracking: boolean;
-  io_logging: boolean;
-  retention_days: number;
-}) {
-  return patchTrackingSettings(payload);
 }
 
 export async function updateAppearanceSettings(payload: {

@@ -1,4 +1,4 @@
-import type { RequestRow } from "@/lib/mock-dashboard-data";
+import type { RequestRow } from "@/lib/dashboard-types";
 
 export type IoMessageRole = "system" | "user" | "assistant" | "tool" | "unknown";
 export type IoMessageSource = "input" | "output";
