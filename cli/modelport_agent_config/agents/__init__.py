@@ -1,3 +1,3 @@
-from modelport_agent_config.agents.registry import get_agent, list_agents
+from modelport_agent_config.agents.claude_code import ClaudeCodeAdapter, ConfigScope
 
-__all__ = ["get_agent", "list_agents"]
+__all__ = ["ClaudeCodeAdapter", "ConfigScope"]

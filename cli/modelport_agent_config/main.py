@@ -5,13 +5,11 @@ import json
 import sys
 from pathlib import Path
 
-from modelport_agent_config.agents.base import AgentAdapter, ConfigScope
-from modelport_agent_config.agents.registry import get_agent, list_agents
+from modelport_agent_config.agents.claude_code import ClaudeCodeAdapter, ConfigScope
 from modelport_agent_config.chat_models import filter_catalog_for_agent
 from modelport_agent_config.modelport import (
     ModelPortProfile,
     ModelPortRuntime,
-    ProviderModel,
     default_base_url,
     fetch_provider_models,
     find_repo_root,
@@ -30,9 +28,11 @@ from modelport_agent_config.prompts import (
     select_option,
 )
 
+_SUPPORTED_AGENTS = ("claude-code",)
+
 
 def build_parser() -> argparse.ArgumentParser:
-    agents = ", ".join(agent.id for agent in list_agents())
+    agents = ", ".join(_SUPPORTED_AGENTS)
     parser = argparse.ArgumentParser(
         prog="modelport-configure",
         description="Configure CLI coding agents to route through your local ModelPort proxy.",
@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--agent",
         default="claude-code",
-        help=f"Agent to configure ({agents}). More agents can be added under cli/modelport_agent_config/agents/.",
+        help=f"Agent to configure ({agents}).",
     )
     parser.add_argument(
         "--scope",
@@ -77,9 +77,17 @@ def normalize_argv(argv: list[str] | None) -> list[str]:
     return argv
 
 
+def resolve_adapter(agent: str) -> ClaudeCodeAdapter:
+    normalized = agent.strip().lower()
+    if normalized not in _SUPPORTED_AGENTS:
+        known = ", ".join(_SUPPORTED_AGENTS)
+        raise KeyError(f"Unknown agent {agent!r}. Available: {known}")
+    return ClaudeCodeAdapter()
+
+
 def collect_profile_interactive(
     runtime: ModelPortRuntime,
-    adapter: AgentAdapter,
+    adapter: ClaudeCodeAdapter,
     *,
     scope: ConfigScope | None,
     project_dir: Path,
@@ -208,7 +216,7 @@ def collect_profile_from_args(
     return profile, scope
 
 
-def preview_patch(adapter: AgentAdapter, profile: ModelPortProfile) -> dict:
+def preview_patch(adapter: ClaudeCodeAdapter, profile: ModelPortProfile) -> dict:
     return adapter.build_settings_patch(profile)
 
 
@@ -221,7 +229,7 @@ def _run(argv: list[str] | None = None) -> int:
     project_dir = (args.project_dir or repo_root).expanduser().resolve()
 
     try:
-        adapter = get_agent(args.agent)
+        adapter = resolve_adapter(args.agent)
     except KeyError as exc:
         parser.error(str(exc))
 

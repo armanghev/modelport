@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from modelport_agent_config.agents.claude_code import ClaudeCodeAdapter, merge_settings, strip_modelport_env
-from modelport_agent_config.agents.base import ConfigScope
+from modelport_agent_config.agents.claude_code import ClaudeCodeAdapter, ConfigScope, merge_settings, strip_modelport_env
 from modelport_agent_config.modelport import ModelPortProfile
 
 

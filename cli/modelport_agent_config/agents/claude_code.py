@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 
-from modelport_agent_config.agents.base import AgentAdapter, ApplyResult, ConfigScope
 from modelport_agent_config.modelport import ModelPortProfile
 
 CLAUDE_DIR = Path.home() / ".claude"
@@ -29,6 +30,19 @@ _TIER_SHELL_EXPORTS = (
 )
 
 
+class ConfigScope(str, Enum):
+    GLOBAL = "global"
+    PROJECT = "project"
+    LOCAL = "local"
+
+
+@dataclass(frozen=True)
+class ApplyResult:
+    settings_path: Path
+    backup_path: Path | None
+    keys_written: tuple[str, ...]
+
+
 def merge_settings(existing: dict, patch: dict) -> dict:
     merged = dict(existing)
     if "env" in patch:
@@ -46,7 +60,7 @@ def strip_modelport_env(env: dict[str, str]) -> dict[str, str]:
     return {key: value for key, value in env.items() if key not in MODELPORT_ENV_KEYS}
 
 
-class ClaudeCodeAdapter(AgentAdapter):
+class ClaudeCodeAdapter:
     id = "claude-code"
     display_name = "Claude Code"
     description = "Anthropic Claude Code CLI (~/.claude/settings.json)"
@@ -122,7 +136,14 @@ class ClaudeCodeAdapter(AgentAdapter):
         return ApplyResult(settings_path=path, backup_path=backup_path, keys_written=keys_written)
 
     def print_post_apply_hints(self, profile: ModelPortProfile, result: ApplyResult) -> None:
-        super().print_post_apply_hints(profile, result)
+        print(f"\nWrote ModelPort settings to {result.settings_path}")
+        if result.backup_path:
+            print(f"Previous file backed up to {result.backup_path}")
+        print("\nRestart Claude Code so env changes take effect.")
+        if profile.model:
+            print(f"Default model: {profile.model}")
+        for label, model_id in profile.anthropic_tier_overrides():
+            print(f"{label} tier model: {model_id}")
         print("\nShell exports (optional, for terminals outside Claude Code):")
         print(f'  export ANTHROPIC_BASE_URL="{profile.base_url}"')
         print(f'  export ANTHROPIC_AUTH_TOKEN="{profile.token}"')
