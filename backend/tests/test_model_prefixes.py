@@ -63,7 +63,7 @@ def test_infer_unknown_openrouter_vendor_prefix() -> None:
 
 def test_normalize_openrouter_owned_model_keeps_prefix() -> None:
     assert (
-        normalize_upstream_for_provider("openrouter", "openrouter/auto", KNOWN)
+        normalize_upstream_for_provider("openrouter", "openrouter/auto")
         == "openrouter/auto"
     )
 
@@ -73,7 +73,6 @@ def test_normalize_openrouter_provider_prefixed_vendor_model() -> None:
         normalize_upstream_for_provider(
             "openrouter",
             "openrouter/google/gemini-2.5-flash",
-            KNOWN,
         )
         == "google/gemini-2.5-flash"
     )
@@ -84,7 +83,6 @@ def test_normalize_gemini_provider_prefixed_model() -> None:
         normalize_upstream_for_provider(
             "gemini",
             "gemini/models/gemini-2.5-flash",
-            KNOWN,
         )
         == "models/gemini-2.5-flash"
     )

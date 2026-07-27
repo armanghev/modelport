@@ -23,10 +23,8 @@ def _split_model_segments(model_id: str) -> list[str]:
 def normalize_upstream_for_provider(
     provider_id: str,
     requested_model: str,
-    known_provider_ids: set[str],
 ) -> str:
     """Strip a leading ModelPort provider prefix when present."""
-    _ = known_provider_ids
     segments = _split_model_segments(requested_model)
     if not segments:
         return requested_model.strip()
