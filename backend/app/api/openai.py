@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.api.proxy_common import (
     EncryptionConfigurationError,
     ModelPortProviderHeader,
+    build_upstream_payload,
     classify_provider_failure_status,
     get_session,
     persist_provider_health_status,
@@ -185,19 +186,6 @@ def resolve_stored_response_route(
         )
 
     return resource, resolved_route, provider_secret
-
-
-def build_anthropic_upstream_payload(
-    payload,
-    *,
-    upstream_model: str,
-) -> dict:
-    upstream_payload = payload.model_dump(
-        exclude={"provider", "fallback_providers"},
-        exclude_none=True,
-    )
-    upstream_payload["model"] = upstream_model
-    return upstream_payload
 
 
 def build_openai_upstream_payload(
@@ -761,7 +749,7 @@ def create_responses(
     if payload.stream:
         if resolved_route.provider.provider_type == "anthropic_compatible":
             anthropic_payload = translate_openai_response_create_to_anthropic(payload)
-            upstream_payload = build_anthropic_upstream_payload(
+            upstream_payload = build_upstream_payload(
                 anthropic_payload,
                 upstream_model=resolved_route.upstream_model,
             )
@@ -842,7 +830,7 @@ def create_responses(
 
     if resolved_route.provider.provider_type == "anthropic_compatible":
         anthropic_payload = translate_openai_response_create_to_anthropic(payload)
-        upstream_payload = build_anthropic_upstream_payload(
+        upstream_payload = build_upstream_payload(
             anthropic_payload,
             upstream_model=resolved_route.upstream_model,
         )
@@ -1088,7 +1076,7 @@ def create_chat_completions(
                         )
 
                     if resolved_route.provider.provider_type == "anthropic_compatible":
-                        anthropic_payload = build_anthropic_upstream_payload(
+                        anthropic_payload = build_upstream_payload(
                             internal_payload,
                             upstream_model=resolved_route.upstream_model,
                         )
@@ -1307,7 +1295,7 @@ def create_chat_completions(
             raise exc
 
         if resolved_route.provider.provider_type == "anthropic_compatible":
-            anthropic_payload = build_anthropic_upstream_payload(
+            anthropic_payload = build_upstream_payload(
                 internal_payload,
                 upstream_model=resolved_route.upstream_model,
             )

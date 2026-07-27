@@ -167,27 +167,6 @@ class SettingsResponse(BaseModel):
     settings: SettingsEnvelope
 
 
-class ProviderHealthCard(BaseModel):
-    id: str
-    slug: str
-    displayName: str
-    type: ProviderType
-    status: Literal["operational", "degraded", "offline"]
-    baseUrl: str
-    requestsToday: int
-    successRate: float
-    errorRate: float
-    avgLatencyMs: int
-    availableModelCount: int
-    lastCheckedAt: str
-    lastError: str | None
-
-
-class ProviderHealthPayload(BaseModel):
-    cards: list[ProviderHealthCard]
-    details: list[dict]
-
-
 class ModelUsageSummary(BaseModel):
     requestCount: int = 0
     tokenTotal: int = 0

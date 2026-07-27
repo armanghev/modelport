@@ -8,9 +8,14 @@ import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from app.analytics_service import build_provider_details, list_requests, requests_today_count
+from app.api.proxy_common import (
+    get_session,
+    provider_supports_anonymous_access,
+    resolve_credential_secret,
+)
 from app.database import (
     ModelMetadata,
     PricingOverride,
@@ -25,6 +30,7 @@ from app.database import (
     resolved_key_hint,
     set_setting,
 )
+from app.routing.provider_router import select_provider_credential
 from app.schemas.analytics import ProviderHealthPayload
 from app.model_metadata_service import (
     apply_gemini_native_model_fields,
@@ -63,12 +69,6 @@ from app.schemas.admin import (
 from app.security import EncryptionConfigurationError, decrypt_secret, encrypt_secret
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-
-def get_session(request: Request) -> Session:
-    session_factory: sessionmaker[Session] = request.app.state.session_factory
-    with session_factory() as session:
-        yield session
 
 
 def require_provider_by_id(session: Session, provider_id: str) -> Provider:
@@ -170,49 +170,11 @@ def serialize_pricing(record: PricingOverride, provider_slug: str | None = None)
     )
 
 
-def resolve_credential_secret(credential: ProviderCredential | None) -> str | None:
-    if credential is None or not credential.encrypted_api_key:
-        return None
-    return decrypt_secret(credential.encrypted_api_key)
-
-
-def get_default_credential(provider: Provider) -> ProviderCredential | None:
-    enabled_credentials = [credential for credential in provider.credentials if credential.enabled]
-    configured_credentials = [
-        credential for credential in enabled_credentials if is_credential_configured(credential)
-    ]
-
-    default_configured = next(
-        (credential for credential in configured_credentials if credential.is_default),
-        None,
-    )
-    if default_configured is not None:
-        return default_configured
-
-    if configured_credentials:
-        return configured_credentials[0]
-
-    default_enabled = next((credential for credential in enabled_credentials if credential.is_default), None)
-    if default_enabled is not None:
-        return default_enabled
-
-    if enabled_credentials:
-        return enabled_credentials[0]
-
-    return provider.credentials[0] if provider.credentials else None
-
-
 def build_health_check_url(provider: Provider) -> str:
     normalized_base = provider.base_url.rstrip("/") + "/"
     if provider.provider_type == "anthropic_compatible":
         return urljoin(normalized_base, "v1/models")
     return urljoin(normalized_base, "models")
-
-
-def provider_supports_anonymous_health_check(provider: Provider) -> bool:
-    return provider.provider_type == "local_openai_compatible" or (
-        "localhost" in provider.base_url or "127.0.0.1" in provider.base_url
-    )
 
 
 def parse_model_count(payload: dict) -> int:
@@ -339,7 +301,7 @@ def run_provider_health_check(session: Session, provider: Provider) -> ProviderH
             "Provider disabled.",
         )
 
-    credential = get_default_credential(provider)
+    credential = select_provider_credential(provider)
     secret: str | None = None
     try:
         secret = resolve_credential_secret(credential)
@@ -353,7 +315,7 @@ def run_provider_health_check(session: Session, provider: Provider) -> ProviderH
             str(exc),
         )
 
-    if not provider_supports_anonymous_health_check(provider) and not secret:
+    if not provider_supports_anonymous_access(provider.base_url, provider.provider_type) and not secret:
         return record_provider_health_check(
             session,
             provider.id,
@@ -544,7 +506,7 @@ def list_provider_models(session: Session = Depends(get_session)) -> ProviderMod
         if not provider.enabled:
             continue
 
-        credential = get_default_credential(provider)
+        credential = select_provider_credential(provider)
         try:
             secret = resolve_credential_secret(credential)
         except EncryptionConfigurationError as exc:
@@ -558,7 +520,7 @@ def list_provider_models(session: Session = Depends(get_session)) -> ProviderMod
             )
             continue
 
-        if not provider_supports_anonymous_health_check(provider) and not secret:
+        if not provider_supports_anonymous_access(provider.base_url, provider.provider_type) and not secret:
             record_provider_health_check(
                 session,
                 provider.id,

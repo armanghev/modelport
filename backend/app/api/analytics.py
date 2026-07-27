@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy.orm import Session, sessionmaker
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from app.analytics_service import (
     build_costs_payload,
@@ -9,6 +9,7 @@ from app.analytics_service import (
     build_overview_payload,
     build_requests_payload,
 )
+from app.api.proxy_common import get_session
 from app.schemas.analytics import (
     CostsAnalyticsResponse,
     ModelsAnalyticsResponse,
@@ -17,12 +18,6 @@ from app.schemas.analytics import (
 )
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
-
-
-def get_session(request: Request) -> Session:
-    session_factory: sessionmaker[Session] = request.app.state.session_factory
-    with session_factory() as session:
-        yield session
 
 
 @router.get("/overview", response_model=OverviewAnalyticsResponse)

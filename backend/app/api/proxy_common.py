@@ -111,7 +111,6 @@ def resolve_proxy_model_routing(
             upstream_model=normalize_upstream_for_provider(
                 normalized_provider,
                 requested_model,
-                known_provider_ids,
             ),
         )
 
@@ -152,6 +151,15 @@ def persist_provider_health_status(
     session.commit()
 
 
+def build_upstream_payload(payload, *, upstream_model: str) -> dict:
+    upstream = payload.model_dump(
+        exclude={"provider", "fallback_providers"},
+        exclude_none=True,
+    )
+    upstream["model"] = upstream_model
+    return upstream
+
+
 def classify_provider_failure_status(exc: HTTPException) -> str:
     if exc.status_code == status.HTTP_502_BAD_GATEWAY:
         return "degraded"
@@ -168,6 +176,7 @@ __all__ = [
     "ModelPortProviderHeader",
     "MODELPORT_PROVIDER_HEADER",
     "bearer_scheme",
+    "build_upstream_payload",
     "get_session",
     "provider_supports_anonymous_access",
     "persist_provider_health_status",
