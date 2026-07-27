@@ -66,10 +66,10 @@ Run `modelport-configure --help` for all flags.
 
 ## Adding another agent
 
-There is no adapter registry today. `main.resolve_adapter()` accepts `claude-code` and returns `ClaudeCodeAdapter` from `agents/claude_code.py`; anything else errors.
+Only Claude Code is wired today: `--agent` must be `claude-code`, and `main` constructs `ClaudeCodeAdapter` from `agents/claude_code.py` directly.
 
 To add a second agent:
 
 1. Add `modelport_agent_config/agents/<agent_id>.py` with the same shape as `ClaudeCodeAdapter` (config path, settings patch, apply).
-2. Teach `resolve_adapter()` (or reintroduce a small registry) to return it for that `--agent` id.
+2. Accept the new `--agent` id in `main` and construct that adapter.
 3. Map `ModelPortProfile` to that agent’s config files or env vars in `apply()`.

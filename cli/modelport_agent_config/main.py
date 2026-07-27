@@ -28,19 +28,18 @@ from modelport_agent_config.prompts import (
     select_option,
 )
 
-_SUPPORTED_AGENTS = ("claude-code",)
+_CLAUDE_CODE_AGENT = "claude-code"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    agents = ", ".join(_SUPPORTED_AGENTS)
     parser = argparse.ArgumentParser(
         prog="modelport-configure",
         description="Configure CLI coding agents to route through your local ModelPort proxy.",
     )
     parser.add_argument(
         "--agent",
-        default="claude-code",
-        help=f"Agent to configure ({agents}).",
+        default=_CLAUDE_CODE_AGENT,
+        help=f"Agent to configure ({_CLAUDE_CODE_AGENT}).",
     )
     parser.add_argument(
         "--scope",
@@ -75,14 +74,6 @@ def normalize_argv(argv: list[str] | None) -> list[str]:
     if len(argv) == 1 and argv[0] in _HELP_ALIASES:
         return ["--help"]
     return argv
-
-
-def resolve_adapter(agent: str) -> ClaudeCodeAdapter:
-    normalized = agent.strip().lower()
-    if normalized not in _SUPPORTED_AGENTS:
-        known = ", ".join(_SUPPORTED_AGENTS)
-        raise KeyError(f"Unknown agent {agent!r}. Available: {known}")
-    return ClaudeCodeAdapter()
 
 
 def collect_profile_interactive(
@@ -228,10 +219,9 @@ def _run(argv: list[str] | None = None) -> int:
     runtime = load_modelport_runtime(repo_root)
     project_dir = (args.project_dir or repo_root).expanduser().resolve()
 
-    try:
-        adapter = resolve_adapter(args.agent)
-    except KeyError as exc:
-        parser.error(str(exc))
+    if args.agent.strip().lower() != _CLAUDE_CODE_AGENT:
+        parser.error(f"Unknown agent {args.agent!r}. Available: {_CLAUDE_CODE_AGENT}")
+    adapter = ClaudeCodeAdapter()
 
     interactive = sys.stdin.isatty() and not args.json_output and not (
         args.base_url and (args.token or resolve_token(runtime))

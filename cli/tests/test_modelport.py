@@ -93,3 +93,12 @@ def test_normalize_argv_maps_help_aliases() -> None:
 def test_normalize_argv_maps_help_when_argv_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(main_module.sys, "argv", ["modelport-configure", "help"])
     assert main_module.normalize_argv(None) == ["--help"]
+
+
+def test_unknown_agent_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main_module.main(["--agent", "codex", "--base-url", "http://127.0.0.1:13243", "--token", "t"])
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "Unknown agent 'codex'" in err
+    assert "claude-code" in err
