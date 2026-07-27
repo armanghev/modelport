@@ -23,7 +23,6 @@ from app.database import (
     ProviderCredential,
     ProviderHealthCheck,
     clear_default_credentials,
-    get_provider_by_id,
     get_provider_by_slug,
     get_setting,
     is_credential_configured,
@@ -78,7 +77,7 @@ def normalize_tracking_settings(settings: dict) -> dict:
 
 
 def require_provider_by_id(session: Session, provider_id: str) -> Provider:
-    provider = get_provider_by_id(session, provider_id)
+    provider = session.get(Provider, provider_id)
     if provider is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.")
     return provider

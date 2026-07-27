@@ -296,11 +296,6 @@ def get_provider_by_slug(session: Session, slug: str) -> Provider | None:
         return None
     return session.scalar(select(Provider).where(Provider.slug == normalized))
 
-
-def get_provider_by_id(session: Session, provider_id: str) -> Provider | None:
-    return session.get(Provider, provider_id)
-
-
 def resolved_key_hint(credential: ProviderCredential) -> str:
     return credential.key_hint or "Not configured"
 

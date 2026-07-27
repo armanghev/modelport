@@ -11,7 +11,6 @@ from fastapi.responses import Response
 
 PROXY_PATH_PREFIX = "/v1/"
 PROXY_OPENAPI_PATH = "/openapi/proxy.json"
-PROXY_OPENAPI_ALIAS_PATH = "/openapi/proxy"
 PROXY_DOCS_PATH = "/docs/proxy"
 
 OPENAPI_DESCRIPTION = (
@@ -114,10 +113,6 @@ def configure_openapi(app: FastAPI) -> None:
 
     @app.get(PROXY_OPENAPI_PATH, include_in_schema=False)
     def proxy_openapi_json() -> Response:
-        return build_proxy_openapi_response()
-
-    @app.get(PROXY_OPENAPI_ALIAS_PATH, include_in_schema=False)
-    def proxy_openapi() -> Response:
         return build_proxy_openapi_response()
 
     @app.get(PROXY_DOCS_PATH, include_in_schema=False)

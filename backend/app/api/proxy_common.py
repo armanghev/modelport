@@ -17,7 +17,7 @@ from app.routing.model_prefixes import (
     infer_provider_from_model,
     normalize_upstream_for_provider,
 )
-from app.security import EncryptionConfigurationError, decrypt_secret
+from app.security import decrypt_secret
 
 MODELPORT_PROVIDER_HEADER = "X-ModelPort-Provider"
 
@@ -173,7 +173,6 @@ def classify_provider_failure_status(exc: HTTPException) -> str:
 
 
 __all__ = [
-    "EncryptionConfigurationError",
     "ModelPortProviderHeader",
     "MODELPORT_PROVIDER_HEADER",
     "bearer_scheme",

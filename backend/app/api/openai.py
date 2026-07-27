@@ -8,7 +8,6 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.proxy_common import (
-    EncryptionConfigurationError,
     ModelPortProviderHeader,
     build_upstream_payload,
     classify_provider_failure_status,
@@ -22,7 +21,7 @@ from app.api.proxy_common import (
     resolve_proxy_model_routing,
     resolve_requested_provider,
 )
-from app.compatibility.errors import unsupported_provider_capability
+from app.security import EncryptionConfigurationError
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.anthropic_compatible import (
     create_message as create_anthropic_message,
@@ -104,7 +103,7 @@ PROXY_MULTIPART_FIELDS = frozenset({"provider", "fallback_providers"})
 
 def ensure_openai_compatible_provider(resolved_route, *, detail: str) -> None:
     if resolved_route.provider.provider_type == "anthropic_compatible":
-        raise unsupported_provider_capability(detail)
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=detail)
 
 
 def ensure_provider_secret_available(resolved_route, provider_secret: str | None) -> None:
@@ -361,8 +360,9 @@ def create_completions(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
     if resolved_route.provider.provider_type == "anthropic_compatible":
-        raise unsupported_provider_capability(
-            "Selected provider does not support OpenAI legacy completions compatibility.",
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Selected provider does not support OpenAI legacy completions compatibility.",
         )
 
     if not provider_supports_anonymous_access(
@@ -430,8 +430,9 @@ def create_moderations(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
     if resolved_route.provider.provider_type == "anthropic_compatible":
-        raise unsupported_provider_capability(
-            "Selected provider does not support OpenAI moderations compatibility.",
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Selected provider does not support OpenAI moderations compatibility.",
         )
 
     if not provider_supports_anonymous_access(

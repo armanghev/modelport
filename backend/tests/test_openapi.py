@@ -85,42 +85,41 @@ def test_openapi_documents_modelport_provider_header(client: TestClient) -> None
 
 
 def test_proxy_openapi_filters_to_v1_routes(client: TestClient) -> None:
-    for path in ("/openapi/proxy.json", "/openapi/proxy"):
-        response = client.get(path)
-        assert response.status_code == 200
-        assert response.headers["content-type"].startswith("application/json")
-        assert len(response.text.strip()) > 0
+    response = client.get("/openapi/proxy.json")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert len(response.text.strip()) > 0
 
-        schema = response.json()
-        assert schema["info"]["title"] == "ModelPort Proxy API"
-        assert set(schema["paths"]) == {
-            "/v1/chat/completions",
-            "/v1/completions",
-            "/v1/embeddings",
-            "/v1/messages",
-            "/v1/messages/batches",
-            "/v1/messages/batches/{message_batch_id}",
-            "/v1/messages/batches/{message_batch_id}/cancel",
-            "/v1/messages/batches/{message_batch_id}/results",
-            "/v1/files",
-            "/v1/files/{file_id}",
-            "/v1/files/{file_id}/content",
-            "/v1/messages/count_tokens",
-            "/v1/models",
-            "/v1/models/{model}",
-            "/v1/responses",
-            "/v1/responses/{response_id}",
-            "/v1/responses/{response_id}/cancel",
-            "/v1/responses/{response_id}/input_items",
-            "/v1/moderations",
-            "/v1/images/generations",
-            "/v1/images/edits",
-            "/v1/images/variations",
-            "/v1/audio/transcriptions",
-            "/v1/audio/translations",
-            "/v1/audio/speech",
-        }
-        assert "ProviderResponse" not in schema.get("components", {}).get("schemas", {})
+    schema = response.json()
+    assert schema["info"]["title"] == "ModelPort Proxy API"
+    assert set(schema["paths"]) == {
+        "/v1/chat/completions",
+        "/v1/completions",
+        "/v1/embeddings",
+        "/v1/messages",
+        "/v1/messages/batches",
+        "/v1/messages/batches/{message_batch_id}",
+        "/v1/messages/batches/{message_batch_id}/cancel",
+        "/v1/messages/batches/{message_batch_id}/results",
+        "/v1/files",
+        "/v1/files/{file_id}",
+        "/v1/files/{file_id}/content",
+        "/v1/messages/count_tokens",
+        "/v1/models",
+        "/v1/models/{model}",
+        "/v1/responses",
+        "/v1/responses/{response_id}",
+        "/v1/responses/{response_id}/cancel",
+        "/v1/responses/{response_id}/input_items",
+        "/v1/moderations",
+        "/v1/images/generations",
+        "/v1/images/edits",
+        "/v1/images/variations",
+        "/v1/audio/transcriptions",
+        "/v1/audio/translations",
+        "/v1/audio/speech",
+    }
+    assert "ProviderResponse" not in schema.get("components", {}).get("schemas", {})
 
 
 def test_openapi_json_is_non_empty(client: TestClient) -> None:

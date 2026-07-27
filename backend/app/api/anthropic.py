@@ -8,7 +8,6 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.proxy_common import (
-    EncryptionConfigurationError,
     ModelPortProviderHeader,
     build_upstream_payload,
     classify_provider_failure_status,
@@ -22,6 +21,7 @@ from app.api.proxy_common import (
     resolve_proxy_model_routing,
     resolve_requested_provider,
 )
+from app.security import EncryptionConfigurationError
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.anthropic_compatible import (
     cancel_message_batch,

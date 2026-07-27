@@ -14,11 +14,6 @@ ProviderType = Literal[
 ]
 
 
-class ServerConfig(BaseModel):
-    host: str = "127.0.0.1"
-    port: int = 13243
-
-
 class SecurityConfig(BaseModel):
     modelport_token: str = "MODELPORT_TOKEN"
 
@@ -34,7 +29,6 @@ class ProviderPresetConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    server: ServerConfig = Field(default_factory=ServerConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     providers: dict[str, ProviderPresetConfig] = Field(default_factory=dict)
