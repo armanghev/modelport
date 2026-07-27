@@ -324,7 +324,8 @@ Provider entries include:
 - `type`: `openai_compatible`, `anthropic_compatible`, or `local_openai_compatible`
 - `display_name`
 - `base_url`
-- `api_key_env`
+
+Provider API keys come from `.env` (or encrypted database credentials), not from `config.yaml`.
 
 Local OpenAI-compatible providers like Ollama can run without an API key.
 
