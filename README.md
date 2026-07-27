@@ -330,11 +330,10 @@ Local OpenAI-compatible providers like Ollama can run without an API key.
 
 ## Development
 
-Run backend tests:
+Run backend tests from the repository root (tests resolve `config.yaml` relative to cwd):
 
 ```bash
-cd backend
-pytest
+backend/.venv/bin/pytest backend
 ```
 
 Run dashboard lint:
