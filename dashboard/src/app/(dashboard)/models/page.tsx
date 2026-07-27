@@ -26,12 +26,11 @@ import {
   DEFAULT_MODEL_FILTERS,
   filterModelRows,
   flattenProviderModels,
-  formatInteger,
   sortModelRows,
   type ModelDirectoryFilters,
   type ModelSortKey,
 } from "@/lib/models-directory";
-import { formatOptionalTimestamp } from "@/lib/format";
+import { formatInteger, formatOptionalTimestamp } from "@/lib/format";
 
 function FilterSelect({
   id,

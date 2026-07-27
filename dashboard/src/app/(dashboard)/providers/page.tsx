@@ -22,6 +22,7 @@ import {
   type ProviderStatus,
 } from "@/lib/dashboard-types";
 import { buildPageButtons, formatTimestamp } from "@/lib/format";
+import { formatProviderStatus } from "@/lib/provider-status";
 
 type TrendDirection = "up" | "down";
 
@@ -46,18 +47,6 @@ const statusDotStyles: Record<ProviderStatus, string> = {
   degraded: "bg-accent-amber",
   offline: "bg-accent-red",
 };
-
-function formatProviderStatus(status: ProviderStatus): string {
-  if (status === "operational") {
-    return "Healthy";
-  }
-
-  if (status === "degraded") {
-    return "Degraded";
-  }
-
-  return "Offline";
-}
 
 function formatProviderType(type: ProviderHealth["type"]): string {
   if (type === "anthropic_compatible") {

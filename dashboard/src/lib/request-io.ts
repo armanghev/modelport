@@ -54,7 +54,7 @@ const ROLE_LABELS: Record<IoMessageRole, string> = {
   unknown: "Unknown",
 };
 
-export function estimateTokenCount(text: string): number {
+function estimateTokenCount(text: string): number {
   const normalized = text.trim();
   if (!normalized) {
     return 0;
@@ -445,7 +445,7 @@ function parseOutputPayload(data: unknown): ParsedIoMessage[] {
   return messages;
 }
 
-export function calibrateTokens(
+function calibrateTokens(
   messages: ParsedIoMessage[],
   targetTotal: number,
 ): ParsedIoMessage[] {

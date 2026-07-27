@@ -6,11 +6,10 @@ import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import {
   buildModelDetailPath,
   formatContextLength,
-  formatCost,
-  formatInteger,
   formatPricePerMillion,
   type ModelDirectoryRow,
 } from "@/lib/models-directory";
+import { formatCost, formatInteger } from "@/lib/format";
 
 function modelDescriptionPreview(description: string | null): string {
   const trimmed = description?.trim();

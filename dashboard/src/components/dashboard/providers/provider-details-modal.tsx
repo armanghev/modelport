@@ -9,12 +9,13 @@ import {
   InteractiveAreaChart,
   type InteractiveAreaChartPoint,
 } from "@/components/dashboard/interactive-area-chart";
-import { formatInteger } from "@/lib/format";
+import { formatCost, formatInteger } from "@/lib/format";
 import {
   type ProviderDetail,
   type ProviderHealth,
   type ProviderStatus,
 } from "@/lib/dashboard-types";
+import { formatProviderStatus } from "@/lib/provider-status";
 
 interface ProviderDetailsModalProps {
   provider: ProviderHealth | null;
@@ -33,25 +34,6 @@ const statusDotStyles: Record<ProviderStatus, string> = {
   degraded: "bg-accent-amber",
   offline: "bg-accent-red",
 };
-
-function formatProviderStatus(status: ProviderStatus): string {
-  if (status === "operational") {
-    return "Healthy";
-  }
-
-  if (status === "degraded") {
-    return "Degraded";
-  }
-
-  return "Offline";
-}
-
-function formatCurrency(value: number): string {
-  return `$${value.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
 
 function toRangeData(points: InteractiveAreaChartPoint[], count: number) {
   return points.slice(Math.max(0, points.length - count));
@@ -241,7 +223,7 @@ export function ProviderDetailsModal({
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-semibold text-text-primary">Estimated cost breakdown</p>
             {detail?.costBreakdown.length ? (
-              <p className="text-sm text-text-muted">{formatCurrency(totalBreakdownCost)}</p>
+              <p className="text-sm text-text-muted">{formatCost(totalBreakdownCost)}</p>
             ) : null}
           </div>
           {detail?.costBreakdown.length ? (
@@ -257,7 +239,7 @@ export function ProviderDetailsModal({
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-text-secondary">{item.label}</span>
                       <span className="font-medium text-text-primary">
-                        {formatCurrency(item.amountUsd)}
+                        {formatCost(item.amountUsd)}
                       </span>
                     </div>
                     <div className="mt-1 h-1.5 rounded-full bg-bg-card-muted">

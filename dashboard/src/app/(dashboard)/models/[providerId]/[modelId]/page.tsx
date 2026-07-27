@@ -6,15 +6,12 @@ import { useParams } from "next/navigation";
 
 import { ModelDetailView } from "@/components/dashboard/models/model-detail-view";
 import { fetchProviderModels } from "@/lib/admin-api";
-import {
-  decodeModelRouteSegment,
-  flattenProviderModels,
-} from "@/lib/models-directory";
+import { flattenProviderModels } from "@/lib/models-directory";
 
 export default function ModelDetailPage() {
   const params = useParams<{ providerId: string; modelId: string }>();
-  const providerId = decodeModelRouteSegment(params.providerId ?? "");
-  const modelId = decodeModelRouteSegment(params.modelId ?? "");
+  const providerId = decodeURIComponent(params.providerId ?? "");
+  const modelId = decodeURIComponent(params.modelId ?? "");
 
   const [payload, setPayload] = useState<Awaited<ReturnType<typeof fetchProviderModels>> | null>(
     null,

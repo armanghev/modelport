@@ -6,7 +6,7 @@ import type {
   SettingsAppearance,
   SettingsTrackingOption,
 } from "@/lib/dashboard-types";
-import { backendUrl as backendBaseUrl } from "@/lib/backend-url";
+import { fetchJson } from "@/lib/fetch-json";
 
 export interface AdminProvider {
   id: string;
@@ -156,32 +156,6 @@ const trackingLabelMap: Record<
     description: "Store request and response bodies for debugging.",
   },
 };
-
-function buildUrl(path: string) {
-  return `${backendBaseUrl}${path}`;
-}
-
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(buildUrl(path), {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed with status ${response.status}`);
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
-}
 
 function titleizeProvider(slug: string) {
   return slug

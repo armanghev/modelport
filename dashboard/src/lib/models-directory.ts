@@ -1,7 +1,5 @@
 import type { ProviderCatalogEntry, ProviderCatalogModel } from "@/lib/admin-api";
 
-export type MetadataSource = "openrouter" | "local" | "pricing" | "unknown";
-
 export interface ModelDirectoryRow {
   key: string;
   providerId: string;
@@ -44,16 +42,8 @@ export const DEFAULT_MODEL_FILTERS: ModelDirectoryFilters = {
   contexts: [],
 };
 
-export function encodeModelRouteSegment(value: string): string {
-  return encodeURIComponent(value);
-}
-
-export function decodeModelRouteSegment(value: string): string {
-  return decodeURIComponent(value);
-}
-
 export function buildModelDetailPath(providerId: string, modelId: string): string {
-  return `/models/${encodeModelRouteSegment(providerId)}/${encodeModelRouteSegment(modelId)}`;
+  return `/models/${encodeURIComponent(providerId)}/${encodeURIComponent(modelId)}`;
 }
 
 export function flattenProviderModels(
@@ -106,8 +96,6 @@ export function formatPricePerMillion(value: number | null | undefined): string 
   }
   return `$${value.toFixed(2)}/M`;
 }
-
-export { formatCost, formatInteger } from "@/lib/format";
 
 export function modelHasPricing(model: ProviderCatalogModel): boolean {
   return (
