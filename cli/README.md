@@ -55,7 +55,7 @@ The picker only lists **chat-capable** models for coding agents (text output, no
 modelport-configure \
   --agent claude-code \
   --scope global \
-  --base-url http://127.0.0.1:13243 \
+  --base-url https://127.0.0.1:13243 \
   --token "$MODELPORT_TOKEN" \
   --model anthropic/claude-sonnet-4 \
   --sonnet-model models/gemini-2.5-flash \

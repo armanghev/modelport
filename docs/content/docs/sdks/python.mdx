@@ -11,7 +11,7 @@ import os
 import requests
 
 response = requests.post(
-    "http://127.0.0.1:13243/v1/chat/completions",
+    "https://127.0.0.1:13243/v1/chat/completions",
     headers={
         "Authorization": f"Bearer {os.environ['MODELPORT_TOKEN']}",
         "Content-Type": "application/json",
@@ -34,7 +34,7 @@ import os
 import requests
 
 response = requests.post(
-    "http://127.0.0.1:13243/v1/messages",
+    "https://127.0.0.1:13243/v1/messages",
     headers={
         "Authorization": f"Bearer {os.environ['MODELPORT_TOKEN']}",
         "Content-Type": "application/json",

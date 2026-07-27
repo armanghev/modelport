@@ -15,7 +15,7 @@ This compatibility layer translates Anthropic-style input into the active upstre
 For clients that support Anthropic-compatible base URL configuration:
 
 ```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:13243
+export ANTHROPIC_BASE_URL=https://127.0.0.1:13243
 export ANTHROPIC_AUTH_TOKEN=$MODELPORT_TOKEN
 ```
 
@@ -35,7 +35,7 @@ The current implementation supports:
 ## Example
 
 ```bash
-curl http://127.0.0.1:13243/v1/messages \
+curl https://127.0.0.1:13243/v1/messages \
   -H "Authorization: Bearer $MODELPORT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

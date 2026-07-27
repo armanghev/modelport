@@ -13,3 +13,7 @@ taskman/
 DESIGN.md
 /.claude/
 /.cursor/
+
+# Local TLS certificates (mkcert). Never commit these.
+local/.certs/
+*.pem

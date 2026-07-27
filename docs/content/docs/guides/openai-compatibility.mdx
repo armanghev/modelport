@@ -17,7 +17,7 @@ These are intended for OpenAI-compatible clients and SDKs that can target a cust
 Point your OpenAI-compatible client at:
 
 ```text
-http://127.0.0.1:13243/v1
+https://127.0.0.1:13243/v1
 ```
 
 And send:
@@ -42,7 +42,7 @@ The implemented chat schema supports:
 ## Example
 
 ```bash
-curl http://127.0.0.1:13243/v1/chat/completions \
+curl https://127.0.0.1:13243/v1/chat/completions \
   -H "Authorization: Bearer $MODELPORT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

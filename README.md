@@ -6,11 +6,12 @@ The bigger goal is to make model access portable across clients, providers, and 
 
 The current default runtime is:
 
-- Backend proxy/API: `http://127.0.0.1:13243`
+- Backend proxy/API: `https://127.0.0.1:13243` (local TLS via mkcert)
 - Dashboard UI: `http://localhost:3000`
 - Database: `./data/modelport.db`
 - Config: `./config.yaml`
 - Provider credentials: `.env`
+- Local TLS certs: `./local/.certs/` (gitignored; generate locally)
 
 ## Current Status
 
@@ -107,9 +108,49 @@ Install and run the backend from the repository root:
 python -m venv backend/.venv
 source backend/.venv/bin/activate
 pip install -r backend/requirements.txt
-set -a; source .env; set +a
-python -m uvicorn app.main:app --app-dir backend --reload --host 127.0.0.1 --port 13243
 ```
+
+### Local HTTPS (recommended)
+
+Local TLS uses [mkcert](https://github.com/FiloSottile/mkcert) so browsers and clients trust `https://127.0.0.1` without disabling certificate verification.
+
+1. Install mkcert and create a local CA (once per machine):
+
+```bash
+# macOS
+brew install mkcert
+mkcert -install
+```
+
+On Linux, install via your package manager or the [mkcert releases](https://github.com/FiloSottile/mkcert#installation), then run `mkcert -install`.
+
+2. Generate certificates into `./local/.certs/` from the repository root:
+
+```bash
+mkdir -p local/.certs
+cd local/.certs
+mkcert localhost 127.0.0.1 ::1
+cd ../..
+```
+
+That creates `localhost+2.pem` (certificate) and `localhost+2-key.pem` (private key). Filenames follow mkcert’s `name+N` pattern when you pass multiple hostnames/IPs.
+
+3. **Do not commit certificates.** `local/.certs/` and `*.pem` are listed in `.gitignore`. If you place certs elsewhere, add that path to `.gitignore` before contributing to the main repo.
+
+4. Start the backend with TLS:
+
+```bash
+set -a; source .env; set +a
+python -m uvicorn app.main:app \
+  --app-dir backend \
+  --reload \
+  --host 127.0.0.1 \
+  --port 13243 \
+  --ssl-certfile ./local/.certs/localhost+2.pem \
+  --ssl-keyfile ./local/.certs/localhost+2-key.pem
+```
+
+Uvicorn should report `https://127.0.0.1:13243`. Plain HTTP still works if you omit the `--ssl-*` flags.
 
 Install and run the dashboard:
 
@@ -121,10 +162,10 @@ pnpm dev
 
 Open `http://localhost:3000`.
 
-If the backend is not running on `http://127.0.0.1:13243`, set this for the dashboard:
+Point the dashboard at the HTTPS backend (default if unset is still HTTP):
 
 ```bash
-NEXT_PUBLIC_MODELPORT_BACKEND_URL=http://127.0.0.1:13243
+NEXT_PUBLIC_MODELPORT_BACKEND_URL=https://127.0.0.1:13243
 ```
 
 ## Using the Proxy
@@ -160,7 +201,7 @@ The client endpoint format and upstream model family are independent. These exam
 OpenAI-compatible client request routed to an Anthropic-family model through OpenRouter:
 
 ```bash
-curl http://127.0.0.1:13243/v1/chat/completions \
+curl https://127.0.0.1:13243/v1/chat/completions \
   -H "Authorization: Bearer $MODELPORT_TOKEN" \
   -H "Content-Type: application/json" \
   -H "X-ModelPort-Provider: openrouter" \
@@ -175,7 +216,7 @@ curl http://127.0.0.1:13243/v1/chat/completions \
 Anthropic-compatible client request routed to an OpenAI-family model through OpenRouter:
 
 ```bash
-curl http://127.0.0.1:13243/v1/messages \
+curl https://127.0.0.1:13243/v1/messages \
   -H "Authorization: Bearer $MODELPORT_TOKEN" \
   -H "Content-Type: application/json" \
   -H "X-ModelPort-Provider: openrouter" \
@@ -191,7 +232,7 @@ curl http://127.0.0.1:13243/v1/messages \
 For Anthropic-style clients that support base URL configuration:
 
 ```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:13243
+export ANTHROPIC_BASE_URL=https://127.0.0.1:13243
 export ANTHROPIC_AUTH_TOKEN=$MODELPORT_TOKEN
 ```
 
@@ -229,7 +270,7 @@ modelport-configure \
   --agent claude-code \
   --scope project \
   --project-dir . \
-  --base-url http://127.0.0.1:13243 \
+  --base-url https://127.0.0.1:13243 \
   --token "$MODELPORT_TOKEN" \
   --model anthropic/claude-sonnet-4 \
   --sonnet-model models/gemini-2.5-flash \
@@ -331,3 +372,4 @@ ModelPort is designed as a local development tool. Do not expose the backend dir
 - Raw provider keys from `.env` are not displayed in the dashboard.
 - Database-stored credentials are encrypted using `PROXY_ENCRYPTION_KEY`.
 - Request/response body logging can capture prompts, completions, tool inputs, and other sensitive data.
+- Local mkcert TLS keys under `local/.certs/` (or any `*.pem` you generate) are machine-local secrets. Never commit them when contributing to the main repo.

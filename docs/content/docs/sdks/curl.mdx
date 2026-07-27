@@ -7,7 +7,7 @@ The proxy is easy to test with `curl` because all implemented endpoints are plai
 ## OpenAI-Style Request
 
 ```bash
-curl http://127.0.0.1:13243/v1/chat/completions \
+curl https://127.0.0.1:13243/v1/chat/completions \
   -H "Authorization: Bearer $MODELPORT_TOKEN" \
   -H "Content-Type: application/json" \
   -H "X-ModelPort-Provider: openai" \
@@ -22,7 +22,7 @@ curl http://127.0.0.1:13243/v1/chat/completions \
 ## Anthropic-Style Request
 
 ```bash
-curl http://127.0.0.1:13243/v1/messages \
+curl https://127.0.0.1:13243/v1/messages \
   -H "Authorization: Bearer $MODELPORT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -37,7 +37,7 @@ curl http://127.0.0.1:13243/v1/messages \
 ## Model Listing
 
 ```bash
-curl http://127.0.0.1:13243/v1/models \
+curl https://127.0.0.1:13243/v1/models \
   -H "Authorization: Bearer $MODELPORT_TOKEN" \
   -H "X-ModelPort-Provider: openrouter"
 ```

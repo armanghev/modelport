@@ -9,7 +9,7 @@ ModelPort can be used from JavaScript clients that support a custom base URL and
 Point your client at ModelPort's `/v1` base path and send `MODELPORT_TOKEN` as the bearer token.
 
 ```ts
-const response = await fetch("http://127.0.0.1:13243/v1/chat/completions", {
+const response = await fetch("https://127.0.0.1:13243/v1/chat/completions", {
   method: "POST",
   headers: {
     Authorization: `Bearer ${process.env.MODELPORT_TOKEN}`,
@@ -29,7 +29,7 @@ const data = await response.json();
 Any JavaScript client that can target `POST /v1/messages` can use the same proxy token pattern:
 
 ```ts
-const response = await fetch("http://127.0.0.1:13243/v1/messages", {
+const response = await fetch("https://127.0.0.1:13243/v1/messages", {
   method: "POST",
   headers: {
     Authorization: `Bearer ${process.env.MODELPORT_TOKEN}`,

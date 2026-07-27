@@ -6,11 +6,12 @@ ModelPort is already designed for local or self-hosted deployment.
 
 ## Default Runtime Paths
 
-- Backend proxy: `http://127.0.0.1:13243`
+- Backend proxy: `https://127.0.0.1:13243` (local TLS via mkcert)
 - Dashboard UI: `http://localhost:3000`
 - Database: `./data/modelport.db`
 - Config: `./config.yaml`
 - Provider credentials: `.env`
+- Local TLS certs: `./local/.certs/` (gitignored; generate locally)
 
 ## What Self-Hosting Means Today
 
@@ -24,9 +25,16 @@ Self-hosting currently means:
 ## Startup Flow
 
 1. create `.env`
-2. start the backend from the repository root
-3. start the dashboard
-4. point your clients at the proxy
+2. create local TLS certificates with mkcert under `./local/.certs/` (see [Installation](/docs/installation))
+3. start the backend from the repository root with `--ssl-certfile` and `--ssl-keyfile`
+4. start the dashboard and set `NEXT_PUBLIC_MODELPORT_BACKEND_URL=https://127.0.0.1:13243`
+5. point your clients at the HTTPS proxy
+
+## Certificates
+
+Do not commit mkcert certificates or private keys. The repository gitignores `local/.certs/` and `*.pem`. If you generate certs outside that directory, add the path to `.gitignore` before contributing to the main repo.
+
+OS-specific install and run commands (macOS, Linux, and Windows) are in [Installation](/docs/installation) and [Quick Start](/docs/quick-start).
 
 ## Notes
 
