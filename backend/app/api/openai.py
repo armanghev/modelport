@@ -10,18 +10,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.api.proxy_common import (
     ModelPortProviderHeader,
     build_upstream_payload,
-    classify_provider_failure_status,
+    ensure_provider_secret_available,
     get_session,
-    persist_provider_health_status,
-    provider_supports_anonymous_access,
+    log_tracked_proxy_request,
+    record_provider_proxy_failure,
     require_proxy_token,
     resolve_client_name,
-    resolve_credential_secret,
+    resolve_first_proxy_route,
+    resolve_provider_secret,
     get_known_provider_ids,
     resolve_proxy_model_routing,
     resolve_requested_provider,
+    should_try_next_provider_route,
 )
-from app.security import EncryptionConfigurationError
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.anthropic_compatible import (
     create_message as create_anthropic_message,
@@ -74,10 +75,6 @@ from app.schemas.openai import (
     OpenAIResponse,
     OpenAIResponseCreate,
 )
-from app.tracking.cost_service import calculate_estimated_cost_usd
-from app.tracking.io_logging import io_log_kwargs
-from app.tracking.log_service import create_api_request_log
-from app.tracking.pricing import find_pricing_override
 from app.tracking.usage_service import (
     UsageSnapshot,
     build_stream_usage_snapshot,
@@ -104,17 +101,6 @@ PROXY_MULTIPART_FIELDS = frozenset({"provider", "fallback_providers"})
 def ensure_openai_compatible_provider(resolved_route, *, detail: str) -> None:
     if resolved_route.provider.provider_type == "anthropic_compatible":
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=detail)
-
-
-def ensure_provider_secret_available(resolved_route, provider_secret: str | None) -> None:
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
-        )
 
 
 async def parse_openai_multipart_passthrough(
@@ -163,26 +149,13 @@ def resolve_stored_response_route(
             detail=f"Response resource '{response_id}' was not found or has expired.",
         )
 
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=resource.provider_id,
         requested_model=resource.requested_model,
         upstream_model=resource.upstream_model,
         fallback_provider_ids=[],
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
-        )
+    )
 
     return resource, resolved_route, provider_secret
 
@@ -207,26 +180,12 @@ def get_models(
     _: None = Depends(require_proxy_token),
     _modelport_provider: ModelPortProviderHeader = None,
 ) -> dict:
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=resolve_requested_provider(request, None),
         requested_model="",
         fallback_provider_ids=[],
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
-        )
-
+    )
     if resolved_route.provider.provider_type == "anthropic_compatible":
         return translate_anthropic_models_to_openai(
             list_anthropic_models(resolved_route.provider, api_key=provider_secret)
@@ -243,27 +202,13 @@ def get_model_by_id(
     _: None = Depends(require_proxy_token),
     _modelport_provider: ModelPortProviderHeader = None,
 ) -> dict:
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=resolve_requested_provider(request, None),
         requested_model=model,
         upstream_model=model,
         fallback_provider_ids=[],
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
-        )
-
+    )
     if resolved_route.provider.provider_type == "anthropic_compatible":
         return translate_anthropic_model_to_openai(
             get_anthropic_model(
@@ -294,31 +239,18 @@ def create_embeddings(
         requested_model=payload.model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=payload.model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=payload.fallback_providers,
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
     if resolved_route.provider.provider_type == "anthropic_compatible":
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Selected provider does not support OpenAI embeddings compatibility.",
-        )
-
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
         )
 
     upstream_payload = payload.model_dump(
@@ -347,32 +279,18 @@ def create_completions(
         requested_model=payload.model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=payload.model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=payload.fallback_providers,
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
-    if resolved_route.provider.provider_type == "anthropic_compatible":
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Selected provider does not support OpenAI legacy completions compatibility.",
-        )
-
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
-        )
+    ensure_openai_compatible_provider(
+        resolved_route,
+        detail="Selected provider does not support OpenAI legacy completions compatibility.",
+    )
 
     upstream_payload = payload.model_dump(
         exclude={"provider", "fallback_providers"},
@@ -417,32 +335,18 @@ def create_moderations(
 ) -> dict:
     resolved_provider_id = resolve_requested_provider(request, payload.provider)
     requested_model = payload.model or ""
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=resolved_provider_id,
         requested_model=requested_model,
         upstream_model=requested_model,
         fallback_provider_ids=payload.fallback_providers,
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
-    if resolved_route.provider.provider_type == "anthropic_compatible":
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Selected provider does not support OpenAI moderations compatibility.",
-        )
-
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
-        )
+    ensure_openai_compatible_provider(
+        resolved_route,
+        detail="Selected provider does not support OpenAI moderations compatibility.",
+    )
 
     upstream_payload = payload.model_dump(
         exclude={"provider", "fallback_providers"},
@@ -471,17 +375,13 @@ def create_image_generations(
         requested_model=payload.model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=payload.model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=payload.fallback_providers,
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
     ensure_openai_compatible_provider(
         resolved_route,
@@ -516,17 +416,13 @@ async def create_image_edits(
         requested_model=requested_model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=requested_model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=[],
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
     ensure_openai_compatible_provider(
         resolved_route,
@@ -557,17 +453,13 @@ async def create_image_variations(
         requested_model=requested_model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=requested_model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=[],
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
     ensure_openai_compatible_provider(
         resolved_route,
@@ -598,17 +490,13 @@ async def create_audio_transcriptions(
         requested_model=requested_model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=requested_model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=[],
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
     ensure_openai_compatible_provider(
         resolved_route,
@@ -639,17 +527,13 @@ async def create_audio_translations(
         requested_model=requested_model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=requested_model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=[],
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
     ensure_openai_compatible_provider(
         resolved_route,
@@ -680,17 +564,13 @@ def create_audio_speech_route(
         requested_model=payload.model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=payload.model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=payload.fallback_providers,
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
     ensure_openai_compatible_provider(
         resolved_route,
@@ -726,27 +606,13 @@ def create_responses(
         requested_model=payload.model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=payload.model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=payload.fallback_providers,
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
-        )
-
+    )
     if payload.stream:
         if resolved_route.provider.provider_type == "anthropic_compatible":
             anthropic_payload = translate_openai_response_create_to_anthropic(payload)
@@ -1061,20 +927,10 @@ def create_chat_completions(
                 text_parts: list[str] = []
                 emitted_chunks = False
 
-                try:
-                    provider_secret = resolve_credential_secret(resolved_route.credential)
-                except EncryptionConfigurationError as exc:
-                    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+                provider_secret = resolve_provider_secret(resolved_route.credential)
 
                 try:
-                    if not provider_supports_anonymous_access(
-                        resolved_route.provider.base_url,
-                        resolved_route.provider.provider_type,
-                    ) and not provider_secret:
-                        raise HTTPException(
-                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail="No configured credential available for the selected provider.",
-                        )
+                    ensure_provider_secret_available(resolved_route, provider_secret)
 
                     if resolved_route.provider.provider_type == "anthropic_compatible":
                         anthropic_payload = build_upstream_payload(
@@ -1158,105 +1014,78 @@ def create_chat_completions(
                     duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
 
                     with session_factory() as log_session:
-                        pricing_override = find_pricing_override(
-                            log_session,
-                            provider_id=resolved_route.provider.id,
-                            model=resolved_route.upstream_model,
-                        )
-                        estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
-                            pricing_override,
-                            input_tokens=usage_snapshot.input_tokens,
-                            output_tokens=usage_snapshot.output_tokens,
-                        )
-                        create_api_request_log(
+                        log_tracked_proxy_request(
                             log_session,
                             input_format="openai",
                             output_format="openai",
                             endpoint="/v1/chat/completions",
                             client_name=client_name,
+                            resolved_route=resolved_route,
                             requested_model=payload.model,
-                            resolved_model=resolved_route.upstream_model,
-                            provider=resolved_route.provider.slug,
-                            input_tokens=usage_snapshot.input_tokens,
-                            output_tokens=usage_snapshot.output_tokens,
-                            total_tokens=usage_snapshot.total_tokens,
-                            token_source=usage_snapshot.token_source,
-                            estimated_cost_usd=estimated_cost_usd,
-                            pricing_source=pricing_source,
                             duration_ms=duration_ms,
                             status_code=200,
-                            error_message=None,
                             streamed=True,
+                            request_payload=payload,
+                            response_payload={
+                                "streamed": True,
+                                "id": upstream_request_id,
+                                "model": resolved_route.upstream_model,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "message": {
+                                            "role": "assistant",
+                                            "content": "".join(text_parts),
+                                        },
+                                        "finish_reason": completion_reason,
+                                    }
+                                ],
+                                "usage": final_usage,
+                            },
+                            usage_snapshot=usage_snapshot,
                             request_id=upstream_request_id,
                             ttfb_ms=ttfb_ms,
                             completion_reason=completion_reason,
-                            **io_log_kwargs(
-                                log_session,
-                                request_payload=payload,
-                                response_payload={
-                                    "streamed": True,
-                                    "id": upstream_request_id,
-                                    "model": resolved_route.upstream_model,
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "message": {
-                                                "role": "assistant",
-                                                "content": "".join(text_parts),
-                                            },
-                                            "finish_reason": completion_reason,
-                                        }
-                                    ],
-                                    "usage": final_usage,
-                                },
-                            ),
                         )
                     return
                 except HTTPException as exc:
-                    if not emitted_chunks and exc.status_code in (502, 503) and route_index < len(resolved_routes) - 1:
+                    if should_try_next_provider_route(
+                        exc,
+                        route_index=route_index,
+                        route_count=len(resolved_routes),
+                        emitted_chunks=emitted_chunks,
+                    ):
                         with session_factory() as health_session:
-                            persist_provider_health_status(
+                            record_provider_proxy_failure(
                                 health_session,
                                 provider_id=resolved_route.provider.id,
-                                status_value=classify_provider_failure_status(exc),
-                                error_message=format_exception_detail_for_log(exc.detail),
+                                exc=exc,
                             )
                         continue
 
                     duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
                     with session_factory() as log_session:
-                        persist_provider_health_status(
+                        record_provider_proxy_failure(
                             log_session,
                             provider_id=resolved_route.provider.id,
-                            status_value=classify_provider_failure_status(exc),
-                            error_message=format_exception_detail_for_log(exc.detail),
+                            exc=exc,
                         )
-                        create_api_request_log(
+                        log_tracked_proxy_request(
                             log_session,
                             input_format="openai",
                             output_format="openai",
                             endpoint="/v1/chat/completions",
                             client_name=client_name,
+                            resolved_route=resolved_route,
                             requested_model=payload.model,
-                            resolved_model=resolved_route.upstream_model,
-                            provider=resolved_route.provider.slug,
-                            input_tokens=0,
-                            output_tokens=0,
-                            total_tokens=0,
-                            token_source=None,
-                            estimated_cost_usd=None,
-                            pricing_source=None,
                             duration_ms=duration_ms,
                             status_code=exc.status_code,
-                            error_message=format_exception_detail_for_log(exc.detail),
                             streamed=True,
+                            request_payload=payload,
+                            response_payload=build_logged_error_response(exc),
+                            error_message=format_exception_detail_for_log(exc.detail),
                             request_id=upstream_request_id,
                             ttfb_ms=ttfb_ms,
-                            **io_log_kwargs(
-                                log_session,
-                                request_payload=payload,
-                                response_payload=build_logged_error_response(exc),
-                            ),
                         )
                     error_payload = build_logged_error_response(exc)
                     yield f"data: {json.dumps(error_payload, separators=(',', ':'))}\n\n"
@@ -1271,29 +1100,20 @@ def create_chat_completions(
 
     last_error: HTTPException | None = None
     for route_index, resolved_route in enumerate(resolved_routes):
-        try:
-            provider_secret = resolve_credential_secret(resolved_route.credential)
-        except EncryptionConfigurationError as exc:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        provider_secret = resolve_provider_secret(resolved_route.credential)
 
-        if not provider_supports_anonymous_access(
-            resolved_route.provider.base_url,
-            resolved_route.provider.provider_type,
-        ) and not provider_secret:
-            exc = HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No configured credential available for the selected provider.",
-            )
+        try:
+            ensure_provider_secret_available(resolved_route, provider_secret)
+        except HTTPException as exc:
             if route_index < len(resolved_routes) - 1:
-                persist_provider_health_status(
+                record_provider_proxy_failure(
                     session,
                     provider_id=resolved_route.provider.id,
-                    status_value=classify_provider_failure_status(exc),
-                    error_message=format_exception_detail_for_log(exc.detail),
+                    exc=exc,
                 )
                 last_error = exc
                 continue
-            raise exc
+            raise
 
         if resolved_route.provider.provider_type == "anthropic_compatible":
             anthropic_payload = build_upstream_payload(
@@ -1307,42 +1127,34 @@ def create_chat_completions(
                     payload=anthropic_payload,
                 )
             except HTTPException as exc:
-                persist_provider_health_status(
+                record_provider_proxy_failure(
                     session,
                     provider_id=resolved_route.provider.id,
-                    status_value=classify_provider_failure_status(exc),
-                    error_message=format_exception_detail_for_log(exc.detail),
+                    exc=exc,
                 )
                 last_error = exc
-                if exc.status_code in (502, 503) and route_index < len(resolved_routes) - 1:
+                if should_try_next_provider_route(
+                    exc,
+                    route_index=route_index,
+                    route_count=len(resolved_routes),
+                ):
                     continue
 
                 duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-                create_api_request_log(
+                log_tracked_proxy_request(
                     session,
                     input_format="openai",
                     output_format="openai",
                     endpoint="/v1/chat/completions",
                     client_name=client_name,
+                    resolved_route=resolved_route,
                     requested_model=payload.model,
-                    resolved_model=resolved_route.upstream_model,
-                    provider=resolved_route.provider.slug,
-                    input_tokens=0,
-                    output_tokens=0,
-                    total_tokens=0,
-                    token_source=None,
-                    estimated_cost_usd=None,
-                    pricing_source=None,
                     duration_ms=duration_ms,
                     status_code=exc.status_code,
-                    error_message=format_exception_detail_for_log(exc.detail),
                     streamed=False,
-                    request_id=None,
-                    **io_log_kwargs(
-                        session,
-                        request_payload=payload,
-                        response_payload=build_logged_error_response(exc),
-                    ),
+                    request_payload=payload,
+                    response_payload=build_logged_error_response(exc),
+                    error_message=format_exception_detail_for_log(exc.detail),
                 )
                 raise
 
@@ -1357,44 +1169,24 @@ def create_chat_completions(
                 total_tokens=int(usage.get("total_tokens", 0) or 0),
                 token_source="provider",
             )
-            pricing_override = find_pricing_override(
-                session,
-                provider_id=resolved_route.provider.id,
-                model=resolved_route.upstream_model,
-            )
-            estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
-                pricing_override,
-                input_tokens=usage_snapshot.input_tokens,
-                output_tokens=usage_snapshot.output_tokens,
-            )
             duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
             completion_reason = extract_openai_stream_completion_reason(openai_response)
-            create_api_request_log(
+            log_tracked_proxy_request(
                 session,
                 input_format="openai",
                 output_format="openai",
                 endpoint="/v1/chat/completions",
                 client_name=client_name,
+                resolved_route=resolved_route,
                 requested_model=payload.model,
-                resolved_model=resolved_route.upstream_model,
-                provider=resolved_route.provider.slug,
-                input_tokens=usage_snapshot.input_tokens,
-                output_tokens=usage_snapshot.output_tokens,
-                total_tokens=usage_snapshot.total_tokens,
-                token_source=usage_snapshot.token_source,
-                estimated_cost_usd=estimated_cost_usd,
-                pricing_source=pricing_source,
                 duration_ms=duration_ms,
                 status_code=200,
-                error_message=None,
                 streamed=False,
+                request_payload=payload,
+                response_payload=openai_response,
+                usage_snapshot=usage_snapshot,
                 request_id=str(openai_response.get("id")) if openai_response.get("id") else None,
                 completion_reason=completion_reason,
-                **io_log_kwargs(
-                    session,
-                    request_payload=payload,
-                    response_payload=openai_response,
-                ),
             )
             return OpenAIChatCompletionResponse.model_validate(openai_response)
 
@@ -1409,84 +1201,56 @@ def create_chat_completions(
                 payload=openai_payload,
             )
         except HTTPException as exc:
-            persist_provider_health_status(
+            record_provider_proxy_failure(
                 session,
                 provider_id=resolved_route.provider.id,
-                status_value=classify_provider_failure_status(exc),
-                error_message=format_exception_detail_for_log(exc.detail),
+                exc=exc,
             )
             last_error = exc
-            if exc.status_code in (502, 503) and route_index < len(resolved_routes) - 1:
+            if should_try_next_provider_route(
+                exc,
+                route_index=route_index,
+                route_count=len(resolved_routes),
+            ):
                 continue
 
             duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-            create_api_request_log(
+            log_tracked_proxy_request(
                 session,
                 input_format="openai",
                 output_format="openai",
                 endpoint="/v1/chat/completions",
                 client_name=client_name,
+                resolved_route=resolved_route,
                 requested_model=payload.model,
-                resolved_model=resolved_route.upstream_model,
-                provider=resolved_route.provider.slug,
-                input_tokens=0,
-                output_tokens=0,
-                total_tokens=0,
-                token_source=None,
-                estimated_cost_usd=None,
-                pricing_source=None,
                 duration_ms=duration_ms,
                 status_code=exc.status_code,
-                error_message=format_exception_detail_for_log(exc.detail),
                 streamed=False,
-                request_id=None,
-                **io_log_kwargs(
-                    session,
-                    request_payload=payload,
-                    response_payload=build_logged_error_response(exc),
-                ),
+                request_payload=payload,
+                response_payload=build_logged_error_response(exc),
+                error_message=format_exception_detail_for_log(exc.detail),
             )
             raise
 
         usage_snapshot: UsageSnapshot = extract_usage_snapshot(openai_payload, upstream_response)
-        pricing_override = find_pricing_override(
-            session,
-            provider_id=resolved_route.provider.id,
-            model=resolved_route.upstream_model,
-        )
-        estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
-            pricing_override,
-            input_tokens=usage_snapshot.input_tokens,
-            output_tokens=usage_snapshot.output_tokens,
-        )
         duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
         completion_reason = extract_openai_stream_completion_reason(upstream_response)
-        create_api_request_log(
+        log_tracked_proxy_request(
             session,
             input_format="openai",
             output_format="openai",
             endpoint="/v1/chat/completions",
             client_name=client_name,
+            resolved_route=resolved_route,
             requested_model=payload.model,
-            resolved_model=resolved_route.upstream_model,
-            provider=resolved_route.provider.slug,
-            input_tokens=usage_snapshot.input_tokens,
-            output_tokens=usage_snapshot.output_tokens,
-            total_tokens=usage_snapshot.total_tokens,
-            token_source=usage_snapshot.token_source,
-            estimated_cost_usd=estimated_cost_usd,
-            pricing_source=pricing_source,
             duration_ms=duration_ms,
             status_code=200,
-            error_message=None,
             streamed=False,
+            request_payload=payload,
+            response_payload=upstream_response,
+            usage_snapshot=usage_snapshot,
             request_id=str(upstream_response.get("id")) if upstream_response.get("id") else None,
             completion_reason=completion_reason,
-            **io_log_kwargs(
-                session,
-                request_payload=payload,
-                response_payload=upstream_response,
-            ),
         )
         return OpenAIChatCompletionResponse.model_validate(upstream_response)
 

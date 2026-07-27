@@ -10,18 +10,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.api.proxy_common import (
     ModelPortProviderHeader,
     build_upstream_payload,
-    classify_provider_failure_status,
+    ensure_provider_secret_available,
     get_session,
-    persist_provider_health_status,
-    provider_supports_anonymous_access,
+    log_tracked_proxy_request,
+    record_provider_proxy_failure,
     require_proxy_token,
     resolve_client_name,
-    resolve_credential_secret,
+    resolve_first_proxy_route,
+    resolve_provider_secret,
     get_known_provider_ids,
     resolve_proxy_model_routing,
     resolve_requested_provider,
+    should_try_next_provider_route,
 )
-from app.security import EncryptionConfigurationError
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.providers.anthropic_compatible import (
     cancel_message_batch,
@@ -48,10 +49,6 @@ from app.schemas.anthropic import (
     AnthropicMessageCreate,
     AnthropicMessageResponse,
 )
-from app.tracking.cost_service import calculate_estimated_cost_usd
-from app.tracking.io_logging import io_log_kwargs
-from app.tracking.log_service import create_api_request_log
-from app.tracking.pricing import find_pricing_override
 from app.tracking.usage_service import (
     UsageSnapshot,
     build_stream_usage_snapshot,
@@ -75,30 +72,16 @@ def resolve_anthropic_compatible_route(
     fallback_provider_ids: list[str] | None = None,
 ) -> tuple:
     resolved_provider_id = resolve_requested_provider(request, provider_id)
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=resolved_provider_id,
         requested_model="",
         fallback_provider_ids=fallback_provider_ids or [],
-    )[0]
+    )
     if resolved_route.provider.provider_type != "anthropic_compatible":
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Selected provider does not support this Anthropic-compatible route.",
-        )
-
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
         )
 
     return resolved_route, provider_secret
@@ -172,31 +155,18 @@ def create_message_count_tokens(
         requested_model=payload.model,
         known_provider_ids=get_known_provider_ids(session),
     )
-    resolved_route = resolve_provider_routes(
+    resolved_route, provider_secret = resolve_first_proxy_route(
         session,
         provider_id=model_routing.provider_id,
         requested_model=payload.model,
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=payload.fallback_providers,
-    )[0]
-    try:
-        provider_secret = resolve_credential_secret(resolved_route.credential)
-    except EncryptionConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    )
 
     if resolved_route.provider.provider_type != "anthropic_compatible":
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Selected provider does not support Anthropic token counting compatibility.",
-        )
-
-    if not provider_supports_anonymous_access(
-        resolved_route.provider.base_url,
-        resolved_route.provider.provider_type,
-    ) and not provider_secret:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No configured credential available for the selected provider.",
         )
 
     upstream_payload = payload.model_dump(
@@ -492,20 +462,10 @@ def create_message(
                 completion_reason: str | None = None
                 streamed_text_parts: list[str] = []
 
-                try:
-                    provider_secret = resolve_credential_secret(resolved_route.credential)
-                except EncryptionConfigurationError as exc:
-                    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+                provider_secret = resolve_provider_secret(resolved_route.credential)
 
                 try:
-                    if not provider_supports_anonymous_access(
-                        resolved_route.provider.base_url,
-                        resolved_route.provider.provider_type,
-                    ) and not provider_secret:
-                        raise HTTPException(
-                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail="No configured credential available for the selected provider.",
-                        )
+                    ensure_provider_secret_available(resolved_route, provider_secret)
 
                     if resolved_route.provider.provider_type == "anthropic_compatible":
                         anthropic_payload = build_upstream_payload(
@@ -596,100 +556,73 @@ def create_message(
                     duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
 
                     with session_factory() as log_session:
-                        pricing_override = find_pricing_override(
-                            log_session,
-                            provider_id=resolved_route.provider.id,
-                            model=resolved_route.upstream_model,
-                        )
-                        estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
-                            pricing_override,
-                            input_tokens=usage_snapshot.input_tokens,
-                            output_tokens=usage_snapshot.output_tokens,
-                        )
-                        create_api_request_log(
+                        log_tracked_proxy_request(
                             log_session,
                             input_format="anthropic",
                             output_format="anthropic",
                             endpoint="/v1/messages",
                             client_name=client_name,
+                            resolved_route=resolved_route,
                             requested_model=payload.model,
-                            resolved_model=resolved_route.upstream_model,
-                            provider=resolved_route.provider.slug,
-                            input_tokens=usage_snapshot.input_tokens,
-                            output_tokens=usage_snapshot.output_tokens,
-                            total_tokens=usage_snapshot.total_tokens,
-                            token_source=usage_snapshot.token_source,
-                            estimated_cost_usd=estimated_cost_usd,
-                            pricing_source=pricing_source,
                             duration_ms=duration_ms,
                             status_code=200,
-                            error_message=None,
                             streamed=True,
+                            request_payload=payload,
+                            response_payload={
+                                "streamed": True,
+                                "model": payload.model,
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "".join(streamed_text_parts),
+                                    }
+                                ],
+                                "stop_reason": completion_reason,
+                            },
+                            usage_snapshot=usage_snapshot,
                             request_id=upstream_request_id,
                             ttfb_ms=ttfb_ms,
                             completion_reason=completion_reason,
-                            **io_log_kwargs(
-                                log_session,
-                                request_payload=payload,
-                                response_payload={
-                                    "streamed": True,
-                                    "model": payload.model,
-                                    "content": [
-                                        {
-                                            "type": "text",
-                                            "text": "".join(streamed_text_parts),
-                                        }
-                                    ],
-                                    "stop_reason": completion_reason,
-                                },
-                            ),
                         )
                     return
                 except HTTPException as exc:
-                    if not emitted_chunks and exc.status_code in (502, 503) and route_index < len(resolved_routes) - 1:
+                    if should_try_next_provider_route(
+                        exc,
+                        route_index=route_index,
+                        route_count=len(resolved_routes),
+                        emitted_chunks=emitted_chunks,
+                    ):
                         with session_factory() as health_session:
-                            persist_provider_health_status(
+                            record_provider_proxy_failure(
                                 health_session,
                                 provider_id=resolved_route.provider.id,
-                                status_value=classify_provider_failure_status(exc),
-                                error_message=format_exception_detail_for_log(exc.detail),
+                                exc=exc,
                             )
                         continue
 
                     duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
                     with session_factory() as log_session:
-                        persist_provider_health_status(
+                        record_provider_proxy_failure(
                             log_session,
                             provider_id=resolved_route.provider.id,
-                            status_value=classify_provider_failure_status(exc),
-                            error_message=format_exception_detail_for_log(exc.detail),
+                            exc=exc,
                         )
-                        create_api_request_log(
+                        log_tracked_proxy_request(
                             log_session,
                             input_format="anthropic",
                             output_format="anthropic",
                             endpoint="/v1/messages",
                             client_name=client_name,
+                            resolved_route=resolved_route,
                             requested_model=payload.model,
-                            resolved_model=resolved_route.upstream_model,
-                            provider=resolved_route.provider.slug,
-                            input_tokens=0,
-                            output_tokens=0,
-                            total_tokens=0,
-                            token_source=None,
-                            estimated_cost_usd=None,
-                            pricing_source=None,
                             duration_ms=duration_ms,
                             status_code=exc.status_code,
-                            error_message=format_exception_detail_for_log(exc.detail),
                             streamed=True,
+                            request_payload=payload,
+                            response_payload=build_logged_error_response(exc),
+                            error_message=format_exception_detail_for_log(exc.detail),
                             request_id=upstream_request_id,
                             ttfb_ms=ttfb_ms,
-                            **io_log_kwargs(
-                                log_session,
-                                request_payload=payload,
-                                response_payload=build_logged_error_response(exc),
-                            ),
                         )
                     logged_error = build_logged_error_response(exc)["error"]
                     yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': logged_error})}\n\n"
@@ -703,29 +636,20 @@ def create_message(
 
     last_error: HTTPException | None = None
     for route_index, resolved_route in enumerate(resolved_routes):
-        try:
-            provider_secret = resolve_credential_secret(resolved_route.credential)
-        except EncryptionConfigurationError as exc:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        provider_secret = resolve_provider_secret(resolved_route.credential)
 
-        if not provider_supports_anonymous_access(
-            resolved_route.provider.base_url,
-            resolved_route.provider.provider_type,
-        ) and not provider_secret:
-            exc = HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No configured credential available for the selected provider.",
-            )
+        try:
+            ensure_provider_secret_available(resolved_route, provider_secret)
+        except HTTPException as exc:
             if route_index < len(resolved_routes) - 1:
-                persist_provider_health_status(
+                record_provider_proxy_failure(
                     session,
                     provider_id=resolved_route.provider.id,
-                    status_value=classify_provider_failure_status(exc),
-                    error_message=format_exception_detail_for_log(exc.detail),
+                    exc=exc,
                 )
                 last_error = exc
                 continue
-            raise exc
+            raise
 
         if resolved_route.provider.provider_type == "anthropic_compatible":
             anthropic_payload = build_upstream_payload(
@@ -739,42 +663,34 @@ def create_message(
                     payload=anthropic_payload,
                 )
             except HTTPException as exc:
-                persist_provider_health_status(
+                record_provider_proxy_failure(
                     session,
                     provider_id=resolved_route.provider.id,
-                    status_value=classify_provider_failure_status(exc),
-                    error_message=format_exception_detail_for_log(exc.detail),
+                    exc=exc,
                 )
                 last_error = exc
-                if exc.status_code in (502, 503) and route_index < len(resolved_routes) - 1:
+                if should_try_next_provider_route(
+                    exc,
+                    route_index=route_index,
+                    route_count=len(resolved_routes),
+                ):
                     continue
 
                 duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-                create_api_request_log(
+                log_tracked_proxy_request(
                     session,
                     input_format="anthropic",
                     output_format="anthropic",
                     endpoint="/v1/messages",
                     client_name=client_name,
+                    resolved_route=resolved_route,
                     requested_model=payload.model,
-                    resolved_model=resolved_route.upstream_model,
-                    provider=resolved_route.provider.slug,
-                    input_tokens=0,
-                    output_tokens=0,
-                    total_tokens=0,
-                    token_source=None,
-                    estimated_cost_usd=None,
-                    pricing_source=None,
                     duration_ms=duration_ms,
                     status_code=exc.status_code,
-                    error_message=format_exception_detail_for_log(exc.detail),
                     streamed=False,
-                    request_id=None,
-                    **io_log_kwargs(
-                        session,
-                        request_payload=payload,
-                        response_payload=build_logged_error_response(exc),
-                    ),
+                    request_payload=payload,
+                    response_payload=build_logged_error_response(exc),
+                    error_message=format_exception_detail_for_log(exc.detail),
                 )
                 raise
 
@@ -785,42 +701,22 @@ def create_message(
                 total_tokens=anthropic_response.usage.input_tokens + anthropic_response.usage.output_tokens,
                 token_source="provider",
             )
-            pricing_override = find_pricing_override(
-                session,
-                provider_id=resolved_route.provider.id,
-                model=resolved_route.upstream_model,
-            )
-            estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
-                pricing_override,
-                input_tokens=usage_snapshot.input_tokens,
-                output_tokens=usage_snapshot.output_tokens,
-            )
             duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-            create_api_request_log(
+            log_tracked_proxy_request(
                 session,
                 input_format="anthropic",
                 output_format="anthropic",
                 endpoint="/v1/messages",
                 client_name=client_name,
+                resolved_route=resolved_route,
                 requested_model=payload.model,
-                resolved_model=resolved_route.upstream_model,
-                provider=resolved_route.provider.slug,
-                input_tokens=usage_snapshot.input_tokens,
-                output_tokens=usage_snapshot.output_tokens,
-                total_tokens=usage_snapshot.total_tokens,
-                token_source=usage_snapshot.token_source,
-                estimated_cost_usd=estimated_cost_usd,
-                pricing_source=pricing_source,
                 duration_ms=duration_ms,
                 status_code=200,
-                error_message=None,
                 streamed=False,
+                request_payload=payload,
+                response_payload=anthropic_response,
+                usage_snapshot=usage_snapshot,
                 request_id=anthropic_response.id,
-                **io_log_kwargs(
-                    session,
-                    request_payload=payload,
-                    response_payload=anthropic_response,
-                ),
             )
             return anthropic_response
 
@@ -835,86 +731,58 @@ def create_message(
                 payload=openai_payload,
             )
         except HTTPException as exc:
-            persist_provider_health_status(
+            record_provider_proxy_failure(
                 session,
                 provider_id=resolved_route.provider.id,
-                status_value=classify_provider_failure_status(exc),
-                error_message=format_exception_detail_for_log(exc.detail),
+                exc=exc,
             )
             last_error = exc
-            if exc.status_code in (502, 503) and route_index < len(resolved_routes) - 1:
+            if should_try_next_provider_route(
+                exc,
+                route_index=route_index,
+                route_count=len(resolved_routes),
+            ):
                 continue
 
             duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-            create_api_request_log(
+            log_tracked_proxy_request(
                 session,
                 input_format="anthropic",
                 output_format="anthropic",
                 endpoint="/v1/messages",
                 client_name=client_name,
+                resolved_route=resolved_route,
                 requested_model=payload.model,
-                resolved_model=resolved_route.upstream_model,
-                provider=resolved_route.provider.slug,
-                input_tokens=0,
-                output_tokens=0,
-                total_tokens=0,
-                token_source=None,
-                estimated_cost_usd=None,
-                pricing_source=None,
                 duration_ms=duration_ms,
                 status_code=exc.status_code,
-                error_message=format_exception_detail_for_log(exc.detail),
                 streamed=False,
-                request_id=None,
-                **io_log_kwargs(
-                    session,
-                    request_payload=payload,
-                    response_payload=build_logged_error_response(exc),
-                ),
+                request_payload=payload,
+                response_payload=build_logged_error_response(exc),
+                error_message=format_exception_detail_for_log(exc.detail),
             )
             raise
 
         usage_snapshot: UsageSnapshot = extract_usage_snapshot(openai_payload, upstream_response)
-        pricing_override = find_pricing_override(
-            session,
-            provider_id=resolved_route.provider.id,
-            model=resolved_route.upstream_model,
-        )
-        estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
-            pricing_override,
-            input_tokens=usage_snapshot.input_tokens,
-            output_tokens=usage_snapshot.output_tokens,
-        )
         duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
         anthropic_response = translate_openai_chat_completion_to_anthropic(
             upstream_response,
             requested_model=payload.model,
         )
-        create_api_request_log(
+        log_tracked_proxy_request(
             session,
             input_format="anthropic",
             output_format="anthropic",
             endpoint="/v1/messages",
             client_name=client_name,
+            resolved_route=resolved_route,
             requested_model=payload.model,
-            resolved_model=resolved_route.upstream_model,
-            provider=resolved_route.provider.slug,
-            input_tokens=usage_snapshot.input_tokens,
-            output_tokens=usage_snapshot.output_tokens,
-            total_tokens=usage_snapshot.total_tokens,
-            token_source=usage_snapshot.token_source,
-            estimated_cost_usd=estimated_cost_usd,
-            pricing_source=pricing_source,
             duration_ms=duration_ms,
             status_code=200,
-            error_message=None,
             streamed=False,
+            request_payload=payload,
+            response_payload=anthropic_response,
+            usage_snapshot=usage_snapshot,
             request_id=str(upstream_response.get("id")) if upstream_response.get("id") else None,
-            **io_log_kwargs(
-                session,
-                request_payload=payload,
-                response_payload=anthropic_response,
-            ),
         )
         return anthropic_response
 

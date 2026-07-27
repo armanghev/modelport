@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 import os
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -12,12 +12,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy import select
 
 from app.database import Provider, ProviderCredential, ProviderHealthCheck
+from app.errors.upstream import format_exception_detail_for_log
 from app.routing.model_prefixes import (
     ResolvedModelSelection,
     infer_provider_from_model,
     normalize_upstream_for_provider,
 )
-from app.security import decrypt_secret
+from app.routing.provider_router import ResolvedProviderRoute, resolve_provider_routes
+from app.security import EncryptionConfigurationError, decrypt_secret
+from app.tracking.cost_service import calculate_estimated_cost_usd
+from app.tracking.io_logging import io_log_kwargs
+from app.tracking.log_service import create_api_request_log
+from app.tracking.pricing import find_pricing_override
+from app.tracking.usage_service import UsageSnapshot
 
 MODELPORT_PROVIDER_HEADER = "X-ModelPort-Provider"
 
@@ -172,19 +179,175 @@ def classify_provider_failure_status(exc: HTTPException) -> str:
     return "offline"
 
 
+def resolve_provider_secret(credential: ProviderCredential | None) -> str | None:
+    try:
+        return resolve_credential_secret(credential)
+    except EncryptionConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+
+def ensure_provider_secret_available(
+    resolved_route: ResolvedProviderRoute,
+    provider_secret: str | None,
+) -> None:
+    if not provider_supports_anonymous_access(
+        resolved_route.provider.base_url,
+        resolved_route.provider.provider_type,
+    ) and not provider_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No configured credential available for the selected provider.",
+        )
+
+
+def missing_provider_secret_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="No configured credential available for the selected provider.",
+    )
+
+
+def resolve_first_proxy_route(
+    session: Session,
+    *,
+    provider_id: str,
+    requested_model: str,
+    upstream_model: str | None = None,
+    fallback_provider_ids: list[str] | None = None,
+) -> tuple[ResolvedProviderRoute, str | None]:
+    resolved_route = resolve_provider_routes(
+        session,
+        provider_id=provider_id,
+        requested_model=requested_model,
+        upstream_model=upstream_model,
+        fallback_provider_ids=fallback_provider_ids,
+    )[0]
+    provider_secret = resolve_provider_secret(resolved_route.credential)
+    ensure_provider_secret_available(resolved_route, provider_secret)
+    return resolved_route, provider_secret
+
+
+def should_try_next_provider_route(
+    exc: HTTPException,
+    *,
+    route_index: int,
+    route_count: int,
+    emitted_chunks: bool = False,
+) -> bool:
+    return (
+        not emitted_chunks
+        and exc.status_code in (status.HTTP_502_BAD_GATEWAY, status.HTTP_503_SERVICE_UNAVAILABLE)
+        and route_index < route_count - 1
+    )
+
+
+def record_provider_proxy_failure(
+    session: Session,
+    *,
+    provider_id: str,
+    exc: HTTPException,
+) -> None:
+    persist_provider_health_status(
+        session,
+        provider_id=provider_id,
+        status_value=classify_provider_failure_status(exc),
+        error_message=format_exception_detail_for_log(exc.detail),
+    )
+
+
+def log_tracked_proxy_request(
+    session: Session,
+    *,
+    input_format: str,
+    output_format: str,
+    endpoint: str,
+    client_name: str | None,
+    resolved_route: ResolvedProviderRoute,
+    requested_model: str,
+    duration_ms: int,
+    status_code: int,
+    streamed: bool,
+    request_payload: Any,
+    response_payload: Any,
+    usage_snapshot: UsageSnapshot | None = None,
+    error_message: str | None = None,
+    request_id: str | None = None,
+    ttfb_ms: int | None = None,
+    completion_reason: str | None = None,
+) -> None:
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+    token_source = None
+    estimated_cost_usd = None
+    pricing_source = None
+
+    if usage_snapshot is not None:
+        input_tokens = usage_snapshot.input_tokens
+        output_tokens = usage_snapshot.output_tokens
+        total_tokens = usage_snapshot.total_tokens
+        token_source = usage_snapshot.token_source
+        pricing_override = find_pricing_override(
+            session,
+            provider_id=resolved_route.provider.id,
+            model=resolved_route.upstream_model,
+        )
+        estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
+            pricing_override,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+    create_api_request_log(
+        session,
+        input_format=input_format,
+        output_format=output_format,
+        endpoint=endpoint,
+        client_name=client_name,
+        requested_model=requested_model,
+        resolved_model=resolved_route.upstream_model,
+        provider=resolved_route.provider.slug,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        token_source=token_source,
+        estimated_cost_usd=estimated_cost_usd,
+        pricing_source=pricing_source,
+        duration_ms=duration_ms,
+        status_code=status_code,
+        error_message=error_message,
+        streamed=streamed,
+        request_id=request_id,
+        ttfb_ms=ttfb_ms,
+        completion_reason=completion_reason,
+        **io_log_kwargs(
+            session,
+            request_payload=request_payload,
+            response_payload=response_payload,
+        ),
+    )
+
+
 __all__ = [
     "ModelPortProviderHeader",
     "MODELPORT_PROVIDER_HEADER",
     "bearer_scheme",
     "build_upstream_payload",
+    "ensure_provider_secret_available",
     "get_session",
+    "log_tracked_proxy_request",
+    "missing_provider_secret_error",
     "provider_supports_anonymous_access",
     "persist_provider_health_status",
     "classify_provider_failure_status",
+    "record_provider_proxy_failure",
     "require_proxy_token",
     "resolve_client_name",
     "resolve_credential_secret",
+    "resolve_first_proxy_route",
+    "resolve_provider_secret",
     "get_known_provider_ids",
     "resolve_proxy_model_routing",
     "resolve_requested_provider",
+    "should_try_next_provider_route",
 ]
