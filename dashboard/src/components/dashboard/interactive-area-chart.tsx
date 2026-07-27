@@ -28,8 +28,6 @@ export interface InteractiveAreaChartPoint {
   date: string;
   primary: number;
   secondary: number;
-  cacheRead?: number;
-  cacheWrite?: number;
 }
 
 export interface InteractiveAreaChartProps {
@@ -39,8 +37,6 @@ export interface InteractiveAreaChartProps {
   description: string;
   primaryLabel?: string;
   secondaryLabel?: string;
-  cacheReadLabel?: string;
-  cacheWriteLabel?: string;
   defaultRange?: DateRangeValue;
   className?: string;
   showHeader?: boolean;
@@ -91,8 +87,6 @@ export function InteractiveAreaChart({
   description,
   primaryLabel = "Primary",
   secondaryLabel = "Secondary",
-  cacheReadLabel = "Cache read",
-  cacheWriteLabel = "Cache write",
   defaultRange = "30d",
   className,
   showHeader = true,
@@ -124,8 +118,6 @@ export function InteractiveAreaChart({
 
     return filterDataByRange(data, timeRange);
   }, [data, dataByRange, timeRange]);
-  const hasCacheRead = filteredData.some((point) => typeof point.cacheRead === "number");
-  const hasCacheWrite = filteredData.some((point) => typeof point.cacheWrite === "number");
 
   return (
     <article className={cn(surface ? "card-surface p-0" : "p-0", className)}>
@@ -180,14 +172,6 @@ export function InteractiveAreaChart({
               <linearGradient id={`fillSecondary-${chartId}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="var(--color-accent-blue)" stopOpacity={0.42} />
                 <stop offset="95%" stopColor="var(--color-accent-blue)" stopOpacity={0.1} />
-              </linearGradient>
-              <linearGradient id={`fillCacheRead-${chartId}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="var(--color-accent-green)" stopOpacity={0.38} />
-                <stop offset="95%" stopColor="var(--color-accent-green)" stopOpacity={0.08} />
-              </linearGradient>
-              <linearGradient id={`fillCacheWrite-${chartId}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="var(--color-accent-amber)" stopOpacity={0.35} />
-                <stop offset="95%" stopColor="var(--color-accent-amber)" stopOpacity={0.08} />
               </linearGradient>
             </defs>
 
@@ -296,30 +280,6 @@ export function InteractiveAreaChart({
               dot={false}
               activeDot={{ r: 3 }}
             />
-            {hasCacheRead ? (
-              <Area
-                dataKey="cacheRead"
-                name={cacheReadLabel}
-                type="natural"
-                fill={`url(#fillCacheRead-${chartId})`}
-                stroke="var(--color-accent-green)"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 3 }}
-              />
-            ) : null}
-            {hasCacheWrite ? (
-              <Area
-                dataKey="cacheWrite"
-                name={cacheWriteLabel}
-                type="natural"
-                fill={`url(#fillCacheWrite-${chartId})`}
-                stroke="var(--color-accent-amber)"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 3 }}
-              />
-            ) : null}
 
             {showLegend ? (
               <Legend
