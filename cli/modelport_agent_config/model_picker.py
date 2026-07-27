@@ -2,8 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import questionary
+from questionary import Choice
+
 from modelport_agent_config.modelport import ProviderModel
-from modelport_agent_config.prompts import _dim, _interactive_available, print_step, prompt_text
+from modelport_agent_config.prompts import (
+    _STYLE,
+    _dim,
+    _interactive_available,
+    print_step,
+    prompt_text,
+)
 
 _SKIP_SENTINEL = "__skip__"
 _CUSTOM_SENTINEL = "__custom__"
@@ -89,6 +98,22 @@ def _empty_tabs(provider_ids: tuple[str, ...]) -> list[ProviderTab]:
     return [ProviderTab(provider_id=pid.strip().lower(), models=()) for pid in ids if pid.strip()]
 
 
+def _model_option_label(model_id: str, description: str | None) -> str:
+    if description and description != model_id:
+        return f"{description} ({model_id})"
+    return description or model_id
+
+
+def _model_options_for_tab(tab: ProviderTab) -> list[tuple[str, str]]:
+    """(value, description) pairs for the model step."""
+    if tab.models:
+        return [
+            (routed_model_id(model), model.display_name or model.id)
+            for model in tab.models
+        ]
+    return _suggested_models_for_provider(tab.provider_id)
+
+
 def _select_provider_model_numeric(
     label: str,
     tabs: list[ProviderTab],
@@ -164,303 +189,68 @@ def _select_provider_model_numeric(
             print("  Enter 0 to skip, a list number, or the custom option number.")
 
 
-# Model rows shown between scroll hints (not counting hint lines themselves).
-MODEL_PAGE_SIZE = 6
-# Start scrolling before the cursor reaches the last visible row.
-SCROLL_MARGIN = 2
-
-
-def _list_window_height() -> int:
-    """Total list window rows: model page plus room for ↑/↓ hints."""
-    return MODEL_PAGE_SIZE + 2
-
-
-def _select_provider_model_interactive(
+def _select_provider_model_questionary(
     label: str,
     tabs: list[ProviderTab],
     *,
     skip_label: str,
 ) -> str | None:
-    from prompt_toolkit.application import Application
-    from prompt_toolkit.formatted_text import FormattedText
-    from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.layout import Dimension, HSplit, Layout, Window
-    from prompt_toolkit.layout.controls import FormattedTextControl
-    from prompt_toolkit.styles import Style as PtStyle
-
     if not tabs:
         return None
 
-    provider_index = 0
-    list_index = 0
-    list_scroll_offset = 0
-    search_query = ""
-    custom_model_input = ""
-    page_size = MODEL_PAGE_SIZE
+    provider_choices: list[Choice] = [Choice(title=skip_label, value=_SKIP_SENTINEL)]
+    for tab in tabs:
+        suffix = f" ({len(tab.models)} models)" if tab.models else ""
+        provider_choices.append(
+            Choice(title=f"{tab.provider_id}{suffix}", value=tab.provider_id)
+        )
 
-    def is_on_custom_row() -> bool:
-        items = menu_items()
-        if not items or list_index < 0 or list_index >= len(items):
-            return False
-        return items[list_index][0] == _CUSTOM_SENTINEL
-
-    def current_tab() -> ProviderTab:
-        return tabs[provider_index]
-
-    def menu_items() -> list[tuple[str, str]]:
-        """(sentinel_or_model_id, display_line)"""
-        items: list[tuple[str, str]] = [(_SKIP_SENTINEL, skip_label)]
-        tab = current_tab()
-        models = filter_models_for_provider(tab.models, query=search_query)
-        if not models:
-            for model_id, desc in _suggested_models_for_provider(tab.provider_id):
-                items.append((model_id, desc))
-        else:
-            for model in models:
-                label_text = model.display_name or model.id
-                if model.display_name and model.display_name != model.id:
-                    label_text = f"{label_text} ({model.id})"
-                items.append((model.id, label_text))
-        items.append((_CUSTOM_SENTINEL, "Custom Model ID:"))
-        return items
-
-    def clamp_list_index() -> None:
-        nonlocal list_index
-        count = len(menu_items())
-        if list_index >= count:
-            list_index = max(0, count - 1)
-
-    def ensure_list_visible() -> None:
-        nonlocal list_scroll_offset
-        if list_index < list_scroll_offset:
-            list_scroll_offset = max(0, list_index - SCROLL_MARGIN)
-        elif list_index >= list_scroll_offset + page_size - SCROLL_MARGIN:
-            list_scroll_offset = list_index - page_size + SCROLL_MARGIN + 1
-        total = len(menu_items())
-        max_offset = max(0, total - page_size)
-        if list_scroll_offset > max_offset:
-            list_scroll_offset = max_offset
-
-    def reset_list_view() -> None:
-        nonlocal list_index, list_scroll_offset
-        list_index = 0
-        list_scroll_offset = 0
-
-    def reset_provider_view() -> None:
-        nonlocal search_query, custom_model_input
-        search_query = ""
-        custom_model_input = ""
-        reset_list_view()
-
-    def render_header() -> FormattedText:
-        lines: list[tuple[str, str]] = []
-        lines.append(("class:title", f"{label}\n\n"))
-
-        tab_line: list[tuple[str, str]] = []
-        for index, tab in enumerate(tabs):
-            name = tab.provider_id
-            count = len(tab.models)
-            label_text = f" {name} ({count}) " if count else f" {name} "
-            if index == provider_index:
-                tab_line.append(("class:tab.active", label_text))
-            else:
-                tab_line.append(("class:tab", label_text))
-            if index < len(tabs) - 1:
-                tab_line.append(("", " "))
-        lines.extend(tab_line)
-        lines.append(("", "\n"))
-
-        if is_on_custom_row():
-            lines.append(("class:instruction", "Type your model id below · Enter confirm\n"))
-            lines.append(
-                (
-                    "class:instruction",
-                    "←/→ switch provider · ↑/↓ navigate · Esc cancel\n",
-                )
-            )
-        elif search_query:
-            lines.append(("class:instruction", f"Search: {search_query}\n"))
-            lines.append(
-                (
-                    "class:instruction",
-                    "←/→ or Tab switch provider · ↑/↓ navigate · Enter select · Esc cancel\n",
-                )
-            )
-        else:
-            lines.append(("class:instruction", "Type to search models in this provider\n"))
-            lines.append(
-                (
-                    "class:instruction",
-                    "←/→ or Tab switch provider · ↑/↓ navigate · Enter select · Esc cancel\n",
-                )
-            )
-        return FormattedText(lines)
-
-    def render_list() -> FormattedText:
-        items = menu_items()
-        total = len(items)
-        lines: list[tuple[str, str]] = []
-
-        if total > page_size:
-            if list_scroll_offset > 0:
-                lines.append(("class:instruction", f"  ↑ {list_scroll_offset} more above\n"))
-            else:
-                lines.append(("", "\n"))
-
-        end = min(total, list_scroll_offset + page_size)
-        for index in range(list_scroll_offset, end):
-            value, display = items[index]
-            selected = index == list_index
-            prefix = "› " if selected else "  "
-            style = "class:highlighted" if selected else ""
-            if value == _CUSTOM_SENTINEL and selected:
-                cursor = "▏" if custom_model_input else "_"
-                typed = custom_model_input or ""
-                lines.append((style, f"{prefix}Custom Model ID: {typed}{cursor}\n"))
-            else:
-                lines.append((style, f"{prefix}{display}\n"))
-
-        remaining = total - end
-        if remaining > 0:
-            lines.append(("class:instruction", f"  ↓ {remaining} more below\n"))
-
-        return FormattedText(lines)
-
-    result: dict[str, str | None] = {"value": None}
-
-    kb = KeyBindings()
-
-    @kb.add("tab")
-    @kb.add("right")
-    def _next_provider(event) -> None:
-        nonlocal provider_index
-        provider_index = (provider_index + 1) % len(tabs)
-        reset_provider_view()
-        event.app.invalidate()
-
-    @kb.add("s-tab")
-    @kb.add("left")
-    def _prev_provider(event) -> None:
-        nonlocal provider_index
-        provider_index = (provider_index - 1) % len(tabs)
-        reset_provider_view()
-        event.app.invalidate()
-
-    @kb.add("up")
-    def _up(event) -> None:
-        nonlocal list_index
-        list_index = max(0, list_index - 1)
-        ensure_list_visible()
-        event.app.invalidate()
-
-    @kb.add("down")
-    def _down(event) -> None:
-        nonlocal list_index
-        list_index = min(len(menu_items()) - 1, list_index + 1)
-        ensure_list_visible()
-        event.app.invalidate()
-
-    @kb.add("enter")
-    def _enter(event) -> None:
-        items = menu_items()
-        if not items:
-            return
-        value, _display = items[list_index]
-        if value == _SKIP_SENTINEL:
-            result["value"] = None
-            event.app.exit()
-            return
-        if value == _CUSTOM_SENTINEL:
-            trimmed = custom_model_input.strip()
-            if trimmed:
-                result["value"] = trimmed
-                event.app.exit()
-            return
-        tab = current_tab()
-        models = filter_models_for_provider(tab.models, query=search_query)
-        if models:
-            for model in models:
-                if model.id == value:
-                    result["value"] = routed_model_id(model)
-                    event.app.exit()
-                    return
-        result["value"] = value
-        event.app.exit()
-
-    @kb.add("c-c")
-    @kb.add("escape")
-    def _cancel(event) -> None:
+    provider_result = questionary.select(
+        label,
+        choices=provider_choices,
+        style=_STYLE,
+        use_arrow_keys=True,
+        use_jk_keys=True,
+        use_search_filter=len(provider_choices) > 12,
+        instruction="↑/↓ navigate · enter select",
+    ).ask()
+    if provider_result is None:
         raise KeyboardInterrupt()
+    if provider_result == _SKIP_SENTINEL:
+        return None
 
-    @kb.add("backspace")
-    def _backspace(event) -> None:
-        nonlocal search_query, custom_model_input
-        if is_on_custom_row():
-            if custom_model_input:
-                custom_model_input = custom_model_input[:-1]
-                event.app.invalidate()
-            return
-        if search_query:
-            search_query = search_query[:-1]
-            reset_list_view()
-            clamp_list_index()
-            event.app.invalidate()
+    tab = next(t for t in tabs if t.provider_id == provider_result)
+    options = _model_options_for_tab(tab)
 
-    @kb.add(" ")
-    def _space(event) -> None:
-        nonlocal search_query, custom_model_input
-        if is_on_custom_row():
-            custom_model_input += " "
-            event.app.invalidate()
-            return
-        search_query += " "
-        reset_list_view()
-        clamp_list_index()
-        event.app.invalidate()
-
-    @kb.add("<any>")
-    def _type_char(event) -> None:
-        nonlocal search_query, custom_model_input
-        if not (event.data and len(event.data) == 1 and event.data.isprintable()):
-            return
-        if event.data.isspace():
-            return
-        if is_on_custom_row():
-            custom_model_input += event.data
-            event.app.invalidate()
-            return
-        search_query += event.data
-        reset_list_view()
-        clamp_list_index()
-        event.app.invalidate()
-
-    header_window = Window(
-        content=FormattedTextControl(lambda: render_header()),
-        always_hide_cursor=True,
-        dont_extend_height=True,
+    model_choices: list[Choice] = [Choice(title=skip_label, value=_SKIP_SENTINEL)]
+    model_choices.extend(
+        Choice(title=_model_option_label(value, description), value=value)
+        for value, description in options
     )
-    list_window = Window(
-        content=FormattedTextControl(lambda: render_list()),
-        always_hide_cursor=True,
-        height=Dimension(max=_list_window_height(), preferred=_list_window_height()),
-        dont_extend_height=True,
-    )
-    app = Application(
-        layout=Layout(HSplit([header_window, list_window])),
-        key_bindings=kb,
-        full_screen=False,
-        style=PtStyle.from_dict(
-            {
-                "title": "bold",
-                "tab": "",
-                "tab.active": "bold reverse",
-                "instruction": "fg:ansibrightblack",
-                "highlighted": "bold fg:ansicyan",
-            }
+    model_choices.append(Choice(title="Custom Model ID:", value=_CUSTOM_SENTINEL))
+
+    searchable = len(options) > 8
+    model_result = questionary.select(
+        f"Model for {tab.provider_id}",
+        choices=model_choices,
+        style=_STYLE,
+        use_arrow_keys=True,
+        use_jk_keys=not searchable,
+        use_search_filter=searchable,
+        instruction=(
+            "type to filter · ↑/↓ navigate · enter select"
+            if searchable
+            else "↑/↓ navigate · enter select"
         ),
-    )
-    app.run()
-    return result["value"]
+    ).ask()
+    if model_result is None:
+        raise KeyboardInterrupt()
+    if model_result == _SKIP_SENTINEL:
+        return None
+    if model_result == _CUSTOM_SENTINEL:
+        custom = prompt_text("Model id")
+        return custom or None
+    return str(model_result)
 
 
 def select_provider_model_optional(
@@ -477,7 +267,4 @@ def select_provider_model_optional(
     if not _interactive_available():
         return _select_provider_model_numeric(label, tabs, skip_label=skip_label)
 
-    try:
-        return _select_provider_model_interactive(label, tabs, skip_label=skip_label)
-    except ImportError:
-        return _select_provider_model_numeric(label, tabs, skip_label=skip_label)
+    return _select_provider_model_questionary(label, tabs, skip_label=skip_label)

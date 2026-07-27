@@ -45,7 +45,7 @@ Existing keys in those files are preserved; only ModelPort-related `env` entries
 
 ## Model picker
 
-When the backend is running, the interactive flow shows **provider tabs** (openrouter, gemini, openai, etc.). Use `←`/`→` or `Tab` to switch providers; the model list filters to that provider. Type to search within the active tab. You can assign different providers per tier—for example a Gemini model for Sonnet and an OpenAI model for Opus.
+When the backend is running, the interactive flow is a two-step select: pick a **provider** (openrouter, gemini, openai, etc.), then pick a **model** from that provider (type to filter when the list is long). You can assign different providers per tier—for example a Gemini model for Sonnet and an OpenAI model for Opus.
 
 The picker only lists **chat-capable** models for coding agents (text output, no embedding/TTS/image-gen/live variants). You can still type a custom model id.
 
