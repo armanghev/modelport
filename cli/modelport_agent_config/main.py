@@ -51,10 +51,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", type=Path, help="ModelPort repo root (auto-detected by default).")
     parser.add_argument("--base-url", help="ModelPort proxy base URL.")
     parser.add_argument("--token", help="MODELPORT_TOKEN value (overrides env and .env).")
-    parser.add_argument(
-        "--provider",
-        help="Deprecated; routing is inferred from model ids. Ignored when writing settings.",
-    )
     parser.add_argument("--model", help="Default model id (ANTHROPIC_MODEL and settings model).")
     parser.add_argument("--sonnet-model", help="ANTHROPIC_DEFAULT_SONNET_MODEL override.")
     parser.add_argument("--opus-model", help="ANTHROPIC_DEFAULT_OPUS_MODEL override.")
@@ -200,11 +196,9 @@ def collect_profile_from_args(
         raise SystemExit(f"{runtime.token_env} is required.")
 
     scope = ConfigScope(args.scope or ConfigScope.GLOBAL.value)
-    provider_id = str(args.provider).strip().lower() if args.provider else None
     profile = ModelPortProfile(
         base_url=base_url,
         token=token,
-        provider_id=provider_id,
         model=args.model,
         sonnet_model=args.sonnet_model,
         opus_model=args.opus_model,

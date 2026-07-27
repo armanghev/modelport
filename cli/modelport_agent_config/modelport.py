@@ -39,7 +39,6 @@ class ModelPortProfile:
 
     base_url: str
     token: str
-    provider_id: str | None = None
     model: str | None = None
     sonnet_model: str | None = None
     opus_model: str | None = None

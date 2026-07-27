@@ -18,12 +18,11 @@ def _runtime() -> ModelPortRuntime:
     )
 
 
-def test_collect_profile_from_args_does_not_require_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collect_profile_from_args_without_optional_models(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MODELPORT_TOKEN", "tok")
     args = argparse.Namespace(
         base_url="http://127.0.0.1:13243",
         token=None,
-        provider=None,
         scope=None,
         model="models/gemini-2.5-flash",
         sonnet_model=None,
@@ -33,4 +32,4 @@ def test_collect_profile_from_args_does_not_require_provider(monkeypatch: pytest
     )
     profile, _scope = main_module.collect_profile_from_args(args, _runtime())
     assert profile.model == "models/gemini-2.5-flash"
-    assert profile.provider_id is None
+    assert profile.sonnet_model is None
