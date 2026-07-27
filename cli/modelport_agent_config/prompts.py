@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import getpass
 import sys
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 import questionary
 from questionary import Choice, Style
@@ -309,9 +309,3 @@ def select_optional(
         custom = prompt_text("Model id")
         return custom or None
     return str(result)
-
-
-def run_if_tty(interactive_runner: Callable[[], T], non_interactive_runner: Callable[[], T], *, is_tty: bool) -> T:
-    if is_tty:
-        return interactive_runner()
-    return non_interactive_runner()
