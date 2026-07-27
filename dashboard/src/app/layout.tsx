@@ -1,12 +1,10 @@
 import type { Metadata } from "next";
-import { Nunito, Geist_Mono, JetBrains_Mono } from "next/font/google";
+import { Nunito, Geist_Mono } from "next/font/google";
 import { RootProvider } from "fumadocs-ui/provider/next";
 import { ThemeProvider } from "@teispace/next-themes";
 import { getTheme } from "@teispace/next-themes/server";
 import "./globals.css";
 import { cn } from "@/lib/utils";
-
-const jetbrainsMono = JetBrains_Mono({subsets:['latin'],variable:'--font-mono'});
 
 const nunitoSans = Nunito({
   variable: "--font-nunito-sans",
@@ -34,7 +32,7 @@ export default async function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("h-full", "antialiased", nunitoSans.variable, geistMono.variable, jetbrainsMono.variable)}
+      className={cn("h-full", "antialiased", nunitoSans.variable, geistMono.variable)}
     >
       <body className="flex min-h-screen flex-col">
         <ThemeProvider

@@ -1,9 +1,7 @@
 'use client';
 
-import { Moon, Sun } from 'lucide-react';
+import { MoonIcon, SunIcon } from '@phosphor-icons/react';
 import { useTheme } from '@teispace/next-themes';
-import { cva } from 'class-variance-authority';
-import { useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -13,13 +11,7 @@ export function DashboardThemeSwitch({
   className?: string;
 }) {
   const { setTheme, resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  const value = mounted ? resolvedTheme : null;
+  const isLight = resolvedTheme === 'light';
 
   return (
     <button
@@ -30,19 +22,22 @@ export function DashboardThemeSwitch({
       )}
       aria-label="Toggle theme"
       data-theme-toggle=""
-      onClick={() => setTheme(value === 'light' ? 'dark' : 'light')}
+      onClick={() => setTheme(isLight ? 'dark' : 'light')}
     >
-      {value === 'light' ? (
-        <Sun
-          fill="currentColor"
-          className="size-6.5 p-1.5 text-fd-muted-foreground"
-        />
-      ) : (
-        <Moon
-          fill="currentColor"
-          className="size-6.5 p-1.5 text-fd-muted-foreground"
+      <SunIcon
+        weight="fill"
+        className={cn(
+          'size-6.5 p-1.5 text-fd-muted-foreground',
+          !isLight && 'hidden',
+        )}
       />
-      )}
+      <MoonIcon
+        weight="fill"
+        className={cn(
+          'size-6.5 p-1.5 text-fd-muted-foreground',
+          isLight && 'hidden',
+        )}
+      />
     </button>
   );
 }
