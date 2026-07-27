@@ -124,7 +124,7 @@ def collect_profile_interactive(
             raise SystemExit(1)
 
     raw_catalog = fetch_provider_models(base_url)
-    catalog, excluded = filter_catalog_for_agent(raw_catalog, agent_id=adapter.id)
+    catalog, excluded = filter_catalog_for_agent(raw_catalog)
     if raw_catalog:
         total = sum(len(models) for models in raw_catalog.values())
         chat_total = sum(len(models) for models in catalog.values())

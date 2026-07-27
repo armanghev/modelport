@@ -60,12 +60,8 @@ def _output_modalities_allow_chat(outputs: list[str]) -> bool | None:
     return "text" in outputs
 
 
-def is_agent_chat_model(model: ProviderModel, *, agent_id: str = "claude-code") -> bool:
+def is_agent_chat_model(model: ProviderModel) -> bool:
     """Whether a catalog model is suitable as a Claude Code / coding-agent default."""
-    if agent_id != "claude-code":
-        # Future agents can add their own rules; default to the same chat filter for now.
-        pass
-
     if _id_is_excluded(model.id):
         return False
 
@@ -96,12 +92,8 @@ def is_agent_chat_model(model: ProviderModel, *, agent_id: str = "claude-code") 
     return False
 
 
-def filter_chat_models(
-    models: list[ProviderModel],
-    *,
-    agent_id: str = "claude-code",
-) -> ChatModelFilterResult:
-    included = [model for model in models if is_agent_chat_model(model, agent_id=agent_id)]
+def filter_chat_models(models: list[ProviderModel]) -> ChatModelFilterResult:
+    included = [model for model in models if is_agent_chat_model(model)]
     return ChatModelFilterResult(
         included=tuple(included),
         excluded_count=max(0, len(models) - len(included)),
@@ -110,13 +102,11 @@ def filter_chat_models(
 
 def filter_catalog_for_agent(
     catalog: dict[str, list[ProviderModel]],
-    *,
-    agent_id: str = "claude-code",
 ) -> tuple[dict[str, list[ProviderModel]], int]:
     filtered: dict[str, list[ProviderModel]] = {}
     total_excluded = 0
     for provider_id, models in catalog.items():
-        result = filter_chat_models(models, agent_id=agent_id)
+        result = filter_chat_models(models)
         if result.included:
             filtered[provider_id] = list(result.included)
         total_excluded += result.excluded_count
