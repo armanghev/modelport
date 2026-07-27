@@ -25,12 +25,12 @@ MODELPORT_TOKEN=dev-modelport-token
 Then add whichever provider keys you want to use:
 
 ```bash
+# Required for encrypted DB credentials (see backend/app/security.py)
+PROXY_ENCRYPTION_KEY=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
 OPENROUTER_API_KEY=
-GROQ_API_KEY=
-TOGETHER_API_KEY=
 ```
 
 ## 2. Create local TLS certificates
