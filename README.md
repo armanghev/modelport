@@ -19,6 +19,9 @@ Working today:
 - FastAPI proxy with bearer-token auth via `MODELPORT_TOKEN`.
 - `POST /v1/messages` for Anthropic-style clients.
 - `GET /v1/models` and `POST /v1/chat/completions` for OpenAI-style clients.
+- `POST /v1/responses` for both OpenAI-compatible and Anthropic-compatible providers (Anthropic emulated locally).
+- `POST /v1/embeddings`, images, audio, legacy completions, and moderations against OpenAI-compatible upstreams (`501` for Anthropic providers).
+- `POST /v1/messages/count_tokens`, batches, and files against Anthropic-compatible upstreams (`501` for OpenAI-compatible providers).
 - Streaming and non-streaming chat completions.
 - Request normalization between Anthropic and OpenAI chat shapes for the current OpenAI-compatible upstream path, including basic tool calls/tool results.
 - Provider routing by request body `provider`, `fallback_providers`, or `X-ModelPort-Provider`.
@@ -34,14 +37,13 @@ Working today:
 Still in progress:
 
 - Native Anthropic-compatible upstream providers are supported for `POST /v1/messages`, `POST /v1/chat/completions`, and `GET /v1/models`.
-- `/v1/messages/count_tokens`, `/v1/responses`, and `/v1/embeddings` are planned but not implemented.
 - The dashboard expects the backend to be running; it is no longer just a static mock dashboard.
 - Provider health is based on recent runtime/API observations rather than a dedicated background health-check loop.
 - API keys can be stored in environment variables or encrypted database credentials, but local `.env` remains the simplest path for development.
 
 Future plans:
 
-- Additional API surfaces such as token counting, OpenAI Responses, embeddings, and other provider-specific capabilities.
+- Broader provider-specific capability coverage beyond the current OpenAI/Anthropic compatibility surfaces.
 - Custom response schemas and structured output formats that can be managed consistently across providers.
 - More advanced routing policies, including automatic fallback, cost-aware routing, latency-aware routing, and model capability matching.
 - Dedicated provider health checks and background model catalog refresh.
@@ -72,7 +74,7 @@ Repository layout:
 - `pricing_catalog.yaml`: model pricing seed data.
 - `cli/`: interactive agent configuration package (`modelport-configure`).
 - `bin/`: repository convenience scripts (including `./bin/modelport-configure`).
-- `docs/`: planning notes for larger implementation tracks.
+- `docs/`: Fumadocs documentation site.
 
 ## Quick Start
 

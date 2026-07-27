@@ -4,11 +4,14 @@ title: What is ModelPort?
 
 ModelPort is a local-first control plane for AI model access. It sits between your client and upstream providers so you can standardize request formats, hide provider secrets from local tools, inspect traffic, and switch routing without rewriting clients.
 
-Today the codebase implements three core proxy surfaces:
+Today the codebase implements these core proxy surfaces:
 
 - `POST /v1/messages` for Anthropic-style clients
 - `POST /v1/chat/completions` for OpenAI-style clients
 - `GET /v1/models` for OpenAI-style model listing
+- `POST /v1/responses` for the OpenAI Responses API (Anthropic upstreams are emulated locally)
+- `POST /v1/embeddings` for OpenAI-style embeddings
+- `POST /v1/messages/count_tokens` for Anthropic token counting
 
 Around that proxy, ModelPort also ships:
 
@@ -45,15 +48,19 @@ Client
 
 ## Current Limits
 
-<Callout type="warn" title="Implemented versus planned">
-Anthropic-compatible upstream providers are supported for `POST /v1/messages`, `POST /v1/chat/completions`, and `GET /v1/models`. OpenAI-style clients are translated onto Anthropic upstreams when you select a provider with type `anthropic_compatible`.
+<Callout type="warn" title="Provider-type caveats">
+Some endpoints only work against a matching upstream provider family. Selecting the wrong provider type returns `501 Not Implemented`.
 </Callout>
 
-These features are planned but not implemented:
+Provider compatibility:
 
-- `POST /v1/responses`
-- `POST /v1/embeddings`
-- `POST /v1/messages/count_tokens`
+- Anthropic-compatible upstreams support `POST /v1/messages`, `POST /v1/chat/completions`, and `GET /v1/models`. OpenAI-style clients are translated onto Anthropic upstreams when you select a provider with type `anthropic_compatible`.
+- `POST /v1/responses` works for both OpenAI-compatible and Anthropic-compatible providers. Against Anthropic, ModelPort emulates the Responses API locally.
+- `POST /v1/embeddings`, images, audio, legacy completions, and moderations work only against OpenAI-compatible upstream providers (`501` for Anthropic-compatible providers).
+- `POST /v1/messages/count_tokens`, batches, and files work only against Anthropic-compatible providers (`501` for OpenAI-compatible providers).
+
+These features are still planned:
+
 - Dedicated project-scoped auth and permission models
 - Automatic background provider health checks and catalog refresh
 

@@ -2,10 +2,13 @@
 title: OpenAI Compatibility
 ---
 
-ModelPort exposes two OpenAI-style surfaces today:
+ModelPort exposes these OpenAI-style surfaces today:
 
 - `POST /v1/chat/completions`
 - `GET /v1/models`
+- `POST /v1/responses`
+- `POST /v1/embeddings`
+- Images, audio, legacy completions, and moderations (OpenAI-compatible upstreams only)
 
 These are intended for OpenAI-compatible clients and SDKs that can target a custom base URL.
 
@@ -54,4 +57,5 @@ curl http://127.0.0.1:13243/v1/chat/completions \
 
 - Streaming is supported.
 - Tool definitions and tool-call responses are supported in the current chat-completions path.
-- `responses` and `embeddings` endpoints are not implemented yet.
+- `POST /v1/responses` works for both OpenAI-compatible and Anthropic-compatible providers. Against Anthropic upstreams, ModelPort emulates the Responses API locally.
+- `POST /v1/embeddings`, images, audio, legacy completions, and moderations require an OpenAI-compatible upstream provider. Selecting an Anthropic-compatible provider returns `501 Not Implemented`.
