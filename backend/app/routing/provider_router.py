@@ -52,19 +52,6 @@ def select_provider_credential(
     return provider.credentials[0] if provider.credentials else None
 
 
-def resolve_provider_route(
-    session: Session,
-    provider_id: str,
-    requested_model: str,
-) -> ResolvedProviderRoute:
-    return resolve_provider_routes(
-        session,
-        provider_id=provider_id,
-        requested_model=requested_model,
-        fallback_provider_ids=[],
-    )[0]
-
-
 def get_latest_provider_health_status(session: Session, provider_id: str) -> str | None:
     latest_check = session.scalars(
         select(ProviderHealthCheck.status)
