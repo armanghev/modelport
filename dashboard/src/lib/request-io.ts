@@ -563,10 +563,9 @@ function stripRedundantUpstreamFromPayload(data: unknown): unknown {
   const record = { ...(data as Record<string, unknown>) };
   const error = record.error;
   if (error && typeof error === "object" && !Array.isArray(error)) {
-    const { upstream: _upstream, code: _code, ...rest } = error as Record<
-      string,
-      unknown
-    >;
+    const rest = { ...(error as Record<string, unknown>) };
+    delete rest.upstream;
+    delete rest.code;
     record.error = rest;
   }
   return record;

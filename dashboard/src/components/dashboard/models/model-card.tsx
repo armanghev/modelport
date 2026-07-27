@@ -12,19 +12,6 @@ import {
   type ModelDirectoryRow,
 } from "@/lib/models-directory";
 
-function metadataSourceLabel(source: string): string {
-  if (source === "openrouter") {
-    return "OpenRouter";
-  }
-  if (source === "pricing") {
-    return "Local pricing";
-  }
-  if (source === "local") {
-    return "Local";
-  }
-  return "Provider";
-}
-
 function modelDescriptionPreview(description: string | null): string {
   const trimmed = description?.trim();
   return trimmed ? trimmed : "No description available.";
