@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hmac
 import os
-from typing import Annotated, Any
+from collections.abc import Callable, Generator, Iterator
+from typing import Annotated, Any, TypeVar
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi import Header
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, sessionmaker, sessionmaker
 
 from sqlalchemy import select
 
@@ -25,6 +26,8 @@ from app.tracking.io_logging import io_log_kwargs
 from app.tracking.log_service import create_api_request_log
 from app.tracking.pricing import find_pricing_override
 from app.tracking.usage_service import UsageSnapshot
+
+T = TypeVar("T")
 
 MODELPORT_PROVIDER_HEADER = "X-ModelPort-Provider"
 
@@ -321,12 +324,116 @@ def log_tracked_proxy_request(
     )
 
 
+def execute_tracked_non_stream_proxy_routes(
+    session: Session,
+    resolved_routes: list[ResolvedProviderRoute],
+    *,
+    attempt_route: Callable[[ResolvedProviderRoute, str | None, int], T],
+    log_success: Callable[[Session, ResolvedProviderRoute, T], T],
+    log_final_error: Callable[[Session, ResolvedProviderRoute, HTTPException], None],
+) -> T:
+    last_error: HTTPException | None = None
+    for route_index, resolved_route in enumerate(resolved_routes):
+        provider_secret = resolve_provider_secret(resolved_route.credential)
+
+        try:
+            ensure_provider_secret_available(resolved_route, provider_secret)
+        except HTTPException as exc:
+            if route_index < len(resolved_routes) - 1:
+                record_provider_proxy_failure(
+                    session,
+                    provider_id=resolved_route.provider.id,
+                    exc=exc,
+                )
+                last_error = exc
+                continue
+            raise
+
+        try:
+            result = attempt_route(resolved_route, provider_secret, route_index)
+        except HTTPException as exc:
+            record_provider_proxy_failure(
+                session,
+                provider_id=resolved_route.provider.id,
+                exc=exc,
+            )
+            last_error = exc
+            if should_try_next_provider_route(
+                exc,
+                route_index=route_index,
+                route_count=len(resolved_routes),
+            ):
+                continue
+            log_final_error(session, resolved_route, exc)
+            raise
+
+        return log_success(session, resolved_route, result)
+
+    if last_error is not None:
+        raise last_error
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="No provider could satisfy the request.",
+    )
+
+
+def stream_tracked_proxy_routes(
+    session_factory: sessionmaker[Session],
+    resolved_routes: list[ResolvedProviderRoute],
+    *,
+    attempt_route: Callable[
+        [ResolvedProviderRoute, str | None, int, dict[str, Any]],
+        Generator[str, None, None],
+    ],
+    log_success: Callable[[Session, ResolvedProviderRoute, dict[str, Any]], None],
+    log_final_error: Callable[[Session, ResolvedProviderRoute, HTTPException, dict[str, Any]], None],
+    render_final_error: Callable[[HTTPException], list[str]],
+) -> Generator[str, None, None]:
+    for route_index, resolved_route in enumerate(resolved_routes):
+        stream_state: dict[str, Any] = {"emitted_chunks": False}
+        provider_secret = resolve_provider_secret(resolved_route.credential)
+
+        try:
+            ensure_provider_secret_available(resolved_route, provider_secret)
+            yield from attempt_route(resolved_route, provider_secret, route_index, stream_state)
+            with session_factory() as log_session:
+                log_success(log_session, resolved_route, stream_state)
+            return
+        except HTTPException as exc:
+            emitted_chunks = bool(stream_state.get("emitted_chunks"))
+            if should_try_next_provider_route(
+                exc,
+                route_index=route_index,
+                route_count=len(resolved_routes),
+                emitted_chunks=emitted_chunks,
+            ):
+                with session_factory() as health_session:
+                    record_provider_proxy_failure(
+                        health_session,
+                        provider_id=resolved_route.provider.id,
+                        exc=exc,
+                    )
+                continue
+
+            with session_factory() as log_session:
+                record_provider_proxy_failure(
+                    log_session,
+                    provider_id=resolved_route.provider.id,
+                    exc=exc,
+                )
+                log_final_error(log_session, resolved_route, exc, stream_state)
+            for event in render_final_error(exc):
+                yield event
+            return
+
+
 __all__ = [
     "ModelPortProviderHeader",
     "MODELPORT_PROVIDER_HEADER",
     "bearer_scheme",
     "build_upstream_payload",
     "ensure_provider_secret_available",
+    "execute_tracked_non_stream_proxy_routes",
     "get_session",
     "log_tracked_proxy_request",
     "provider_supports_anonymous_access",
@@ -342,4 +449,5 @@ __all__ = [
     "resolve_proxy_model_routing",
     "resolve_requested_provider",
     "should_try_next_provider_route",
+    "stream_tracked_proxy_routes",
 ]
