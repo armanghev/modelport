@@ -12,6 +12,7 @@ from app.api.proxy_common import (
     build_upstream_payload,
     ensure_provider_secret_available,
     execute_tracked_non_stream_proxy_routes,
+    execute_tracked_passthrough,
     get_session,
     log_tracked_proxy_request,
     require_proxy_token,
@@ -173,12 +174,27 @@ def create_message_count_tokens(
         exclude_none=True,
     )
     upstream_payload["model"] = resolved_route.upstream_model
-    return AnthropicMessageCountTokensResponse.model_validate(
-        count_message_tokens(
-            resolved_route.provider,
-            api_key=provider_secret,
-            payload=upstream_payload,
+
+    def call_upstream():
+        return AnthropicMessageCountTokensResponse.model_validate(
+            count_message_tokens(
+                resolved_route.provider,
+                api_key=provider_secret,
+                payload=upstream_payload,
+            )
         )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/messages/count_tokens",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model=payload.model,
+        request_payload=payload,
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        build_response_payload=lambda response: response.model_dump(),
     )
 
 
@@ -200,10 +216,25 @@ def create_message_batches(
         exclude={"provider", "fallback_providers"},
         exclude_none=True,
     )
-    return create_message_batch(
-        resolved_route.provider,
-        api_key=provider_secret,
-        payload=upstream_payload,
+
+    def call_upstream():
+        return create_message_batch(
+            resolved_route.provider,
+            api_key=provider_secret,
+            payload=upstream_payload,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/messages/batches",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload=payload,
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        extract_request_id=lambda result: str(result["id"]) if isinstance(result, dict) and result.get("id") else None,
     )
 
 
@@ -222,12 +253,29 @@ def list_message_batches_route(
         request,
         provider_id=None,
     )
-    return list_message_batches(
-        resolved_route.provider,
-        api_key=provider_secret,
-        after_id=after_id,
-        before_id=before_id,
-        limit=limit,
+    def call_upstream():
+        return list_message_batches(
+            resolved_route.provider,
+            api_key=provider_secret,
+            after_id=after_id,
+            before_id=before_id,
+            limit=limit,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/messages/batches",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={
+            "after_id": after_id,
+            "before_id": before_id,
+            "limit": limit,
+        },
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
     )
 
 
@@ -244,10 +292,24 @@ def retrieve_message_batch(
         request,
         provider_id=None,
     )
-    return get_message_batch(
-        resolved_route.provider,
-        api_key=provider_secret,
-        batch_id=message_batch_id,
+    def call_upstream():
+        return get_message_batch(
+            resolved_route.provider,
+            api_key=provider_secret,
+            batch_id=message_batch_id,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/messages/batches/{message_batch_id}",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={"message_batch_id": message_batch_id},
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        extract_request_id=lambda result: str(result["id"]) if isinstance(result, dict) and result.get("id") else None,
     )
 
 
@@ -264,10 +326,24 @@ def cancel_message_batch_route(
         request,
         provider_id=None,
     )
-    return cancel_message_batch(
-        resolved_route.provider,
-        api_key=provider_secret,
-        batch_id=message_batch_id,
+    def call_upstream():
+        return cancel_message_batch(
+            resolved_route.provider,
+            api_key=provider_secret,
+            batch_id=message_batch_id,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/messages/batches/{message_batch_id}/cancel",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={"message_batch_id": message_batch_id},
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        extract_request_id=lambda result: str(result["id"]) if isinstance(result, dict) and result.get("id") else None,
     )
 
 
@@ -284,10 +360,25 @@ def delete_message_batch_route(
         request,
         provider_id=None,
     )
-    delete_message_batch(
-        resolved_route.provider,
-        api_key=provider_secret,
-        batch_id=message_batch_id,
+    def call_upstream():
+        delete_message_batch(
+            resolved_route.provider,
+            api_key=provider_secret,
+            batch_id=message_batch_id,
+        )
+        return None
+
+    execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/messages/batches/{message_batch_id}",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={"message_batch_id": message_batch_id},
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        build_response_payload=lambda _result: None,
     )
 
 
@@ -304,10 +395,29 @@ def retrieve_message_batch_results(
         request,
         provider_id=None,
     )
-    content, content_type = get_message_batch_results(
-        resolved_route.provider,
-        api_key=provider_secret,
-        batch_id=message_batch_id,
+    def call_upstream():
+        content, content_type = get_message_batch_results(
+            resolved_route.provider,
+            api_key=provider_secret,
+            batch_id=message_batch_id,
+        )
+        return content, content_type
+
+    content, content_type = execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/messages/batches/{message_batch_id}/results",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={"message_batch_id": message_batch_id},
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        build_response_payload=lambda result: {
+            "content_type": result[1],
+            "content_length": len(result[0]),
+        },
+        extract_request_id=lambda _result: None,
     )
     return Response(content=content, media_type=content_type)
 
@@ -329,12 +439,27 @@ async def upload_file(
     content = await file.read()
     filename = file.filename or "upload.bin"
     content_type = file.content_type or "application/octet-stream"
-    return create_file(
-        resolved_route.provider,
-        api_key=provider_secret,
-        filename=filename,
-        content=content,
-        content_type=content_type,
+
+    def call_upstream():
+        return create_file(
+            resolved_route.provider,
+            api_key=provider_secret,
+            filename=filename,
+            content=content,
+            content_type=content_type,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/files",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={"filename": filename, "content_type": content_type},
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        extract_request_id=lambda result: str(result["id"]) if isinstance(result, dict) and result.get("id") else None,
     )
 
 
@@ -354,13 +479,31 @@ def list_files_route(
         request,
         provider_id=None,
     )
-    return list_files(
-        resolved_route.provider,
-        api_key=provider_secret,
-        after_id=after_id,
-        before_id=before_id,
-        limit=limit,
-        scope_id=scope_id,
+    def call_upstream():
+        return list_files(
+            resolved_route.provider,
+            api_key=provider_secret,
+            after_id=after_id,
+            before_id=before_id,
+            limit=limit,
+            scope_id=scope_id,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/files",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={
+            "after_id": after_id,
+            "before_id": before_id,
+            "limit": limit,
+            "scope_id": scope_id,
+        },
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
     )
 
 
@@ -377,10 +520,24 @@ def retrieve_file(
         request,
         provider_id=None,
     )
-    return get_file(
-        resolved_route.provider,
-        api_key=provider_secret,
-        file_id=file_id,
+    def call_upstream():
+        return get_file(
+            resolved_route.provider,
+            api_key=provider_secret,
+            file_id=file_id,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/files/{file_id}",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={"file_id": file_id},
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        extract_request_id=lambda result: str(result["id"]) if isinstance(result, dict) and result.get("id") else None,
     )
 
 
@@ -397,10 +554,29 @@ def retrieve_file_content(
         request,
         provider_id=None,
     )
-    content, content_type = get_file_content(
-        resolved_route.provider,
-        api_key=provider_secret,
-        file_id=file_id,
+    def call_upstream():
+        content, content_type = get_file_content(
+            resolved_route.provider,
+            api_key=provider_secret,
+            file_id=file_id,
+        )
+        return content, content_type
+
+    content, content_type = execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/files/{file_id}/content",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={"file_id": file_id},
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        build_response_payload=lambda result: {
+            "content_type": result[1],
+            "content_length": len(result[0]),
+        },
+        extract_request_id=lambda _result: None,
     )
     return Response(content=content, media_type=content_type)
 
@@ -418,10 +594,24 @@ def delete_file_route(
         request,
         provider_id=None,
     )
-    return delete_file(
-        resolved_route.provider,
-        api_key=provider_secret,
-        file_id=file_id,
+    def call_upstream():
+        return delete_file(
+            resolved_route.provider,
+            api_key=provider_secret,
+            file_id=file_id,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/files/{file_id}",
+        input_format="anthropic",
+        output_format="anthropic",
+        requested_model="",
+        request_payload={"file_id": file_id},
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        extract_request_id=lambda result: str(result["id"]) if isinstance(result, dict) and result.get("id") else None,
     )
 
 

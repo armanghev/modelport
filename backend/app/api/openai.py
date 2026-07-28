@@ -14,6 +14,7 @@ from app.api.proxy_common import (
     build_upstream_payload,
     ensure_provider_secret_available,
     execute_tracked_non_stream_proxy_routes,
+    execute_tracked_passthrough,
     get_session,
     log_tracked_proxy_request,
     require_proxy_token,
@@ -22,9 +23,10 @@ from app.api.proxy_common import (
     get_known_provider_ids,
     resolve_proxy_model_routing,
     resolve_requested_provider,
+    stream_tracked_passthrough,
     stream_tracked_proxy_routes,
 )
-from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
+from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log, format_exception_detail_for_log
 from app.providers.anthropic_compatible import (
     create_message as create_anthropic_message,
     get_model as get_anthropic_model,
@@ -197,6 +199,7 @@ def _proxy_openai_json_passthrough(
     session: Session,
     payload,
     *,
+    endpoint: str,
     capability_detail: str,
     provider_call: Callable[..., Any],
     require_secret: bool = False,
@@ -204,6 +207,9 @@ def _proxy_openai_json_passthrough(
     use_model_routing: bool = True,
     set_upstream_model: bool = True,
     requested_model: str | None = None,
+    usage_from_response: bool = False,
+    build_response_payload: Callable[[Any], Any] | None = None,
+    extract_request_id: Callable[[Any], str | None] | None = None,
 ) -> Any:
     resolved_model = requested_model if requested_model is not None else payload.model
     resolved_route, provider_secret = _resolve_openai_passthrough_route(
@@ -223,10 +229,41 @@ def _proxy_openai_json_passthrough(
         exclude_defaults=exclude_defaults,
         set_upstream_model=set_upstream_model,
     )
-    return provider_call(
-        resolved_route.provider,
-        api_key=provider_secret,
-        payload=upstream_payload,
+
+    def call_upstream() -> Any:
+        return provider_call(
+            resolved_route.provider,
+            api_key=provider_secret,
+            payload=upstream_payload,
+        )
+
+    extract_usage = None
+    if usage_from_response:
+        def extract_usage(result: Any) -> UsageSnapshot | None:
+            if isinstance(result, dict):
+                return extract_usage_snapshot(upstream_payload, result)
+            return None
+
+    default_extract_request_id = None
+    if extract_request_id is None:
+        def default_extract_request_id(result: Any) -> str | None:
+            if isinstance(result, dict) and result.get("id"):
+                return str(result["id"])
+            return None
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint=endpoint,
+        input_format="openai",
+        output_format="openai",
+        requested_model=resolved_model,
+        request_payload=payload,
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        build_response_payload=build_response_payload,
+        extract_usage_snapshot=extract_usage,
+        extract_request_id=extract_request_id or default_extract_request_id,
     )
 
 
@@ -234,6 +271,7 @@ async def _proxy_openai_multipart_passthrough(
     request: Request,
     session: Session,
     *,
+    endpoint: str,
     capability_detail: str,
     provider_call: Callable[..., Any],
 ) -> Any:
@@ -248,11 +286,36 @@ async def _proxy_openai_multipart_passthrough(
     ensure_openai_compatible_provider(resolved_route, detail=capability_detail)
     ensure_provider_secret_available(resolved_route, provider_secret)
     form_fields["model"] = resolved_route.upstream_model
-    return provider_call(
-        resolved_route.provider,
-        api_key=provider_secret,
-        form_fields=form_fields,
-        files=files,
+    request_payload = {
+        "model": requested_model,
+        "form_fields": form_fields,
+        "files": list(files.keys()),
+    }
+
+    def call_upstream() -> Any:
+        return provider_call(
+            resolved_route.provider,
+            api_key=provider_secret,
+            form_fields=form_fields,
+            files=files,
+        )
+
+    def default_extract_request_id(result: Any) -> str | None:
+        if isinstance(result, dict) and result.get("id"):
+            return str(result["id"])
+        return None
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint=endpoint,
+        input_format="openai",
+        output_format="openai",
+        requested_model=requested_model,
+        request_payload=request_payload,
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        extract_request_id=default_extract_request_id,
     )
 
 
@@ -342,8 +405,10 @@ def create_embeddings(
         request,
         session,
         payload,
+        endpoint="/v1/embeddings",
         capability_detail="Selected provider does not support OpenAI embeddings compatibility.",
         provider_call=create_embedding,
+        usage_from_response=True,
     )
 
 
@@ -355,6 +420,7 @@ def create_completions(
     _: None = Depends(require_proxy_token),
     _modelport_provider: ModelPortProviderHeader = None,
 ) -> dict | StreamingResponse:
+    started_at = time.perf_counter()
     resolved_route, provider_secret = _resolve_openai_passthrough_route(
         request,
         session,
@@ -371,30 +437,172 @@ def create_completions(
         upstream_model=resolved_route.upstream_model,
         exclude_defaults=True,
     )
+    session_factory: sessionmaker[Session] = request.app.state.session_factory
+    client_name = resolve_client_name(request)
 
     if payload.stream:
+        def attempt_route(route, secret, stream_state):
+            ttfb_ms: int | None = None
+            upstream_request_id: str | None = None
+            final_usage: dict | None = None
+            completion_reason: str | None = None
+            text_parts: list[str] = []
 
-        def event_stream():
             for raw_chunk in stream_completion_chunks(
-                resolved_route.provider,
-                api_key=provider_secret,
+                route.provider,
+                api_key=secret,
                 payload=upstream_payload,
             ):
                 if raw_chunk == "[DONE]":
                     yield "data: [DONE]\n\n"
                     continue
-                yield f"data: {raw_chunk}\n\n"
+
+                if ttfb_ms is None:
+                    ttfb_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+
+                try:
+                    chunk = json.loads(raw_chunk)
+                except ValueError:
+                    stream_state["emitted_chunks"] = True
+                    yield f"data: {raw_chunk}\n\n"
+                    continue
+
+                stream_state["emitted_chunks"] = True
+                if chunk.get("id"):
+                    upstream_request_id = str(chunk["id"])
+                if isinstance(chunk.get("usage"), dict):
+                    final_usage = chunk["usage"]
+                choices = chunk.get("choices")
+                if isinstance(choices, list) and choices:
+                    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+                    text = first_choice.get("text")
+                    if isinstance(text, str) and text:
+                        text_parts.append(text)
+                    finish_reason = first_choice.get("finish_reason")
+                    if finish_reason:
+                        completion_reason = str(finish_reason)
+
+                yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+
+            usage_snapshot = build_stream_usage_snapshot(
+                upstream_payload,
+                "".join(text_parts),
+                final_usage,
+            )
+            stream_state.update(
+                {
+                    "ttfb_ms": ttfb_ms,
+                    "upstream_request_id": upstream_request_id,
+                    "final_usage": final_usage,
+                    "completion_reason": completion_reason,
+                    "text_parts": text_parts,
+                    "usage_snapshot": usage_snapshot,
+                }
+            )
+
+        def log_success(log_session, route, stream_state):
+            duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+            log_tracked_proxy_request(
+                log_session,
+                input_format="openai",
+                output_format="openai",
+                endpoint="/v1/completions",
+                client_name=client_name,
+                resolved_route=route,
+                requested_model=payload.model,
+                duration_ms=duration_ms,
+                status_code=200,
+                streamed=True,
+                request_payload=payload,
+                response_payload={
+                    "streamed": True,
+                    "id": stream_state.get("upstream_request_id"),
+                    "model": route.upstream_model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "text": "".join(stream_state.get("text_parts", [])),
+                            "finish_reason": stream_state.get("completion_reason"),
+                        }
+                    ],
+                    "usage": stream_state.get("final_usage"),
+                },
+                usage_snapshot=stream_state.get("usage_snapshot"),
+                request_id=stream_state.get("upstream_request_id"),
+                ttfb_ms=stream_state.get("ttfb_ms"),
+                completion_reason=stream_state.get("completion_reason"),
+            )
+
+        def log_final_error(log_session, route, exc, stream_state):
+            duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+            log_tracked_proxy_request(
+                log_session,
+                input_format="openai",
+                output_format="openai",
+                endpoint="/v1/completions",
+                client_name=client_name,
+                resolved_route=route,
+                requested_model=payload.model,
+                duration_ms=duration_ms,
+                status_code=exc.status_code,
+                streamed=True,
+                request_payload=payload,
+                response_payload=build_logged_error_response(exc),
+                error_message=format_exception_detail_for_log(exc.detail),
+                request_id=stream_state.get("upstream_request_id"),
+                ttfb_ms=stream_state.get("ttfb_ms"),
+            )
+
+        def render_final_error(exc):
+            error_payload = build_logged_error_response(exc)
+            return [
+                f"data: {json.dumps(error_payload, separators=(',', ':'))}\n\n",
+                "data: [DONE]\n\n",
+            ]
 
         return StreamingResponse(
-            event_stream(),
+            stream_tracked_passthrough(
+                session_factory,
+                request,
+                endpoint="/v1/completions",
+                input_format="openai",
+                output_format="openai",
+                requested_model=payload.model,
+                request_payload=payload,
+                resolved_route=resolved_route,
+                provider_secret=provider_secret,
+                attempt_route=attempt_route,
+                log_success=log_success,
+                log_final_error=log_final_error,
+                render_final_error=render_final_error,
+                started_at=started_at,
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    return create_completion(
-        resolved_route.provider,
-        api_key=provider_secret,
-        payload=upstream_payload,
+    def call_upstream():
+        return create_completion(
+            resolved_route.provider,
+            api_key=provider_secret,
+            payload=upstream_payload,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/completions",
+        input_format="openai",
+        output_format="openai",
+        requested_model=payload.model,
+        request_payload=payload,
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        started_at=started_at,
+        extract_usage_snapshot=lambda result: extract_usage_snapshot(upstream_payload, result)
+        if isinstance(result, dict)
+        else None,
+        extract_request_id=lambda result: str(result["id"]) if isinstance(result, dict) and result.get("id") else None,
     )
 
 
@@ -410,6 +618,7 @@ def create_moderations(
         request,
         session,
         payload,
+        endpoint="/v1/moderations",
         capability_detail="Selected provider does not support OpenAI moderations compatibility.",
         provider_call=create_moderation,
         use_model_routing=False,
@@ -430,6 +639,7 @@ def create_image_generations(
         request,
         session,
         payload,
+        endpoint="/v1/images/generations",
         capability_detail="Selected provider does not support OpenAI image generation compatibility.",
         provider_call=create_image_generation,
         require_secret=True,
@@ -447,6 +657,7 @@ async def create_image_edits(
     return await _proxy_openai_multipart_passthrough(
         request,
         session,
+        endpoint="/v1/images/edits",
         capability_detail="Selected provider does not support OpenAI image edit compatibility.",
         provider_call=create_image_edit,
     )
@@ -462,6 +673,7 @@ async def create_image_variations(
     return await _proxy_openai_multipart_passthrough(
         request,
         session,
+        endpoint="/v1/images/variations",
         capability_detail="Selected provider does not support OpenAI image variation compatibility.",
         provider_call=create_image_variation,
     )
@@ -477,6 +689,7 @@ async def create_audio_transcriptions(
     return await _proxy_openai_multipart_passthrough(
         request,
         session,
+        endpoint="/v1/audio/transcriptions",
         capability_detail="Selected provider does not support OpenAI audio transcription compatibility.",
         provider_call=create_audio_transcription,
     )
@@ -492,6 +705,7 @@ async def create_audio_translations(
     return await _proxy_openai_multipart_passthrough(
         request,
         session,
+        endpoint="/v1/audio/translations",
         capability_detail="Selected provider does not support OpenAI audio translation compatibility.",
         provider_call=create_audio_translation,
     )
@@ -509,12 +723,35 @@ def create_audio_speech_route(
         request,
         session,
         payload,
+        endpoint="/v1/audio/speech",
         capability_detail="Selected provider does not support OpenAI text-to-speech compatibility.",
         provider_call=create_audio_speech,
         require_secret=True,
         exclude_defaults=True,
+        build_response_payload=lambda result: {
+            "content_type": result[1],
+            "content_length": len(result[0]),
+        },
+        extract_request_id=lambda _result: None,
     )
     return Response(content=content, media_type=content_type)
+
+
+def extract_openai_response_usage(response_payload: dict) -> UsageSnapshot | None:
+    usage = response_payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0)
+    output_tokens = int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0)
+    total_tokens = int(usage.get("total_tokens", 0) or 0) or input_tokens + output_tokens
+    if input_tokens == 0 and output_tokens == 0 and total_tokens == 0:
+        return None
+    return UsageSnapshot(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        token_source="provider_reported",
+    )
 
 
 @router.post("/v1/responses", response_model=OpenAIResponse)
@@ -525,6 +762,7 @@ def create_responses(
     _: None = Depends(require_proxy_token),
     _modelport_provider: ModelPortProviderHeader = None,
 ) -> OpenAIResponse | StreamingResponse:
+    started_at = time.perf_counter()
     model_routing = resolve_proxy_model_routing(
         request,
         provider_id=payload.provider,
@@ -538,6 +776,9 @@ def create_responses(
         upstream_model=model_routing.upstream_model,
         fallback_provider_ids=payload.fallback_providers,
     )
+    session_factory: sessionmaker[Session] = request.app.state.session_factory
+    client_name = resolve_client_name(request)
+
     if payload.stream:
         if resolved_route.provider.provider_type == "anthropic_compatible":
             anthropic_payload = translate_openai_response_create_to_anthropic(payload)
@@ -548,37 +789,119 @@ def create_responses(
             upstream_payload["stream"] = True
             input_items = build_input_items_from_create_payload(payload)
 
-            def anthropic_response_stream():
-                stream_state: dict[str, object] = {}
+            def attempt_route(route, secret, stream_state):
+                ttfb_ms: int | None = None
+                upstream_request_id: str | None = None
+                translator_state: dict[str, object] = {}
+
                 for line in stream_anthropic_message_events(
-                    resolved_route.provider,
-                    api_key=provider_secret,
+                    route.provider,
+                    api_key=secret,
                     payload=upstream_payload,
                 ):
+                    stream_state["emitted_chunks"] = True
+                    if ttfb_ms is None:
+                        ttfb_ms = max(0, round((time.perf_counter() - started_at) * 1000))
                     for sse_event in translate_anthropic_stream_line_to_openai_response_sse(
                         line,
-                        state=stream_state,
+                        state=translator_state,
                         requested_model=payload.model,
                     ):
                         yield sse_event
 
-                final_response = stream_state.get("final_response")
+                final_response = translator_state.get("final_response")
+                usage_snapshot: UsageSnapshot | None = None
                 if isinstance(final_response, dict):
                     openai_response = OpenAIResponse.model_validate(final_response)
+                    upstream_request_id = openai_response.id
                     save_emulated_response(
                         session,
                         response_id=openai_response.id,
-                        provider_id=resolved_route.provider.slug,
+                        provider_id=route.provider.slug,
                         requested_model=payload.model,
-                        upstream_model=resolved_route.upstream_model,
+                        upstream_model=route.upstream_model,
                         response_body=openai_response.model_dump(),
                         input_items=input_items,
                         status=openai_response.status,
                     )
                     session.commit()
+                    usage_snapshot = extract_openai_response_usage(openai_response.model_dump())
+
+                stream_state.update(
+                    {
+                        "ttfb_ms": ttfb_ms,
+                        "upstream_request_id": upstream_request_id,
+                        "usage_snapshot": usage_snapshot,
+                        "final_response": final_response,
+                    }
+                )
+
+            def log_success(log_session, route, stream_state):
+                duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                log_tracked_proxy_request(
+                    log_session,
+                    input_format="openai",
+                    output_format="openai",
+                    endpoint="/v1/responses",
+                    client_name=client_name,
+                    resolved_route=route,
+                    requested_model=payload.model,
+                    duration_ms=duration_ms,
+                    status_code=200,
+                    streamed=True,
+                    request_payload=payload,
+                    response_payload={
+                        "streamed": True,
+                        "id": stream_state.get("upstream_request_id"),
+                        "model": payload.model,
+                        "response": stream_state.get("final_response"),
+                    },
+                    usage_snapshot=stream_state.get("usage_snapshot"),
+                    request_id=stream_state.get("upstream_request_id"),
+                    ttfb_ms=stream_state.get("ttfb_ms"),
+                )
+
+            def log_final_error(log_session, route, exc, stream_state):
+                duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                log_tracked_proxy_request(
+                    log_session,
+                    input_format="openai",
+                    output_format="openai",
+                    endpoint="/v1/responses",
+                    client_name=client_name,
+                    resolved_route=route,
+                    requested_model=payload.model,
+                    duration_ms=duration_ms,
+                    status_code=exc.status_code,
+                    streamed=True,
+                    request_payload=payload,
+                    response_payload=build_logged_error_response(exc),
+                    error_message=format_exception_detail_for_log(exc.detail),
+                    request_id=stream_state.get("upstream_request_id"),
+                    ttfb_ms=stream_state.get("ttfb_ms"),
+                )
+
+            def render_final_error(exc):
+                logged_error = build_logged_error_response(exc)["error"]
+                return [f"event: error\ndata: {json.dumps({'type': 'error', 'error': logged_error})}\n\n"]
 
             return StreamingResponse(
-                anthropic_response_stream(),
+                stream_tracked_passthrough(
+                    session_factory,
+                    request,
+                    endpoint="/v1/responses",
+                    input_format="openai",
+                    output_format="openai",
+                    requested_model=payload.model,
+                    request_payload=payload,
+                    resolved_route=resolved_route,
+                    provider_secret=provider_secret,
+                    attempt_route=attempt_route,
+                    log_success=log_success,
+                    log_final_error=log_final_error,
+                    render_final_error=render_final_error,
+                    started_at=started_at,
+                ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
@@ -591,31 +914,112 @@ def create_responses(
         upstream_payload["model"] = resolved_route.upstream_model
         upstream_payload["stream"] = True
 
-        def openai_response_stream():
-            stream_state: dict[str, object] = {}
+        def attempt_route(route, secret, stream_state):
+            ttfb_ms: int | None = None
+            passthrough_state: dict[str, object] = {}
             for line in stream_response_events(
-                resolved_route.provider,
-                api_key=provider_secret,
+                route.provider,
+                api_key=secret,
                 payload=upstream_payload,
             ):
-                ingest_passthrough_response_stream_line(line, stream_state)
+                stream_state["emitted_chunks"] = True
+                if ttfb_ms is None:
+                    ttfb_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                ingest_passthrough_response_stream_line(line, passthrough_state)
                 yield line
 
-            response_id = stream_state.get("response_id")
-            status = stream_state.get("status")
-            if isinstance(response_id, str) and isinstance(status, str):
+            response_id = passthrough_state.get("response_id")
+            status_value = passthrough_state.get("status")
+            final_response = passthrough_state.get("final_response")
+            usage_snapshot: UsageSnapshot | None = None
+            if isinstance(final_response, dict):
+                usage_snapshot = extract_openai_response_usage(final_response)
+            if isinstance(response_id, str) and isinstance(status_value, str):
                 save_passthrough_response(
                     session,
                     response_id=response_id,
-                    provider_id=resolved_route.provider.slug,
+                    provider_id=route.provider.slug,
                     requested_model=payload.model,
-                    upstream_model=resolved_route.upstream_model,
-                    status=status,
+                    upstream_model=route.upstream_model,
+                    status=status_value,
                 )
                 session.commit()
 
+            stream_state.update(
+                {
+                    "ttfb_ms": ttfb_ms,
+                    "upstream_request_id": response_id if isinstance(response_id, str) else None,
+                    "usage_snapshot": usage_snapshot,
+                    "final_response": final_response,
+                }
+            )
+
+        def log_success(log_session, route, stream_state):
+            duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+            log_tracked_proxy_request(
+                log_session,
+                input_format="openai",
+                output_format="openai",
+                endpoint="/v1/responses",
+                client_name=client_name,
+                resolved_route=route,
+                requested_model=payload.model,
+                duration_ms=duration_ms,
+                status_code=200,
+                streamed=True,
+                request_payload=payload,
+                response_payload={
+                    "streamed": True,
+                    "id": stream_state.get("upstream_request_id"),
+                    "model": payload.model,
+                    "response": stream_state.get("final_response"),
+                },
+                usage_snapshot=stream_state.get("usage_snapshot"),
+                request_id=stream_state.get("upstream_request_id"),
+                ttfb_ms=stream_state.get("ttfb_ms"),
+            )
+
+        def log_final_error(log_session, route, exc, stream_state):
+            duration_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+            log_tracked_proxy_request(
+                log_session,
+                input_format="openai",
+                output_format="openai",
+                endpoint="/v1/responses",
+                client_name=client_name,
+                resolved_route=route,
+                requested_model=payload.model,
+                duration_ms=duration_ms,
+                status_code=exc.status_code,
+                streamed=True,
+                request_payload=payload,
+                response_payload=build_logged_error_response(exc),
+                error_message=format_exception_detail_for_log(exc.detail),
+                request_id=stream_state.get("upstream_request_id"),
+                ttfb_ms=stream_state.get("ttfb_ms"),
+            )
+
+        def render_final_error(exc):
+            logged_error = build_logged_error_response(exc)["error"]
+            return [f"event: error\ndata: {json.dumps({'type': 'error', 'error': logged_error})}\n\n"]
+
         return StreamingResponse(
-            openai_response_stream(),
+            stream_tracked_passthrough(
+                session_factory,
+                request,
+                endpoint="/v1/responses",
+                input_format="openai",
+                output_format="openai",
+                requested_model=payload.model,
+                request_payload=payload,
+                resolved_route=resolved_route,
+                provider_secret=provider_secret,
+                attempt_route=attempt_route,
+                log_success=log_success,
+                log_final_error=log_final_error,
+                render_final_error=render_final_error,
+                started_at=started_at,
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -626,27 +1030,46 @@ def create_responses(
             anthropic_payload,
             upstream_model=resolved_route.upstream_model,
         )
-        upstream_response = create_anthropic_message(
-            resolved_route.provider,
-            api_key=provider_secret,
-            payload=upstream_payload,
-        )
-        response_dict = translate_anthropic_message_to_openai_response(
-            upstream_response,
-            requested_model=payload.model,
-        )
-        openai_response = OpenAIResponse.model_validate(response_dict)
-        save_emulated_response(
+
+        def call_upstream():
+            upstream_response = create_anthropic_message(
+                resolved_route.provider,
+                api_key=provider_secret,
+                payload=upstream_payload,
+            )
+            response_dict = translate_anthropic_message_to_openai_response(
+                upstream_response,
+                requested_model=payload.model,
+            )
+            openai_response = OpenAIResponse.model_validate(response_dict)
+            save_emulated_response(
+                session,
+                response_id=openai_response.id,
+                provider_id=resolved_route.provider.slug,
+                requested_model=payload.model,
+                upstream_model=resolved_route.upstream_model,
+                response_body=openai_response.model_dump(),
+                input_items=build_input_items_from_create_payload(payload),
+                status=openai_response.status,
+            )
+            session.commit()
+            return openai_response
+
+        openai_response = execute_tracked_passthrough(
+            request,
             session,
-            response_id=openai_response.id,
-            provider_id=resolved_route.provider.slug,
+            endpoint="/v1/responses",
+            input_format="openai",
+            output_format="openai",
             requested_model=payload.model,
-            upstream_model=resolved_route.upstream_model,
-            response_body=openai_response.model_dump(),
-            input_items=build_input_items_from_create_payload(payload),
-            status=openai_response.status,
+            request_payload=payload,
+            resolved_route=resolved_route,
+            call_upstream=call_upstream,
+            started_at=started_at,
+            build_response_payload=lambda response: response.model_dump(),
+            extract_usage_snapshot=lambda response: extract_openai_response_usage(response.model_dump()),
+            extract_request_id=lambda response: response.id,
         )
-        session.commit()
         return openai_response
 
     upstream_payload = payload.model_dump(
@@ -656,22 +1079,40 @@ def create_responses(
     )
     upstream_payload.pop("stream", None)
     upstream_payload["model"] = resolved_route.upstream_model
-    response_dict = create_response(
-        resolved_route.provider,
-        api_key=provider_secret,
-        payload=upstream_payload,
-    )
-    openai_response = OpenAIResponse.model_validate(response_dict)
-    save_passthrough_response(
+
+    def call_upstream():
+        response_dict = create_response(
+            resolved_route.provider,
+            api_key=provider_secret,
+            payload=upstream_payload,
+        )
+        openai_response = OpenAIResponse.model_validate(response_dict)
+        save_passthrough_response(
+            session,
+            response_id=openai_response.id,
+            provider_id=resolved_route.provider.slug,
+            requested_model=payload.model,
+            upstream_model=resolved_route.upstream_model,
+            status=openai_response.status,
+        )
+        session.commit()
+        return openai_response
+
+    return execute_tracked_passthrough(
+        request,
         session,
-        response_id=openai_response.id,
-        provider_id=resolved_route.provider.slug,
+        endpoint="/v1/responses",
+        input_format="openai",
+        output_format="openai",
         requested_model=payload.model,
-        upstream_model=resolved_route.upstream_model,
-        status=openai_response.status,
+        request_payload=payload,
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        started_at=started_at,
+        build_response_payload=lambda response: response.model_dump(),
+        extract_usage_snapshot=lambda response: extract_openai_response_usage(response.model_dump()),
+        extract_request_id=lambda response: response.id,
     )
-    session.commit()
-    return openai_response
 
 
 @router.get("/v1/responses/{response_id}", response_model=OpenAIResponse)
@@ -683,15 +1124,31 @@ def retrieve_response(
     _modelport_provider: ModelPortProviderHeader = None,
 ) -> OpenAIResponse:
     resource, resolved_route, provider_secret = resolve_stored_response_route(session, response_id)
+    request_payload = {"response_id": response_id}
 
     if resource.storage_kind == PROXY_EMULATED:
-        response_dict = retrieve_emulated_response(session, response_id)
-        if response_dict is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response resource '{response_id}' was not found.",
-            )
-        return OpenAIResponse.model_validate(response_dict)
+        def call_upstream():
+            response_dict = retrieve_emulated_response(session, response_id)
+            if response_dict is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Response resource '{response_id}' was not found.",
+                )
+            return OpenAIResponse.model_validate(response_dict)
+
+        return execute_tracked_passthrough(
+            request,
+            session,
+            endpoint="/v1/responses/{response_id}",
+            input_format="openai",
+            output_format="openai",
+            requested_model=resource.requested_model,
+            request_payload=request_payload,
+            resolved_route=resolved_route,
+            call_upstream=call_upstream,
+            build_response_payload=lambda response: response.model_dump(),
+            extract_request_id=lambda response: response.id,
+        )
 
     if resolved_route.provider.provider_type == "anthropic_compatible":
         raise HTTPException(
@@ -699,12 +1156,27 @@ def retrieve_response(
             detail="Selected provider does not support OpenAI responses lifecycle compatibility.",
         )
 
-    return OpenAIResponse.model_validate(
-        get_response(
-            resolved_route.provider,
-            api_key=provider_secret,
-            response_id=response_id,
+    def call_upstream():
+        return OpenAIResponse.model_validate(
+            get_response(
+                resolved_route.provider,
+                api_key=provider_secret,
+                response_id=response_id,
+            )
         )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/responses/{response_id}",
+        input_format="openai",
+        output_format="openai",
+        requested_model=resource.requested_model,
+        request_payload=request_payload,
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        build_response_payload=lambda response: response.model_dump(),
+        extract_request_id=lambda response: response.id,
     )
 
 
@@ -720,15 +1192,34 @@ def retrieve_response_input_items(
     _modelport_provider: ModelPortProviderHeader = None,
 ) -> dict:
     resource, resolved_route, provider_secret = resolve_stored_response_route(session, response_id)
+    request_payload = {
+        "response_id": response_id,
+        "after": after,
+        "limit": limit,
+        "order": order,
+    }
 
     if resource.storage_kind == PROXY_EMULATED:
-        input_items = list_input_items(session, response_id)
-        if input_items is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response resource '{response_id}' was not found.",
-            )
-        return input_items
+        def call_upstream():
+            input_items = list_input_items(session, response_id)
+            if input_items is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Response resource '{response_id}' was not found.",
+                )
+            return input_items
+
+        return execute_tracked_passthrough(
+            request,
+            session,
+            endpoint="/v1/responses/{response_id}/input_items",
+            input_format="openai",
+            output_format="openai",
+            requested_model=resource.requested_model,
+            request_payload=request_payload,
+            resolved_route=resolved_route,
+            call_upstream=call_upstream,
+        )
 
     if resolved_route.provider.provider_type == "anthropic_compatible":
         raise HTTPException(
@@ -736,13 +1227,26 @@ def retrieve_response_input_items(
             detail="Selected provider does not support OpenAI responses lifecycle compatibility.",
         )
 
-    return list_response_input_items(
-        resolved_route.provider,
-        api_key=provider_secret,
-        response_id=response_id,
-        after=after,
-        limit=limit,
-        order=order,
+    def call_upstream():
+        return list_response_input_items(
+            resolved_route.provider,
+            api_key=provider_secret,
+            response_id=response_id,
+            after=after,
+            limit=limit,
+            order=order,
+        )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/responses/{response_id}/input_items",
+        input_format="openai",
+        output_format="openai",
+        requested_model=resource.requested_model,
+        request_payload=request_payload,
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
     )
 
 
@@ -755,17 +1259,33 @@ def cancel_stored_response(
     _modelport_provider: ModelPortProviderHeader = None,
 ) -> OpenAIResponse:
     resource, resolved_route, provider_secret = resolve_stored_response_route(session, response_id)
+    request_payload = {"response_id": response_id}
 
     if resource.storage_kind == PROXY_EMULATED:
-        try:
-            response_dict = cancel_emulated_response(session, response_id)
-        except KeyError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response resource '{response_id}' was not found.",
-            ) from exc
-        session.commit()
-        return OpenAIResponse.model_validate(response_dict)
+        def call_upstream():
+            try:
+                response_dict = cancel_emulated_response(session, response_id)
+            except KeyError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Response resource '{response_id}' was not found.",
+                ) from exc
+            session.commit()
+            return OpenAIResponse.model_validate(response_dict)
+
+        return execute_tracked_passthrough(
+            request,
+            session,
+            endpoint="/v1/responses/{response_id}/cancel",
+            input_format="openai",
+            output_format="openai",
+            requested_model=resource.requested_model,
+            request_payload=request_payload,
+            resolved_route=resolved_route,
+            call_upstream=call_upstream,
+            build_response_payload=lambda response: response.model_dump(),
+            extract_request_id=lambda response: response.id,
+        )
 
     if resolved_route.provider.provider_type == "anthropic_compatible":
         raise HTTPException(
@@ -773,12 +1293,27 @@ def cancel_stored_response(
             detail="Selected provider does not support OpenAI responses lifecycle compatibility.",
         )
 
-    return OpenAIResponse.model_validate(
-        cancel_response(
-            resolved_route.provider,
-            api_key=provider_secret,
-            response_id=response_id,
+    def call_upstream():
+        return OpenAIResponse.model_validate(
+            cancel_response(
+                resolved_route.provider,
+                api_key=provider_secret,
+                response_id=response_id,
+            )
         )
+
+    return execute_tracked_passthrough(
+        request,
+        session,
+        endpoint="/v1/responses/{response_id}/cancel",
+        input_format="openai",
+        output_format="openai",
+        requested_model=resource.requested_model,
+        request_payload=request_payload,
+        resolved_route=resolved_route,
+        call_upstream=call_upstream,
+        build_response_payload=lambda response: response.model_dump(),
+        extract_request_id=lambda response: response.id,
     )
 
 

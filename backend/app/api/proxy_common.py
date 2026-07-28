@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import time
 from collections.abc import Callable, Generator, Iterator
 from typing import Annotated, Any, TypeVar
 
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker, sessionmaker
 from sqlalchemy import select
 
 from app.database import Provider, ProviderCredential, ProviderHealthCheck
-from app.errors.upstream import format_exception_detail_for_log
+from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.routing.model_prefixes import (
     ResolvedModelSelection,
     infer_provider_from_model,
@@ -24,7 +25,7 @@ from app.security import EncryptionConfigurationError, decrypt_secret
 from app.tracking.cost_service import calculate_estimated_cost_usd
 from app.tracking.io_logging import io_log_kwargs
 from app.tracking.log_service import create_api_request_log
-from app.tracking.pricing import find_pricing_override
+from app.tracking.pricing import resolve_pricing_override
 from app.tracking.usage_service import UsageSnapshot
 
 T = TypeVar("T")
@@ -55,11 +56,13 @@ def get_session(request: Request) -> Session:
         yield session
 
 
-def require_proxy_token(
+def _require_bearer_token(
     request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None,
+    *,
+    token_env_name: str,
+    invalid_detail: str,
 ) -> None:
-    token_env_name = request.app.state.config.security.modelport_token
     expected_token = os.environ.get(token_env_name)
     if not expected_token:
         raise HTTPException(
@@ -77,8 +80,32 @@ def require_proxy_token(
     if not presented_token or not hmac.compare_digest(presented_token, expected_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid proxy token.",
+            detail=invalid_detail,
         )
+
+
+def require_proxy_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> None:
+    _require_bearer_token(
+        request,
+        credentials,
+        token_env_name=request.app.state.config.security.modelport_token,
+        invalid_detail="Invalid proxy token.",
+    )
+
+
+def require_dashboard_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> None:
+    _require_bearer_token(
+        request,
+        credentials,
+        token_env_name=request.app.state.config.security.dashboard_token,
+        invalid_detail="Invalid dashboard token.",
+    )
 
 
 def resolve_credential_secret(credential: ProviderCredential | None) -> str | None:
@@ -283,10 +310,11 @@ def log_tracked_proxy_request(
         output_tokens = usage_snapshot.output_tokens
         total_tokens = usage_snapshot.total_tokens
         token_source = usage_snapshot.token_source
-        pricing_override = find_pricing_override(
+        pricing_override = resolve_pricing_override(
             session,
-            provider_id=resolved_route.provider.id,
-            model=resolved_route.upstream_model,
+            provider_id=resolved_route.provider.slug,
+            resolved_model=resolved_route.upstream_model,
+            requested_model=requested_model,
         )
         estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
             pricing_override,
@@ -427,6 +455,114 @@ def stream_tracked_proxy_routes(
             return
 
 
+def execute_tracked_passthrough(
+    request: Request,
+    session: Session,
+    *,
+    endpoint: str,
+    input_format: str,
+    output_format: str,
+    requested_model: str,
+    request_payload: Any,
+    resolved_route: ResolvedProviderRoute,
+    call_upstream: Callable[[], T],
+    started_at: float | None = None,
+    build_response_payload: Callable[[T], Any] | None = None,
+    extract_usage_snapshot: Callable[[T], UsageSnapshot | None] | None = None,
+    extract_request_id: Callable[[T], str | None] | None = None,
+    streamed: bool = False,
+    ttfb_ms: int | None = None,
+    completion_reason: str | None = None,
+) -> T:
+    started = started_at if started_at is not None else time.perf_counter()
+    client_name = resolve_client_name(request)
+
+    try:
+        result = call_upstream()
+        response_payload = build_response_payload(result) if build_response_payload else result
+        usage_snapshot = extract_usage_snapshot(result) if extract_usage_snapshot else None
+        request_id = extract_request_id(result) if extract_request_id else None
+        duration_ms = max(0, round((time.perf_counter() - started) * 1000))
+        log_tracked_proxy_request(
+            session,
+            input_format=input_format,
+            output_format=output_format,
+            endpoint=endpoint,
+            client_name=client_name,
+            resolved_route=resolved_route,
+            requested_model=requested_model,
+            duration_ms=duration_ms,
+            status_code=200,
+            streamed=streamed,
+            request_payload=request_payload,
+            response_payload=response_payload,
+            usage_snapshot=usage_snapshot,
+            request_id=request_id,
+            ttfb_ms=ttfb_ms,
+            completion_reason=completion_reason,
+        )
+        return result
+    except HTTPException as exc:
+        record_provider_proxy_failure(
+            session,
+            provider_id=resolved_route.provider.id,
+            exc=exc,
+        )
+        duration_ms = max(0, round((time.perf_counter() - started) * 1000))
+        log_tracked_proxy_request(
+            session,
+            input_format=input_format,
+            output_format=output_format,
+            endpoint=endpoint,
+            client_name=client_name,
+            resolved_route=resolved_route,
+            requested_model=requested_model,
+            duration_ms=duration_ms,
+            status_code=exc.status_code,
+            streamed=streamed,
+            request_payload=request_payload,
+            response_payload=build_logged_error_response(exc),
+            error_message=format_exception_detail_for_log(exc.detail),
+            request_id=None,
+            ttfb_ms=ttfb_ms,
+        )
+        raise
+
+
+def stream_tracked_passthrough(
+    session_factory: sessionmaker[Session],
+    request: Request,
+    *,
+    endpoint: str,
+    input_format: str,
+    output_format: str,
+    requested_model: str,
+    request_payload: Any,
+    resolved_route: ResolvedProviderRoute,
+    provider_secret: str | None,
+    attempt_route: Callable[
+        [ResolvedProviderRoute, str | None, dict[str, Any]],
+        Generator[str, None, None],
+    ],
+    log_success: Callable[[Session, ResolvedProviderRoute, dict[str, Any]], None],
+    log_final_error: Callable[[Session, ResolvedProviderRoute, HTTPException, dict[str, Any]], None],
+    render_final_error: Callable[[HTTPException], list[str]],
+    started_at: float | None = None,
+) -> Generator[str, None, None]:
+    yield from stream_tracked_proxy_routes(
+        session_factory,
+        [resolved_route],
+        attempt_route=lambda route, secret, route_index, stream_state: attempt_route(
+            route,
+            secret,
+            stream_state,
+        ),
+        log_success=log_success,
+        log_final_error=log_final_error,
+        render_final_error=render_final_error,
+    )
+
+
 __all__ = [
     "ModelPortProviderHeader",
     "MODELPORT_PROVIDER_HEADER",
@@ -434,12 +570,14 @@ __all__ = [
     "build_upstream_payload",
     "ensure_provider_secret_available",
     "execute_tracked_non_stream_proxy_routes",
+    "execute_tracked_passthrough",
     "get_session",
     "log_tracked_proxy_request",
     "provider_supports_anonymous_access",
     "persist_provider_health_status",
     "classify_provider_failure_status",
     "record_provider_proxy_failure",
+    "require_dashboard_token",
     "require_proxy_token",
     "resolve_client_name",
     "resolve_credential_secret",
@@ -449,5 +587,6 @@ __all__ = [
     "resolve_proxy_model_routing",
     "resolve_requested_provider",
     "should_try_next_provider_route",
+    "stream_tracked_passthrough",
     "stream_tracked_proxy_routes",
 ]
