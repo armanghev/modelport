@@ -4,6 +4,7 @@ server:
 
 security:
   modelport_token: "MODELPORT_TOKEN"
+  dashboard_token: "MODELPORT_DASHBOARD_TOKEN"
 
 database:
   url: "sqlite:///./data/modelport.db"

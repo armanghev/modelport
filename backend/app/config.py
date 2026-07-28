@@ -16,6 +16,7 @@ ProviderType = Literal[
 
 class SecurityConfig(BaseModel):
     modelport_token: str = "MODELPORT_TOKEN"
+    dashboard_token: str = "MODELPORT_DASHBOARD_TOKEN"
 
 
 class DatabaseConfig(BaseModel):

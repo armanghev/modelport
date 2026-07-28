@@ -4,11 +4,22 @@ export function buildBackendUrl(path: string) {
   return `${backendBaseUrl}${path}`;
 }
 
+function dashboardAuthHeaders(): HeadersInit {
+  const token = process.env.NEXT_PUBLIC_MODELPORT_DASHBOARD_TOKEN;
+  if (!token) {
+    throw new Error("Set NEXT_PUBLIC_MODELPORT_DASHBOARD_TOKEN in dashboard/.env");
+  }
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
+
 export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(buildBackendUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...dashboardAuthHeaders(),
       ...(init?.headers ?? {}),
     },
     cache: "no-store",

@@ -14,6 +14,7 @@ from app.analytics_service import build_provider_details, list_requests, request
 from app.api.proxy_common import (
     get_session,
     provider_supports_anonymous_access,
+    require_dashboard_token,
     resolve_credential_secret,
 )
 from app.database import (
@@ -67,7 +68,11 @@ from app.schemas.admin import (
 )
 from app.security import EncryptionConfigurationError, decrypt_secret, encrypt_secret
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_dashboard_token)],
+)
 
 _TRACKING_SETTING_KEYS = frozenset({"io_logging", "retention_days"})
 

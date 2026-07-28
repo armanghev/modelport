@@ -9,7 +9,7 @@ from app.analytics_service import (
     build_overview_payload,
     build_requests_payload,
 )
-from app.api.proxy_common import get_session
+from app.api.proxy_common import get_session, require_dashboard_token
 from app.schemas.analytics import (
     CostsAnalyticsResponse,
     ModelsAnalyticsResponse,
@@ -17,7 +17,11 @@ from app.schemas.analytics import (
     RequestsAnalyticsResponse,
 )
 
-router = APIRouter(prefix="/analytics", tags=["analytics"])
+router = APIRouter(
+    prefix="/analytics",
+    tags=["analytics"],
+    dependencies=[Depends(require_dashboard_token)],
+)
 
 
 @router.get("/overview", response_model=OverviewAnalyticsResponse)
