@@ -27,8 +27,8 @@ Working today:
 - Request normalization between Anthropic and OpenAI chat shapes for the current OpenAI-compatible upstream path, including basic tool calls/tool results.
 - Provider routing by request body `provider`, `fallback_providers`, or `X-ModelPort-Provider`.
 - Seeded provider config for OpenAI, Anthropic, Gemini OpenAI compatibility, OpenRouter, and Ollama.
-- SQLite-backed request logs, provider settings, credentials metadata, pricing overrides, provider health snapshots, and model metadata.
-- Admin and analytics APIs for dashboard pages.
+- SQLite-backed request logs across all proxied routes (chat, embeddings, images, audio, responses, batches, files, and more), provider settings, credentials metadata, pricing overrides, provider health snapshots, and model metadata.
+- Admin and analytics APIs for dashboard pages, gated by a dedicated dashboard bearer token (`MODELPORT_DASHBOARD_TOKEN`).
 - Dashboard pages for overview, requests, models, providers, costs, and settings.
 - Model directory metadata from OpenRouter, Gemini native model listing, local providers, pricing catalog entries, and observed usage.
 - Pricing seed from `pricing_catalog.yaml`.
@@ -75,7 +75,7 @@ Repository layout:
 - `pricing_catalog.yaml`: model pricing seed data.
 - `cli/`: interactive agent configuration package (`modelport-configure`).
 - `bin/`: repository convenience scripts (including `./bin/modelport-configure`).
-- `docs/`: Fumadocs documentation site.
+- `docs/`: plain markdown documentation (see `docs/README.md` for the index).
 
 ## Quick Start
 
@@ -85,10 +85,11 @@ Create local environment variables:
 cp .env.example .env
 ```
 
-At minimum, set:
+At minimum, set the proxy token and the dashboard token:
 
 ```bash
 MODELPORT_TOKEN=dev-modelport-token
+MODELPORT_DASHBOARD_TOKEN=dev-dashboard-token
 ```
 
 Then add whichever provider keys you want to use:
@@ -162,10 +163,11 @@ pnpm dev
 
 Open `http://localhost:3000`.
 
-Point the dashboard at the HTTPS backend (default if unset is still HTTP):
+Configure the dashboard in `dashboard/.env` — the backend URL (default if unset is still HTTP) and the dashboard token, which must match `MODELPORT_DASHBOARD_TOKEN` in the root `.env`:
 
 ```bash
 NEXT_PUBLIC_MODELPORT_BACKEND_URL=https://127.0.0.1:13243
+NEXT_PUBLIC_MODELPORT_DASHBOARD_TOKEN=dev-dashboard-token
 ```
 
 ## Using the Proxy
@@ -299,7 +301,7 @@ Main pages:
 - Models: provider model directory with metadata, pricing, modality, context, usage, and provider filters.
 - Providers: provider health and routing details.
 - Costs: estimated spend over time, by provider/model, and high-cost recent requests.
-- Settings: providers, credentials, pricing, tracking toggles, theme, and refresh interval.
+- Settings: providers, credentials, pricing overrides (add, edit, delete), tracking toggles, theme, and refresh interval.
 
 I/O logging is disabled by default. It can be enabled in Settings or from the Requests page when inspecting a request. When enabled, request and response bodies are stored in SQLite, so treat the local database as sensitive.
 
@@ -314,10 +316,13 @@ server:
 
 security:
   modelport_token: "MODELPORT_TOKEN"
+  dashboard_token: "MODELPORT_DASHBOARD_TOKEN"
 
 database:
   url: "sqlite:///./data/modelport.db"
 ```
+
+Note: the backend's listen address comes from the uvicorn command-line flags; the `server:` block is read by the `modelport-configure` CLI for its default base URL.
 
 Provider entries include:
 
@@ -369,6 +374,7 @@ Useful backend modules:
 ModelPort is designed as a local development tool. Do not expose the backend directly to an untrusted network.
 
 - Keep real provider API keys out of client tools; clients should only receive the local ModelPort URL and `MODELPORT_TOKEN`.
+- The admin and analytics APIs (including credential reveal) require a separate `MODELPORT_DASHBOARD_TOKEN` bearer token; the proxy token is not accepted there.
 - Raw provider keys from `.env` are not displayed in the dashboard.
 - Database-stored credentials are encrypted using `PROXY_ENCRYPTION_KEY`.
 - Request/response body logging can capture prompts, completions, tool inputs, and other sensitive data.
