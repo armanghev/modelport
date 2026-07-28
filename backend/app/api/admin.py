@@ -826,6 +826,16 @@ def update_pricing_override(
     return serialize_pricing(record)
 
 
+@router.delete("/pricing/{pricing_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_pricing_override(
+    pricing_id: str,
+    session: Session = Depends(get_session),
+) -> None:
+    record = require_pricing_override(session, pricing_id)
+    session.delete(record)
+    session.commit()
+
+
 @router.patch("/settings/tracking")
 def update_tracking_settings(
     payload: TrackingSettings,

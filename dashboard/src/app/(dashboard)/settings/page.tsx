@@ -17,6 +17,10 @@ import {
 } from "@phosphor-icons/react";
 
 import { ProviderModal } from "@/components/dashboard/settings/add-provider-modal";
+import {
+  PricingOverrideModal,
+  type PricingOverrideDraft,
+} from "@/components/dashboard/settings/pricing-override-modal";
 import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,20 +37,24 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
+  createPricingOverride,
   createProvider,
   createProviderCredential,
+  deletePricingOverride,
   deleteProvider,
   deleteProviderCredential,
   fetchAdminSettings,
   mapAdminSettingsToUi,
   revealCredentialSecret,
   updateAppearanceSettings,
+  updatePricingOverride,
   updateProvider,
   updateProviderCredential,
   patchTrackingSettings,
   type ProviderConfigDraft,
   type ProviderConfigRow,
 } from "@/lib/admin-api";
+import type { PricingEntry } from "@/lib/dashboard-types";
 
 const themeOptions = [
   { value: "light", label: "Light", icon: SunDimIcon },
@@ -117,7 +125,7 @@ function parseRefreshInterval(value: string) {
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const [apiKeys, setApiKeys] = useState<ProviderConfigRow[]>([]);
-  const [pricingTable, setPricingTable] = useState<Array<{ provider: string; model: string; inputPer1kUsd: number; outputPer1kUsd: number }>>([]);
+  const [pricingTable, setPricingTable] = useState<PricingEntry[]>([]);
   const [tracking, setTracking] = useState<
     Array<{ id: string; label: string; description: string; enabled: boolean }>
   >([]);
@@ -127,6 +135,8 @@ export default function SettingsPage() {
   const [editingProvider, setEditingProvider] = useState<ProviderConfigRow | null>(null);
   const [addProviderOpen, setAddProviderOpen] = useState(false);
   const [openMenuProvider, setOpenMenuProvider] = useState<string | null>(null);
+  const [addPricingOpen, setAddPricingOpen] = useState(false);
+  const [editingPricing, setEditingPricing] = useState<PricingEntry | null>(null);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState("30s");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -135,11 +145,22 @@ export default function SettingsPage() {
   const selectedThemeOption =
     themeOptions.find((option) => option.value === selectedTheme) ?? themeOptions[2];
 
-  const pricingPreview = useMemo(() => pricingTable.slice(0, 4), [pricingTable]);
   const apiKeyLookup = useMemo(
     () => Object.fromEntries(apiKeys.map((item) => [item.id, item])),
     [apiKeys],
   );
+  const pricingProviders = useMemo(() => {
+    const seen = new Map<string, { id: string; label: string }>();
+    for (const row of apiKeys) {
+      if (!seen.has(row.providerUuid)) {
+        seen.set(row.providerUuid, {
+          id: row.providerUuid,
+          label: `${row.provider} (${row.slug})`,
+        });
+      }
+    }
+    return [...seen.values()];
+  }, [apiKeys]);
 
   const loadSettings = useCallback(async () => {
     const payload = await fetchAdminSettings();
@@ -336,6 +357,71 @@ export default function SettingsPage() {
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to update provider configuration.",
+      );
+    }
+  };
+
+  const handleAddPricing = async (draft: PricingOverrideDraft) => {
+    try {
+      await createPricingOverride({
+        provider_id: draft.providerId,
+        model: draft.model,
+        input_per_1m_usd: draft.inputPer1mUsd,
+        output_per_1m_usd: draft.outputPer1mUsd,
+        currency: draft.currency,
+        enabled: draft.enabled,
+      });
+      await loadSettings();
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to add pricing override.",
+      );
+    }
+  };
+
+  const handleEditPricing = async (draft: PricingOverrideDraft) => {
+    if (!editingPricing) {
+      return;
+    }
+
+    try {
+      await updatePricingOverride(editingPricing.id, {
+        provider_id: draft.providerId,
+        model: draft.model,
+        input_per_1m_usd: draft.inputPer1mUsd,
+        output_per_1m_usd: draft.outputPer1mUsd,
+        currency: draft.currency,
+        enabled: draft.enabled,
+      });
+      await loadSettings();
+      setEditingPricing(null);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to update pricing override.",
+      );
+    }
+  };
+
+  const handleRemovePricing = async (entry: PricingEntry) => {
+    const confirmed = window.confirm(
+      `Remove pricing for ${entry.provider} / ${entry.model}? This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await deletePricingOverride(entry.id);
+      if (editingPricing?.id === entry.id) {
+        setEditingPricing(null);
+      }
+      await loadSettings();
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to remove pricing override.",
       );
     }
   };
@@ -583,30 +669,109 @@ export default function SettingsPage() {
         title="Pricing table"
         description="Estimated pricing used when provider billing data is unavailable."
       >
-        <div className="overflow-hidden rounded-xl border border-border-subtle">
+        <div className="max-h-[28rem] overflow-auto rounded-xl border border-border-subtle">
           <table className="w-full border-collapse text-left">
-            <thead>
+            <thead className="sticky top-0 z-10">
               <tr className="bg-bg-card-muted text-xs text-text-secondary">
                 <th className="px-4 py-3 font-medium">Provider</th>
                 <th className="px-4 py-3 font-medium">Model</th>
                 <th className="px-4 py-3 font-medium">Input / 1M</th>
                 <th className="px-4 py-3 font-medium">Output / 1M</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {pricingPreview.map((entry) => (
-                <tr
-                  key={`${entry.provider}-${entry.model}`}
-                  className="border-t border-border-subtle text-sm text-text-secondary"
-                >
-                  <td className="px-4 py-3 text-text-primary">{entry.provider}</td>
-                  <td className="px-4 py-3">{entry.model}</td>
-                  <td className="px-4 py-3">${(entry.inputPer1kUsd * 1000).toFixed(2)}</td>
-                  <td className="px-4 py-3">${(entry.outputPer1kUsd * 1000).toFixed(2)}</td>
+              {pricingTable.length === 0 ? (
+                <tr className="border-t border-border-subtle text-sm text-text-secondary">
+                  <td className="px-4 py-6" colSpan={6}>
+                    No pricing overrides yet. Add rates for models you want cost estimates for.
+                  </td>
                 </tr>
-              ))}
+              ) : (
+                pricingTable.map((entry) => (
+                  <tr
+                    key={entry.id}
+                    className="border-t border-border-subtle text-sm text-text-secondary"
+                  >
+                    <td className="px-4 py-3 text-text-primary">{entry.provider}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{entry.model}</td>
+                    <td className="px-4 py-3">${entry.inputPer1mUsd.toFixed(2)}</td>
+                    <td className="px-4 py-3">${entry.outputPer1mUsd.toFixed(2)}</td>
+                    <td className="px-4 py-3">
+                      {entry.enabled ? (
+                        <span className="text-text-primary">Enabled</span>
+                      ) : (
+                        <span className="text-text-muted">Disabled</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="h-8 w-8 rounded-lg text-text-secondary"
+                          onClick={() => setEditingPricing(entry)}
+                          aria-label={`Edit pricing for ${entry.model}`}
+                        >
+                          <PencilSimpleIcon size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="h-8 w-8 rounded-lg text-accent-red"
+                          onClick={() => void handleRemovePricing(entry)}
+                          aria-label={`Delete pricing for ${entry.model}`}
+                        >
+                          <TrashIcon size={14} />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-4">
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="h-10 rounded-lg border-border-default px-4 text-sm"
+            onClick={() => setAddPricingOpen(true)}
+            disabled={pricingProviders.length === 0}
+          >
+            Add pricing
+          </Button>
+          <PricingOverrideModal
+            key={`add-pricing-${addPricingOpen ? "open" : "closed"}`}
+            mode="add"
+            open={addPricingOpen}
+            onOpenChange={setAddPricingOpen}
+            onSubmit={(draft) => void handleAddPricing(draft)}
+            providers={pricingProviders}
+          />
+          {editingPricing ? (
+            <PricingOverrideModal
+              key={`edit-pricing-${editingPricing.id}`}
+              mode="edit"
+              open
+              onOpenChange={(open) => {
+                if (!open) {
+                  setEditingPricing(null);
+                }
+              }}
+              onSubmit={(draft) => void handleEditPricing(draft)}
+              providers={pricingProviders}
+              initialEntry={editingPricing}
+            />
+          ) : null}
         </div>
       </SettingsCard>
 

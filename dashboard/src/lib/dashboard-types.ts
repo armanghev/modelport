@@ -139,10 +139,15 @@ export interface CostBucket {
 }
 
 export interface PricingEntry {
+  id: string;
+  providerId: string;
   provider: string;
+  providerSlug: string | null;
   model: string;
-  inputPer1kUsd: number;
-  outputPer1kUsd: number;
+  inputPer1mUsd: number;
+  outputPer1mUsd: number;
+  currency: string;
+  enabled: boolean;
 }
 
 export interface SettingsTrackingOption {

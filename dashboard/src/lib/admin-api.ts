@@ -273,10 +273,15 @@ export function mapAdminSettingsToUi(payload: AdminSettingsPayload): {
       const provider = providerByUuid.get(entry.provider_id);
       const slug = entry.provider_slug || provider?.slug || entry.provider_id;
       return {
+        id: entry.id,
+        providerId: entry.provider_id,
         provider: provider?.display_name ?? titleizeProvider(slug),
+        providerSlug: entry.provider_slug ?? provider?.slug ?? null,
         model: entry.model,
-        inputPer1kUsd: entry.input_per_1m_usd / 1000,
-        outputPer1kUsd: entry.output_per_1m_usd / 1000,
+        inputPer1mUsd: entry.input_per_1m_usd,
+        outputPer1mUsd: entry.output_per_1m_usd,
+        currency: entry.currency,
+        enabled: entry.enabled,
       };
     }),
     tracking: Object.entries(payload.settings.tracking)
@@ -386,6 +391,43 @@ export async function deleteProviderCredential(credentialId: string) {
 
 export async function deleteProvider(providerUuid: string) {
   return fetchJson<void>(`/admin/providers/${providerUuid}`, {
+    method: "DELETE",
+  });
+}
+
+export async function createPricingOverride(payload: {
+  provider_id: string;
+  model: string;
+  input_per_1m_usd: number;
+  output_per_1m_usd: number;
+  currency?: string;
+  enabled?: boolean;
+}) {
+  return fetchJson<AdminPricingOverride>("/admin/pricing", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePricingOverride(
+  pricingId: string,
+  payload: Partial<{
+    provider_id: string;
+    model: string;
+    input_per_1m_usd: number;
+    output_per_1m_usd: number;
+    currency: string;
+    enabled: boolean;
+  }>,
+) {
+  return fetchJson<AdminPricingOverride>(`/admin/pricing/${pricingId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deletePricingOverride(pricingId: string) {
+  return fetchJson<void>(`/admin/pricing/${pricingId}`, {
     method: "DELETE",
   });
 }

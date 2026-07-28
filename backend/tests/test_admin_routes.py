@@ -250,6 +250,31 @@ def test_pricing_create_rejects_negative_rates(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_pricing_delete_removes_override(client: TestClient) -> None:
+    create_response = client.post(
+        "/admin/pricing",
+        json={
+            "provider_id": provider_uuid(client, "openai"),
+            "model": "gpt-delete-me",
+            "input_per_1m_usd": 1.5,
+            "output_per_1m_usd": 6.0,
+            "currency": "USD",
+        },
+    )
+    assert create_response.status_code == 201
+    pricing_id = create_response.json()["id"]
+
+    delete_response = client.delete(f"/admin/pricing/{pricing_id}")
+    assert delete_response.status_code == 204
+
+    list_response = client.get("/admin/pricing")
+    assert list_response.status_code == 200
+    assert all(entry["id"] != pricing_id for entry in list_response.json())
+
+    missing_response = client.delete("/admin/pricing/missing-pricing-id")
+    assert missing_response.status_code == 404
+
+
 def test_provider_health_endpoint_returns_dashboard_ready_cards(
     client: TestClient,
     monkeypatch,
