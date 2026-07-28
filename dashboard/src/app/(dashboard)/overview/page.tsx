@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -7,7 +10,7 @@ import {
   CurrencyDollarIcon,
   LightningIcon,
   RobotIcon,
-} from "@phosphor-icons/react/dist/ssr";
+} from "@phosphor-icons/react";
 import {
   type OverviewMetric,
   type RequestStatus,
@@ -59,45 +62,96 @@ function buildTotalTokenSeries(
   }));
 }
 
-function BackendUnreachable() {
-  return (
-    <div className="rounded-xl border border-accent-red/20 bg-accent-red-bg px-4 py-3 text-sm text-accent-red">
-      Backend unreachable. Start the ModelPort proxy and refresh this page.
-    </div>
-  );
-}
+export default function OverviewPage() {
+  const [overview, setOverview] = useState<Awaited<
+    ReturnType<typeof fetchOverviewAnalytics>
+  > | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [referenceDate] = useState(() => new Date());
 
-export default async function OverviewPage() {
-  let overview: Awaited<ReturnType<typeof fetchOverviewAnalytics>>;
+  useEffect(() => {
+    let active = true;
 
-  try {
-    overview = await fetchOverviewAnalytics();
-  } catch {
-    return <BackendUnreachable />;
+    void (async () => {
+      try {
+        const nextOverview = await fetchOverviewAnalytics();
+        if (!active) {
+          return;
+        }
+        setOverview(nextOverview);
+        setErrorMessage(null);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Backend unreachable. Start the ModelPort proxy and refresh this page.",
+        );
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const tokenAreaChartDataByRange = useMemo(() => {
+    if (!overview) {
+      return null;
+    }
+
+    const dayMs = 24 * 60 * 60 * 1000;
+    const hourMs = 60 * 60 * 1000;
+    const minuteMs = 60 * 1000;
+
+    return {
+      "30d": buildTotalTokenSeries(overview.tokenUsage["30d"].points, referenceDate, dayMs),
+      "7d": buildTotalTokenSeries(overview.tokenUsage["7d"].points, referenceDate, dayMs),
+      "1d": buildTotalTokenSeries(overview.tokenUsage["24h"].points, referenceDate, hourMs),
+      "6h": buildTotalTokenSeries(overview.tokenUsage["6h"].points, referenceDate, 15 * minuteMs),
+      "1h": buildTotalTokenSeries(overview.tokenUsage["1h"].points, referenceDate, 5 * minuteMs),
+    };
+  }, [overview, referenceDate]);
+
+  const topMetricProvider = useMemo(() => {
+    if (!overview) {
+      return undefined;
+    }
+
+    const topMetricModelName = overview.metrics.find(
+      (metric) => metric.id === "top_model",
+    )?.value;
+
+    return (
+      overview.topModels.find(
+        (model) =>
+          model.displayName === topMetricModelName ||
+          model.model === topMetricModelName,
+      )?.provider ?? overview.topModels[0]?.provider
+    );
+  }, [overview]);
+
+  if (isLoading) {
+    return <div className="text-sm text-text-secondary">Loading overview...</div>;
   }
 
-  const referenceDate = new Date();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const hourMs = 60 * 60 * 1000;
-  const minuteMs = 60 * 1000;
-  const tokenAreaChartDataByRange = {
-    "30d": buildTotalTokenSeries(overview.tokenUsage["30d"].points, referenceDate, dayMs),
-    "7d": buildTotalTokenSeries(overview.tokenUsage["7d"].points, referenceDate, dayMs),
-    "1d": buildTotalTokenSeries(overview.tokenUsage["24h"].points, referenceDate, hourMs),
-    "6h": buildTotalTokenSeries(overview.tokenUsage["6h"].points, referenceDate, 15 * minuteMs),
-    "1h": buildTotalTokenSeries(overview.tokenUsage["1h"].points, referenceDate, 5 * minuteMs),
-  };
+  if (errorMessage || !overview || !tokenAreaChartDataByRange) {
+    return (
+      <div className="rounded-xl border border-accent-red/20 bg-accent-red-bg px-4 py-3 text-sm text-accent-red">
+        {errorMessage ??
+          "Backend unreachable. Start the ModelPort proxy and refresh this page."}
+      </div>
+    );
+  }
+
   const tokenAreaChartData = tokenAreaChartDataByRange["30d"];
-  const topMetricModelName = overview.metrics.find(
-    (metric) => metric.id === "top_model",
-  )?.value;
-  const topMetricProvider =
-    overview.topModels.find(
-      (model) =>
-        model.displayName === topMetricModelName ||
-        model.model === topMetricModelName,
-    )?.provider ??
-    overview.topModels[0]?.provider;
 
   return (
     <div className="space-y-6">
