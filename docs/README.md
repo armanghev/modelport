@@ -1,45 +1,55 @@
-# docs
+# ModelPort Docs
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+Plain markdown documentation for ModelPort, a local-first LLM proxy and control plane.
 
-Run development server:
+## Getting Started
 
-```bash
-npm run dev
-# or
-pnpm dev
-# or
-yarn dev
-```
+- [What is ModelPort?](index.md)
+- [Quick Start](quick-start.md)
+- [Installation](installation.md)
 
-Open http://localhost:3000 with your browser to see the result.
+## Authentication
 
-## Explore
+- [API Keys](authentication/api-keys.md)
 
-In the project, you can see:
+## Using ModelPort
 
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
+### Guides
 
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
+- [Model Routing](guides/model-routing.md)
+- [OpenAI Compatibility](guides/openai-compatibility.md)
+- [Anthropic Compatibility](guides/anthropic-compatibility.md)
+- [Streaming Responses](guides/streaming-responses.md)
+- [Function Calling](guides/function-calling.md)
 
-### Fumadocs MDX
+### API Reference
 
-A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
+- [Messages](api-reference/messages.md)
+- [Chat Completions](api-reference/chat-completions.md)
+- [Models](api-reference/models.md)
 
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
+### Providers
 
-## Learn More
+- [OpenAI](providers/openai.md)
+- [Anthropic](providers/anthropic.md)
+- [Google](providers/google.md)
+- [OpenRouter](providers/openrouter.md)
+- [Ollama](providers/ollama.md)
 
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
+### SDKs
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.dev) - learn about Fumadocs
+- [cURL](sdks/curl.md)
+- [JavaScript](sdks/javascript.md)
+- [Python](sdks/python.md)
+
+## Operations
+
+### Deployment
+
+- [Self Hosting](deployment/self-hosting.md)
+
+### Troubleshooting
+
+- [Common Errors](troubleshooting/common-errors.md)
+- [Provider Issues](troubleshooting/provider-issues.md)
+- [Rate Limits](troubleshooting/rate-limits.md)

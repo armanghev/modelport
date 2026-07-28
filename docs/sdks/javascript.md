@@ -1,0 +1,42 @@
+# JavaScript
+
+ModelPort can be used from JavaScript clients that support a custom base URL and bearer token.
+
+## OpenAI-Compatible Clients
+
+Point your client at ModelPort's `/v1` base path and send `MODELPORT_TOKEN` as the bearer token.
+
+```ts
+const response = await fetch("https://127.0.0.1:13243/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.MODELPORT_TOKEN}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: "openrouter/google/gemini-2.5-flash",
+    messages: [{ role: "user", content: "Hello from ModelPort." }],
+  }),
+});
+
+const data = await response.json();
+```
+
+## Anthropic-Compatible Clients
+
+Any JavaScript client that can target `POST /v1/messages` can use the same proxy token pattern:
+
+```ts
+const response = await fetch("https://127.0.0.1:13243/v1/messages", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.MODELPORT_TOKEN}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: "openai/gpt-4o-mini",
+    max_tokens: 128,
+    messages: [{ role: "user", content: "Hello from ModelPort." }],
+  }),
+});
+```

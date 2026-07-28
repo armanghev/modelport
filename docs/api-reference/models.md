@@ -1,0 +1,33 @@
+# Models
+
+`GET /v1/models` proxies model listing for the selected provider.
+
+## Authentication
+
+```text
+Authorization: Bearer <MODELPORT_TOKEN>
+```
+
+## Provider Selection
+
+Model listing resolves a provider from:
+
+- `X-ModelPort-Provider`
+- request context configured by your client
+
+Because this endpoint does not include a request body, an explicit provider header is the most reliable option.
+
+Example:
+
+```bash
+curl https://127.0.0.1:13243/v1/models \
+  -H "Authorization: Bearer $MODELPORT_TOKEN" \
+  -H "X-ModelPort-Provider: openrouter"
+```
+
+## Current Behavior
+
+- OpenAI-compatible upstream providers are supported.
+- Local OpenAI-compatible providers are supported.
+- Anthropic-compatible upstream providers are supported through their native `GET /v1/models` surface.
+- If the selected provider requires credentials and none are configured, ModelPort returns `503`.

@@ -1,0 +1,41 @@
+# cURL
+
+The proxy is easy to test with `curl` because all implemented endpoints are plain HTTP.
+
+## OpenAI-Style Request
+
+```bash
+curl https://127.0.0.1:13243/v1/chat/completions \
+  -H "Authorization: Bearer $MODELPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-ModelPort-Provider: openai" \
+  -d '{
+    "model": "gpt-4.1",
+    "messages": [
+      { "role": "user", "content": "Hello from ModelPort." }
+    ]
+  }'
+```
+
+## Anthropic-Style Request
+
+```bash
+curl https://127.0.0.1:13243/v1/messages \
+  -H "Authorization: Bearer $MODELPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "models/gemini-2.5-flash",
+    "max_tokens": 128,
+    "messages": [
+      { "role": "user", "content": "Hello from ModelPort." }
+    ]
+  }'
+```
+
+## Model Listing
+
+```bash
+curl https://127.0.0.1:13243/v1/models \
+  -H "Authorization: Bearer $MODELPORT_TOKEN" \
+  -H "X-ModelPort-Provider: openrouter"
+```

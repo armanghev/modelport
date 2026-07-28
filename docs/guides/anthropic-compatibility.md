@@ -1,0 +1,50 @@
+# Anthropic Compatibility
+
+ModelPort accepts Anthropic-style client requests on:
+
+```text
+POST /v1/messages
+```
+
+This compatibility layer translates Anthropic-style input into the active upstream provider format and translates the response back into Anthropic-style output.
+
+## Base URL
+
+For clients that support Anthropic-compatible base URL configuration:
+
+```bash
+export ANTHROPIC_BASE_URL=https://127.0.0.1:13243
+export ANTHROPIC_AUTH_TOKEN=$MODELPORT_TOKEN
+```
+
+## Supported Message Features
+
+The current implementation supports:
+
+- `system`
+- `messages`
+- `max_tokens`
+- `stream`
+- `tools`
+- `tool_choice`
+- tool-use and tool-result history
+- provider routing and fallback providers
+
+## Example
+
+```bash
+curl https://127.0.0.1:13243/v1/messages \
+  -H "Authorization: Bearer $MODELPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openai/gpt-4o-mini",
+    "max_tokens": 128,
+    "messages": [
+      { "role": "user", "content": "Say hello from ModelPort." }
+    ]
+  }'
+```
+
+## Important Limitation
+
+> **Native Anthropic upstreams are supported:** Anthropic-style clients can now target providers with type `anthropic_compatible` directly. OpenAI-style clients can also route through Anthropic upstreams, with ModelPort handling request and response translation automatically.

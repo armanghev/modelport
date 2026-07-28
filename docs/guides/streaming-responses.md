@@ -1,0 +1,43 @@
+# Streaming Responses
+
+Both implemented proxy endpoints support streaming:
+
+- `POST /v1/messages`
+- `POST /v1/chat/completions`
+
+## OpenAI-Style Streaming
+
+Send:
+
+```json
+{
+  "stream": true
+}
+```
+
+ModelPort forwards upstream SSE chunks and emits a final `data: [DONE]`.
+
+For OpenAI-compatible streaming, ModelPort also requests final usage when the upstream supports it so usage and estimated cost can still be recorded after the stream completes.
+
+## Anthropic-Style Streaming
+
+Anthropic-style input is translated to the upstream streaming format, then converted back into Anthropic SSE events such as:
+
+- `message_start`
+- `content_block_start`
+- `content_block_delta`
+- `content_block_stop`
+- `message_delta`
+- `message_stop`
+
+Tool-use streaming is also translated into Anthropic-style tool events.
+
+## Logging
+
+After a successful stream completes, ModelPort records:
+
+- input and output token counts
+- estimated cost from pricing overrides
+- time to first byte when available
+- completion reason
+- optional request and response payloads when I/O logging is enabled
