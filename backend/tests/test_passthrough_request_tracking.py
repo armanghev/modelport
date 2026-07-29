@@ -61,7 +61,7 @@ def test_embeddings_route_persists_request_usage_and_cost(
     assert record.provider == "openai"
     assert record.input_tokens == 1000
     assert record.estimated_cost_usd == 0.001
-    assert record.pricing_source == "admin_override"
+    assert record.pricing_source == "manual"
 
 
 def test_image_generations_route_persists_request_log(
