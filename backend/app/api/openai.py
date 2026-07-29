@@ -82,6 +82,7 @@ from app.tracking.usage_service import (
     UsageSnapshot,
     build_stream_usage_snapshot,
     extract_usage_snapshot,
+    normalize_anthropic_shaped_usage,
 )
 from app.translators.anthropic_to_openai import translate_anthropic_message_to_openai
 from app.translators.models import translate_anthropic_model_to_openai, translate_anthropic_models_to_openai
@@ -1571,13 +1572,17 @@ def create_chat_completions(
                 upstream_response,
                 requested_model=payload.model,
             )
-            usage = openai_response.get("usage") if isinstance(openai_response.get("usage"), dict) else {}
-            usage_snapshot = UsageSnapshot.flat(
-                input_tokens=int(usage.get("prompt_tokens", 0) or 0),
-                output_tokens=int(usage.get("completion_tokens", 0) or 0),
-                total_tokens=int(usage.get("total_tokens", 0) or 0),
-                token_source="provider",
-            )
+            raw_usage = upstream_response.get("usage")
+            if isinstance(raw_usage, dict):
+                usage_snapshot = normalize_anthropic_shaped_usage(raw_usage)
+            else:
+                usage = openai_response.get("usage") if isinstance(openai_response.get("usage"), dict) else {}
+                usage_snapshot = UsageSnapshot.flat(
+                    input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                    output_tokens=int(usage.get("completion_tokens", 0) or 0),
+                    total_tokens=int(usage.get("total_tokens", 0) or 0),
+                    token_source="provider",
+                )
             return openai_response, usage_snapshot
 
         openai_payload = build_upstream_payload(

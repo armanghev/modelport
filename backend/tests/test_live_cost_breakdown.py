@@ -87,3 +87,76 @@ def test_log_tracked_proxy_request_writes_cache_breakdown(client) -> None:
     assert record.estimated_cost_usd == 0.0111
     assert record.pricing_source == "manual"
     assert record.context_tier == "standard"
+
+
+def test_anthropic_messages_path_prices_cache_reads(client, app_config, monkeypatch) -> None:
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        provider = get_provider_by_slug(session, "anthropic")
+        card = RateCard(
+            standard=TierRates(
+                input_per_1m=Decimal("3"),
+                output_per_1m=Decimal("15"),
+                cache_read_per_1m=Decimal("0.3"),
+                cache_write_5m_per_1m=Decimal("3.75"),
+            ),
+            source="manual",
+        )
+        session.add(
+            PricingOverride(
+                provider_id=provider.id,
+                model="claude-sonnet-4-6",
+                input_per_1m_usd=3.0,
+                output_per_1m_usd=15.0,
+                rate_card_json=card.model_dump_json(),
+                source="manual",
+                enabled=True,
+            )
+        )
+        session.commit()
+
+    def fake_create_anthropic_message(provider, api_key, payload):
+        return {
+            "id": "msg_cache_test",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-6",
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 50,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 9000,
+                "cache_creation_input_tokens": 1000,
+            },
+        }
+
+    monkeypatch.setattr(
+        "app.api.anthropic.create_anthropic_message",
+        fake_create_anthropic_message,
+    )
+
+    response = client.post(
+        "/v1/messages",
+        headers={"Authorization": "Bearer test-local-token"},
+        json={
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    assert response.status_code == 200
+
+    from app.database import build_session_factory
+
+    with build_session_factory(f"sqlite:///{app_config.parent / 'test.db'}")() as session:
+        record = session.scalars(select(ApiRequest).order_by(ApiRequest.created_at.desc())).first()
+
+    assert record is not None
+    assert record.cache_read_tokens == 9000
+    assert record.cache_write_5m_tokens == 1000
+    assert record.uncached_input_tokens == 50
+    assert record.input_tokens == 10050
+    assert record.estimated_cost_usd == 0.0069
