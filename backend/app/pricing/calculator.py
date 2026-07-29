@@ -28,14 +28,14 @@ class CostBreakdown:
     service_tier: str
 
 
-def _quantize(value: Decimal) -> Decimal:
-    return value.quantize(COST_QUANTUM, rounding=ROUND_HALF_UP)
-
-
 def _component(tokens: int, rate: Decimal | None) -> Decimal:
     if tokens <= 0 or rate is None:
         return Decimal(0)
     return (Decimal(tokens) / MILLION) * rate
+
+
+def to_storage_usd(value: Decimal) -> float:
+    return float(value.quantize(COST_QUANTUM, rounding=ROUND_HALF_UP))
 
 
 def price(
@@ -46,21 +46,19 @@ def price(
     context_tier = card.context_tier_for(usage.input_tokens)
     rates = card.rates_for(context_tier=context_tier, service_tier=context.service_tier)
 
-    input_usd = _quantize(_component(usage.uncached_input_tokens, rates.input_per_1m))
-    output_usd = _quantize(_component(usage.output_tokens, rates.output_per_1m))
-    cache_read_usd = _quantize(_component(usage.cache_read_tokens, rates.cache_read_per_1m))
-    cache_write_usd = _quantize(
+    input_usd = _component(usage.uncached_input_tokens, rates.input_per_1m)
+    output_usd = _component(usage.output_tokens, rates.output_per_1m)
+    cache_read_usd = _component(usage.cache_read_tokens, rates.cache_read_per_1m)
+    cache_write_usd = (
         _component(usage.cache_write_5m_tokens, rates.cache_write_5m_per_1m)
         + _component(usage.cache_write_1h_tokens, rates.cache_write_1h_per_1m)
     )
-    tools_usd = _quantize(
-        sum(
-            (charge.per_call_usd * context.tool_calls.get(charge.name, 0) for charge in card.tools),
-            Decimal(0),
-        )
+    tools_usd = sum(
+        (charge.per_call_usd * context.tool_calls.get(charge.name, 0) for charge in card.tools),
+        Decimal(0),
     )
 
-    # Total is the sum of already-quantized components so the breakdown always reconciles.
+    # Keep full Decimal precision so the caller can round the total only once on write.
     total_usd = input_usd + output_usd + cache_read_usd + cache_write_usd + tools_usd
 
     return CostBreakdown(

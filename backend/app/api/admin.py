@@ -854,9 +854,16 @@ def update_pricing_override(
         setattr(record, field, value)
 
     record.source = "manual"
-    if rates_changed:
+    if rates_changed or not record.rate_card_json:
         card = manual_rate_card(record.input_per_1m_usd, record.output_per_1m_usd)
-        record.rate_card_json = card.model_dump_json()
+    else:
+        try:
+            card = RateCard.model_validate_json(record.rate_card_json).model_copy(
+                update={"source": "manual"}
+            )
+        except ValueError:
+            card = manual_rate_card(record.input_per_1m_usd, record.output_per_1m_usd)
+    record.rate_card_json = card.model_dump_json()
 
     session.commit()
     session.refresh(record)

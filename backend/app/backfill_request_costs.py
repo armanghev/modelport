@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import load_config
 from app.database import ApiRequest, build_session_factory
-from app.pricing.calculator import RequestContext, price
+from app.pricing.calculator import RequestContext, price, to_storage_usd
 from app.pricing.resolver import resolve_rate_card
 from app.tracking.usage_service import UsageSnapshot
 
@@ -59,7 +59,7 @@ def backfill_request_costs(session_factory: sessionmaker[Session]) -> dict[str, 
                 )
 
             breakdown = price(usage, card, RequestContext())
-            estimated_cost_usd = float(breakdown.total_usd)
+            estimated_cost_usd = to_storage_usd(breakdown.total_usd)
             pricing_source = card.source
             has_buckets = record.uncached_input_tokens is not None
 

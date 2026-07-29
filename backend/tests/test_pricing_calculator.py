@@ -69,6 +69,23 @@ def test_components_always_sum_to_the_total() -> None:
     ) == breakdown.total_usd
 
 
+def test_total_is_not_distorted_by_component_rounding() -> None:
+    card = RateCard(
+        standard=TierRates(
+            input_per_1m=Decimal("0.5"),
+            output_per_1m=Decimal("0.5"),
+        ),
+        source="litellm",
+    )
+    usage = UsageSnapshot(1, 0, 0, 0, 1, 2, "provider_reported")
+
+    breakdown = price(usage, card, RequestContext())
+
+    assert breakdown.input_usd == Decimal("0.0000005")
+    assert breakdown.output_usd == Decimal("0.0000005")
+    assert breakdown.total_usd == Decimal("0.0000010")
+
+
 def test_crossing_the_context_threshold_uses_above_threshold_rates() -> None:
     usage = UsageSnapshot(
         uncached_input_tokens=200_001,

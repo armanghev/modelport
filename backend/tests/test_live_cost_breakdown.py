@@ -89,6 +89,121 @@ def test_log_tracked_proxy_request_writes_cache_breakdown(client) -> None:
     assert record.context_tier == "standard"
 
 
+def test_log_tracked_proxy_request_does_not_price_legacy_rates(client) -> None:
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        provider = get_provider_by_slug(session, "anthropic")
+        assert provider is not None
+        session.add(
+            PricingOverride(
+                provider_id=provider.id,
+                model="claude-legacy-rates",
+                input_per_1m_usd=3.0,
+                output_per_1m_usd=15.0,
+                enabled=True,
+            )
+        )
+        session.commit()
+
+        from app.api.proxy_common import log_tracked_proxy_request
+        from app.routing.provider_router import select_provider_credential
+
+        route = ResolvedProviderRoute(
+            requested_model="claude-legacy-rates",
+            upstream_model="claude-legacy-rates",
+            provider=provider,
+            credential=select_provider_credential(provider),
+        )
+        log_tracked_proxy_request(
+            session,
+            input_format="anthropic",
+            output_format="anthropic",
+            endpoint="/v1/messages",
+            client_name="test",
+            resolved_route=route,
+            requested_model="claude-legacy-rates",
+            duration_ms=10,
+            status_code=200,
+            streamed=False,
+            request_payload={"model": "claude-legacy-rates"},
+            response_payload={"id": "msg_legacy"},
+            usage_snapshot=UsageSnapshot.flat(
+                input_tokens=100,
+                output_tokens=10,
+                total_tokens=110,
+                token_source="provider_reported",
+            ),
+        )
+        record = session.scalars(select(ApiRequest).order_by(ApiRequest.created_at.desc())).first()
+
+    assert record is not None
+    assert record.estimated_cost_usd is None
+    assert record.pricing_source is None
+
+
+def test_log_tracked_proxy_request_preserves_component_precision(client) -> None:
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        provider = get_provider_by_slug(session, "anthropic")
+        assert provider is not None
+        card = RateCard(
+            standard=TierRates(
+                input_per_1m=Decimal("0.5"),
+                output_per_1m=Decimal("0.5"),
+            ),
+            source="manual",
+        )
+        session.add(
+            PricingOverride(
+                provider_id=provider.id,
+                model="claude-precision",
+                input_per_1m_usd=0.5,
+                output_per_1m_usd=0.5,
+                rate_card_json=card.model_dump_json(),
+                source="manual",
+                enabled=True,
+            )
+        )
+        session.commit()
+
+        from app.api.proxy_common import log_tracked_proxy_request
+        from app.routing.provider_router import select_provider_credential
+
+        route = ResolvedProviderRoute(
+            requested_model="claude-precision",
+            upstream_model="claude-precision",
+            provider=provider,
+            credential=select_provider_credential(provider),
+        )
+        log_tracked_proxy_request(
+            session,
+            input_format="anthropic",
+            output_format="anthropic",
+            endpoint="/v1/messages",
+            client_name="test",
+            resolved_route=route,
+            requested_model="claude-precision",
+            duration_ms=10,
+            status_code=200,
+            streamed=False,
+            request_payload={"model": "claude-precision"},
+            response_payload={"id": "msg_precision"},
+            usage_snapshot=UsageSnapshot.flat(
+                input_tokens=1,
+                output_tokens=1,
+                total_tokens=2,
+                token_source="provider_reported",
+            ),
+        )
+        record = session.scalars(select(ApiRequest).order_by(ApiRequest.created_at.desc())).first()
+
+    assert record is not None
+    assert record.cost_input_usd == 0.0000005
+    assert record.cost_output_usd == 0.0000005
+    assert record.estimated_cost_usd == 0.000001
+    assert record.cost_input_usd + record.cost_output_usd == record.estimated_cost_usd
+
+
 def test_anthropic_messages_path_prices_cache_reads(client, app_config, monkeypatch) -> None:
     session_factory = client.app.state.session_factory
     with session_factory() as session:

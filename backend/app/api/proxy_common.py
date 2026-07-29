@@ -22,12 +22,10 @@ from app.routing.model_prefixes import (
 )
 from app.routing.provider_router import ResolvedProviderRoute, resolve_provider_routes
 from app.security import EncryptionConfigurationError, decrypt_secret
-from app.pricing.calculator import RequestContext, price
+from app.pricing.calculator import RequestContext, price, to_storage_usd
 from app.pricing.resolver import resolve_rate_card
-from app.tracking.cost_service import calculate_estimated_cost_usd
 from app.tracking.io_logging import io_log_kwargs
 from app.tracking.log_service import create_api_request_log
-from app.tracking.pricing import resolve_pricing_override
 from app.tracking.usage_service import UsageSnapshot
 
 T = TypeVar("T")
@@ -337,7 +335,7 @@ def log_tracked_proxy_request(
             )
             if card is not None:
                 breakdown = price(usage_snapshot, card, RequestContext())
-                estimated_cost_usd = float(breakdown.total_usd)
+                estimated_cost_usd = to_storage_usd(breakdown.total_usd)
                 pricing_source = card.source
                 cost_input_usd = float(breakdown.input_usd)
                 cost_output_usd = float(breakdown.output_usd)
@@ -346,18 +344,6 @@ def log_tracked_proxy_request(
                 cost_tools_usd = float(breakdown.tools_usd)
                 context_tier = breakdown.context_tier
                 service_tier = breakdown.service_tier
-            else:
-                pricing_override = resolve_pricing_override(
-                    session,
-                    provider_id=resolved_route.provider.slug,
-                    resolved_model=resolved_route.upstream_model,
-                    requested_model=requested_model,
-                )
-                estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
-                    pricing_override,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
         except Exception:
             estimated_cost_usd = None
             pricing_source = "pricing_error"
