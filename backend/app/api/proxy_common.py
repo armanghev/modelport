@@ -22,6 +22,8 @@ from app.routing.model_prefixes import (
 )
 from app.routing.provider_router import ResolvedProviderRoute, resolve_provider_routes
 from app.security import EncryptionConfigurationError, decrypt_secret
+from app.pricing.calculator import RequestContext, price
+from app.pricing.resolver import resolve_rate_card
 from app.tracking.cost_service import calculate_estimated_cost_usd
 from app.tracking.io_logging import io_log_kwargs
 from app.tracking.log_service import create_api_request_log
@@ -304,23 +306,60 @@ def log_tracked_proxy_request(
     token_source = None
     estimated_cost_usd = None
     pricing_source = None
+    uncached_input_tokens = None
+    cache_read_tokens = None
+    cache_write_5m_tokens = None
+    cache_write_1h_tokens = None
+    cost_input_usd = None
+    cost_output_usd = None
+    cost_cache_read_usd = None
+    cost_cache_write_usd = None
+    cost_tools_usd = None
+    context_tier = None
+    service_tier = None
 
     if usage_snapshot is not None:
         input_tokens = usage_snapshot.input_tokens
         output_tokens = usage_snapshot.output_tokens
         total_tokens = usage_snapshot.total_tokens
         token_source = usage_snapshot.token_source
-        pricing_override = resolve_pricing_override(
-            session,
-            provider_id=resolved_route.provider.slug,
-            resolved_model=resolved_route.upstream_model,
-            requested_model=requested_model,
-        )
-        estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
-            pricing_override,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
+        uncached_input_tokens = usage_snapshot.uncached_input_tokens
+        cache_read_tokens = usage_snapshot.cache_read_tokens
+        cache_write_5m_tokens = usage_snapshot.cache_write_5m_tokens
+        cache_write_1h_tokens = usage_snapshot.cache_write_1h_tokens
+
+        try:
+            card = resolve_rate_card(
+                session,
+                provider_id=resolved_route.provider.slug,
+                resolved_model=resolved_route.upstream_model,
+                requested_model=requested_model,
+            )
+            if card is not None:
+                breakdown = price(usage_snapshot, card, RequestContext())
+                estimated_cost_usd = float(breakdown.total_usd)
+                pricing_source = card.source
+                cost_input_usd = float(breakdown.input_usd)
+                cost_output_usd = float(breakdown.output_usd)
+                cost_cache_read_usd = float(breakdown.cache_read_usd)
+                cost_cache_write_usd = float(breakdown.cache_write_usd)
+                cost_tools_usd = float(breakdown.tools_usd)
+                context_tier = breakdown.context_tier
+                service_tier = breakdown.service_tier
+            else:
+                pricing_override = resolve_pricing_override(
+                    session,
+                    provider_id=resolved_route.provider.slug,
+                    resolved_model=resolved_route.upstream_model,
+                    requested_model=requested_model,
+                )
+                estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
+                    pricing_override,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+        except Exception:
+            pass
 
     create_api_request_log(
         session,
@@ -335,7 +374,18 @@ def log_tracked_proxy_request(
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         token_source=token_source,
+        uncached_input_tokens=uncached_input_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_5m_tokens=cache_write_5m_tokens,
+        cache_write_1h_tokens=cache_write_1h_tokens,
         estimated_cost_usd=estimated_cost_usd,
+        cost_input_usd=cost_input_usd,
+        cost_output_usd=cost_output_usd,
+        cost_cache_read_usd=cost_cache_read_usd,
+        cost_cache_write_usd=cost_cache_write_usd,
+        cost_tools_usd=cost_tools_usd,
+        context_tier=context_tier,
+        service_tier=service_tier,
         pricing_source=pricing_source,
         duration_ms=duration_ms,
         status_code=status_code,
