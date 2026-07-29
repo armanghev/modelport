@@ -66,6 +66,8 @@ from app.schemas.admin import (
     SettingsResponse,
     TrackingSettings,
 )
+from app.pricing.rate_card import RateCard, TierRates
+from app.pricing_seed import upsert_rate_card
 from app.security import EncryptionConfigurationError, decrypt_secret, encrypt_secret
 
 router = APIRouter(
@@ -167,9 +169,22 @@ def serialize_pricing(record: PricingOverride, provider_slug: str | None = None)
             "output_per_1m_usd": record.output_per_1m_usd,
             "currency": record.currency,
             "enabled": record.enabled,
+            "source": record.source,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
         }
+    )
+
+
+def manual_rate_card(input_per_1m_usd: float, output_per_1m_usd: float) -> RateCard:
+    from decimal import Decimal
+
+    return RateCard(
+        standard=TierRates(
+            input_per_1m=Decimal(str(input_per_1m_usd)),
+            output_per_1m=Decimal(str(output_per_1m_usd)),
+        ),
+        source="manual",
     )
 
 
@@ -802,8 +817,20 @@ def create_pricing_override(
     session: Session = Depends(get_session),
 ) -> PricingOverrideResponse:
     require_provider_by_id(session, payload.provider_id)
-    record = PricingOverride(**payload.model_dump())
-    session.add(record)
+    card = manual_rate_card(payload.input_per_1m_usd, payload.output_per_1m_usd)
+    record = upsert_rate_card(
+        session,
+        provider_id=payload.provider_id,
+        model=payload.model,
+        card=card,
+    )
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A higher-precedence pricing override already exists for this model.",
+        )
+    record.currency = payload.currency
+    record.enabled = payload.enabled
     session.commit()
     session.refresh(record)
     return serialize_pricing(record)
@@ -819,8 +846,18 @@ def update_pricing_override(
     updates = payload.model_dump(exclude_unset=True)
     if "provider_id" in updates and updates["provider_id"] is not None:
         require_provider_by_id(session, updates["provider_id"])
+
+    rates_changed = False
     for field, value in updates.items():
+        if field in {"input_per_1m_usd", "output_per_1m_usd"} and value != getattr(record, field):
+            rates_changed = True
         setattr(record, field, value)
+
+    record.source = "manual"
+    if rates_changed:
+        card = manual_rate_card(record.input_per_1m_usd, record.output_per_1m_usd)
+        record.rate_card_json = card.model_dump_json()
+
     session.commit()
     session.refresh(record)
     return serialize_pricing(record)

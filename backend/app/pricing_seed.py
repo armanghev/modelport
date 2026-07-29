@@ -35,7 +35,7 @@ def upsert_rate_card(
     provider_id: str,
     model: str,
     card: RateCard,
-) -> bool:
+) -> PricingOverride | None:
     """Write a rate card, refusing to downgrade a higher-precedence source."""
     record = session.scalar(
         select(PricingOverride).where(
@@ -45,7 +45,7 @@ def upsert_rate_card(
     )
 
     if record is not None and source_rank(record.source) > source_rank(card.source):
-        return False
+        return None
 
     if record is None:
         record = PricingOverride(provider_id=provider_id, model=model, enabled=True)
@@ -58,7 +58,7 @@ def upsert_rate_card(
     record.output_per_1m_usd = float(card.standard.output_per_1m)
     record.enabled = True
     session.flush()
-    return True
+    return record
 
 
 def upsert_pricing_override(
@@ -78,7 +78,7 @@ def upsert_pricing_override(
         ),
         source=source,
     )
-    return upsert_rate_card(session, provider_id=provider_id, model=model, card=card)
+    return upsert_rate_card(session, provider_id=provider_id, model=model, card=card) is not None
 
 
 def resolve_provider_uuid(session: Session, slug: str) -> str | None:
@@ -247,7 +247,7 @@ def seed_litellm_rate_cards(
         provider_uuid = provider_uuids.get(provider_slug)
         if provider_uuid is None:
             continue
-        if upsert_rate_card(session, provider_id=provider_uuid, model=model, card=card):
+        if upsert_rate_card(session, provider_id=provider_uuid, model=model, card=card) is not None:
             upserted += 1
     return upserted
 

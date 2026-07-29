@@ -139,6 +139,7 @@ class PricingOverrideResponse(ORMModel):
     output_per_1m_usd: float
     currency: str
     enabled: bool
+    source: str | None = None
     created_at: datetime
     updated_at: datetime
 

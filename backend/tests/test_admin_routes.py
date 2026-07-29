@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
-from app.database import ProviderHealthCheck
+from app.database import PricingOverride, ProviderHealthCheck
+from app.pricing.rate_card import RateCard
 
 from tests.test_helpers import cards_by_slug, provider_uuid
 
@@ -234,6 +236,33 @@ def test_invalid_provider_references_return_client_errors(client: TestClient) ->
         },
     )
     assert pricing_response.status_code == 404
+
+
+def test_create_pricing_override_writes_manual_rate_card(client: TestClient) -> None:
+    provider_id = provider_uuid(client, "openai")
+    response = client.post(
+        "/admin/pricing",
+        json={
+            "provider_id": provider_id,
+            "model": "gpt-5.6-terra",
+            "input_per_1m_usd": 2.5,
+            "output_per_1m_usd": 15.0,
+            "enabled": True,
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["source"] == "manual"
+
+    with client.app.state.session_factory() as session:
+        record = session.scalar(
+            select(PricingOverride).where(PricingOverride.id == body["id"])
+        )
+        assert record is not None
+        assert record.source == "manual"
+        card = RateCard.model_validate_json(record.rate_card_json)
+        assert float(card.standard.input_per_1m) == 2.5
+        assert card.source == "manual"
 
 
 def test_pricing_create_rejects_negative_rates(client: TestClient) -> None:
