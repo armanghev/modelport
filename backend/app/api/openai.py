@@ -1390,6 +1390,8 @@ def create_chat_completions(
         text_parts: list[str] = []
 
         if resolved_route.provider.provider_type == "anthropic_compatible":
+            from app.api.anthropic import update_anthropic_stream_summary
+
             anthropic_payload = build_upstream_payload(
                 internal_payload,
                 upstream_model=resolved_route.upstream_model,
@@ -1399,6 +1401,11 @@ def create_chat_completions(
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
             }
+            anthropic_usage_summary: dict[str, object] = {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "text_parts": [],
+            }
             for line in stream_anthropic_message_events(
                 resolved_route.provider,
                 api_key=provider_secret,
@@ -1407,6 +1414,7 @@ def create_chat_completions(
                 stream_state["emitted_chunks"] = True
                 if ttfb_ms is None:
                     ttfb_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                update_anthropic_stream_summary(line, summary=anthropic_usage_summary)
                 for chunk in translate_anthropic_stream_event_to_openai_chunks(
                     line,
                     state=anthropic_stream_state,
@@ -1423,13 +1431,23 @@ def create_chat_completions(
                     completion_reason = extract_openai_stream_completion_reason(chunk) or completion_reason
                     yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
             yield "data: [DONE]\n\n"
-            usage_snapshot = UsageSnapshot.flat(
-                input_tokens=int(anthropic_stream_state.get("prompt_tokens", 0) or 0),
-                output_tokens=int(anthropic_stream_state.get("completion_tokens", 0) or 0),
-                total_tokens=int(anthropic_stream_state.get("prompt_tokens", 0) or 0)
-                + int(anthropic_stream_state.get("completion_tokens", 0) or 0),
-                token_source="provider",
-            )
+            usage_raw = anthropic_usage_summary.get("usage")
+            if isinstance(usage_raw, dict):
+                if "output_tokens" not in usage_raw and anthropic_usage_summary.get("output_tokens") is not None:
+                    usage_raw = {
+                        **usage_raw,
+                        "output_tokens": int(anthropic_usage_summary["output_tokens"]),
+                    }
+                usage_snapshot = normalize_anthropic_shaped_usage(usage_raw)
+            else:
+                input_tokens = int(anthropic_usage_summary.get("input_tokens", 0) or 0)
+                output_tokens = int(anthropic_usage_summary.get("output_tokens", 0) or 0)
+                usage_snapshot = UsageSnapshot.flat(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=input_tokens + output_tokens,
+                    token_source="provider",
+                )
         else:
             for raw_chunk in stream_chat_completion_chunks(
                 resolved_route.provider,
