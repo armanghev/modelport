@@ -83,6 +83,7 @@ from app.tracking.usage_service import (
     build_stream_usage_snapshot,
     extract_usage_snapshot,
     normalize_anthropic_shaped_usage,
+    normalize_openai_shaped_usage,
 )
 from app.translators.anthropic_to_openai import translate_anthropic_message_to_openai
 from app.translators.models import translate_anthropic_model_to_openai, translate_anthropic_models_to_openai
@@ -742,17 +743,10 @@ def extract_openai_response_usage(response_payload: dict) -> UsageSnapshot | Non
     usage = response_payload.get("usage")
     if not isinstance(usage, dict):
         return None
-    input_tokens = int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0)
-    output_tokens = int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0)
-    total_tokens = int(usage.get("total_tokens", 0) or 0) or input_tokens + output_tokens
-    if input_tokens == 0 and output_tokens == 0 and total_tokens == 0:
+    snapshot = normalize_openai_shaped_usage(usage)
+    if snapshot.input_tokens == 0 and snapshot.output_tokens == 0 and snapshot.total_tokens == 0:
         return None
-    return UsageSnapshot.flat(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_tokens=total_tokens,
-        token_source="provider_reported",
-    )
+    return snapshot
 
 
 @router.post("/v1/responses", response_model=OpenAIResponse)
@@ -791,9 +785,16 @@ def create_responses(
             input_items = build_input_items_from_create_payload(payload)
 
             def attempt_route(route, secret, stream_state):
+                from app.api.anthropic import update_anthropic_stream_summary
+
                 ttfb_ms: int | None = None
                 upstream_request_id: str | None = None
                 translator_state: dict[str, object] = {}
+                anthropic_usage_summary: dict[str, object] = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "text_parts": [],
+                }
 
                 for line in stream_anthropic_message_events(
                     route.provider,
@@ -803,6 +804,7 @@ def create_responses(
                     stream_state["emitted_chunks"] = True
                     if ttfb_ms is None:
                         ttfb_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+                    update_anthropic_stream_summary(line, summary=anthropic_usage_summary)
                     for sse_event in translate_anthropic_stream_line_to_openai_response_sse(
                         line,
                         state=translator_state,
@@ -826,7 +828,19 @@ def create_responses(
                         status=openai_response.status,
                     )
                     session.commit()
-                    usage_snapshot = extract_openai_response_usage(openai_response.model_dump())
+                    usage_raw = anthropic_usage_summary.get("usage")
+                    if isinstance(usage_raw, dict):
+                        if (
+                            "output_tokens" not in usage_raw
+                            and anthropic_usage_summary.get("output_tokens") is not None
+                        ):
+                            usage_raw = {
+                                **usage_raw,
+                                "output_tokens": int(anthropic_usage_summary["output_tokens"]),
+                            }
+                        usage_snapshot = normalize_anthropic_shaped_usage(usage_raw)
+                    else:
+                        usage_snapshot = extract_openai_response_usage(openai_response.model_dump())
 
                 stream_state.update(
                     {
@@ -1032,12 +1046,17 @@ def create_responses(
             upstream_model=resolved_route.upstream_model,
         )
 
+        captured_usage: list[UsageSnapshot | None] = [None]
+
         def call_upstream():
             upstream_response = create_anthropic_message(
                 resolved_route.provider,
                 api_key=provider_secret,
                 payload=upstream_payload,
             )
+            raw_usage = upstream_response.get("usage") if isinstance(upstream_response, dict) else None
+            if isinstance(raw_usage, dict):
+                captured_usage[0] = normalize_anthropic_shaped_usage(raw_usage)
             response_dict = translate_anthropic_message_to_openai_response(
                 upstream_response,
                 requested_model=payload.model,
@@ -1068,7 +1087,9 @@ def create_responses(
             call_upstream=call_upstream,
             started_at=started_at,
             build_response_payload=lambda response: response.model_dump(),
-            extract_usage_snapshot=lambda response: extract_openai_response_usage(response.model_dump()),
+            extract_usage_snapshot=lambda response: (
+                captured_usage[0] or extract_openai_response_usage(response.model_dump())
+            ),
             extract_request_id=lambda response: response.id,
         )
         return openai_response

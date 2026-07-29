@@ -359,7 +359,11 @@ def log_tracked_proxy_request(
                     output_tokens=output_tokens,
                 )
         except Exception:
-            pass
+            estimated_cost_usd = None
+            pricing_source = "pricing_error"
+            cost_input_usd = cost_output_usd = cost_cache_read_usd = None
+            cost_cache_write_usd = cost_tools_usd = None
+            context_tier = service_tier = None
 
     create_api_request_log(
         session,

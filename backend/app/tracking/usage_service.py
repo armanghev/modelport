@@ -123,11 +123,12 @@ def _extract_total_tokens(usage: dict[str, Any]) -> int:
 
 
 def _extract_cached_tokens(usage: dict[str, Any]) -> int:
-    details = usage.get("prompt_tokens_details")
-    if isinstance(details, dict):
-        cached = _coerce_int(details.get("cached_tokens"))
-        if cached > 0:
-            return cached
+    for details_key in ("prompt_tokens_details", "input_tokens_details"):
+        details = usage.get(details_key)
+        if isinstance(details, dict):
+            cached = _coerce_int(details.get("cached_tokens"))
+            if cached > 0:
+                return cached
 
     for key in ("cachedContentTokenCount", "cached_content_token_count"):
         cached = _coerce_int(usage.get(key))
