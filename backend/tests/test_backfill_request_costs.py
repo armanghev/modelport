@@ -55,7 +55,7 @@ def test_backfill_request_costs_updates_existing_rows(client) -> None:
         )
     assert record is not None
     assert record.estimated_cost_usd == 6.0
-    assert record.pricing_source == "admin_override"
+    assert record.pricing_source == "manual"
 
 
 def test_backfill_clears_stale_negative_estimated_cost(client) -> None:

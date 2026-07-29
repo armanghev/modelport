@@ -43,7 +43,7 @@ def model_lookup_candidates(
     return candidates
 
 
-def _best_override(
+def best_override(
     session: Session,
     *,
     provider_uuid: str,
@@ -85,15 +85,40 @@ def resolve_rate_card(
         return None
 
     for model in model_lookup_candidates(provider_id, resolved_model, requested_model):
-        record = _best_override(session, provider_uuid=provider.id, model=model)
+        record = best_override(session, provider_uuid=provider.id, model=model)
         if record is not None:
             card = _to_rate_card(record)
             if card is not None:
                 return card
 
     if provider_id == "ollama":
-        record = _best_override(session, provider_uuid=provider.id, model="*")
+        record = best_override(session, provider_uuid=provider.id, model="*")
         if record is not None:
             return _to_rate_card(record)
+
+    return None
+
+
+def resolve_pricing_override(
+    session: Session,
+    *,
+    provider_id: str | None,
+    resolved_model: str | None,
+    requested_model: str | None,
+) -> PricingOverride | None:
+    if not provider_id:
+        return None
+
+    provider = get_provider_by_slug(session, provider_id)
+    if provider is None:
+        return None
+
+    for model in model_lookup_candidates(provider_id, resolved_model, requested_model):
+        record = best_override(session, provider_uuid=provider.id, model=model)
+        if record is not None:
+            return record
+
+    if provider_id == "ollama":
+        return best_override(session, provider_uuid=provider.id, model="*")
 
     return None

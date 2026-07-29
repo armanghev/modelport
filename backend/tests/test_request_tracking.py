@@ -91,7 +91,7 @@ def test_messages_route_persists_request_usage_and_cost(
         assert record.total_tokens == 1500
         assert record.token_source == "provider_reported"
         assert record.estimated_cost_usd == 0.006
-        assert record.pricing_source == "admin_override"
+        assert record.pricing_source == "manual"
         assert record.status_code == 200
         assert record.error_message is None
         assert record.request_id == "chatcmpl_req_123"
