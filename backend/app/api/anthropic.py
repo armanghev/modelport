@@ -689,7 +689,7 @@ def create_message(
                 if isinstance(stream_summary.get("stop_reason"), str)
                 else None
             )
-            usage_snapshot = UsageSnapshot(
+            usage_snapshot = UsageSnapshot.flat(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=input_tokens + output_tokens,
@@ -832,7 +832,7 @@ def create_message(
                 payload=anthropic_payload,
             )
             anthropic_response = AnthropicMessageResponse.model_validate(upstream_response)
-            usage_snapshot = UsageSnapshot(
+            usage_snapshot = UsageSnapshot.flat(
                 input_tokens=anthropic_response.usage.input_tokens,
                 output_tokens=anthropic_response.usage.output_tokens,
                 total_tokens=anthropic_response.usage.input_tokens + anthropic_response.usage.output_tokens,

@@ -746,7 +746,7 @@ def extract_openai_response_usage(response_payload: dict) -> UsageSnapshot | Non
     total_tokens = int(usage.get("total_tokens", 0) or 0) or input_tokens + output_tokens
     if input_tokens == 0 and output_tokens == 0 and total_tokens == 0:
         return None
-    return UsageSnapshot(
+    return UsageSnapshot.flat(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
@@ -1422,7 +1422,7 @@ def create_chat_completions(
                     completion_reason = extract_openai_stream_completion_reason(chunk) or completion_reason
                     yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
             yield "data: [DONE]\n\n"
-            usage_snapshot = UsageSnapshot(
+            usage_snapshot = UsageSnapshot.flat(
                 input_tokens=int(anthropic_stream_state.get("prompt_tokens", 0) or 0),
                 output_tokens=int(anthropic_stream_state.get("completion_tokens", 0) or 0),
                 total_tokens=int(anthropic_stream_state.get("prompt_tokens", 0) or 0)
@@ -1572,7 +1572,7 @@ def create_chat_completions(
                 requested_model=payload.model,
             )
             usage = openai_response.get("usage") if isinstance(openai_response.get("usage"), dict) else {}
-            usage_snapshot = UsageSnapshot(
+            usage_snapshot = UsageSnapshot.flat(
                 input_tokens=int(usage.get("prompt_tokens", 0) or 0),
                 output_tokens=int(usage.get("completion_tokens", 0) or 0),
                 total_tokens=int(usage.get("total_tokens", 0) or 0),
