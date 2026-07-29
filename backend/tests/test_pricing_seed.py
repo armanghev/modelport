@@ -1,52 +1,91 @@
 from __future__ import annotations
 
+import json
+from decimal import Decimal
 from pathlib import Path
 
-from app.pricing_seed import load_pricing_catalog, seed_pricing_overrides
 from sqlalchemy import select
 
 from app.database import PricingOverride, get_provider_by_slug
+from app.pricing.rate_card import RateCard
+from app.pricing_seed import load_pricing_catalog, seed_pricing_overrides
+
+FIXTURE = Path(__file__).parent / "fixtures" / "litellm_subset.json"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_seed_pricing_overrides_is_idempotent(client) -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    catalog_path = repo_root / "pricing_catalog.yaml"
-    session_factory = client.app.state.session_factory
-
-    first = seed_pricing_overrides(
-        session_factory,
-        catalog_path=catalog_path,
+def _seed(client) -> dict[str, int]:
+    return seed_pricing_overrides(
+        client.app.state.session_factory,
+        catalog_path=REPO_ROOT / "pricing_catalog.yaml",
         sync_openrouter=False,
         discover_ollama=False,
-    )
-    second = seed_pricing_overrides(
-        session_factory,
-        catalog_path=catalog_path,
-        sync_openrouter=False,
-        discover_ollama=False,
+        litellm_payload=json.loads(FIXTURE.read_text(encoding="utf-8")),
     )
 
-    assert first["catalog"] == second["catalog"]
 
-    with session_factory() as session:
-        gemini = get_provider_by_slug(session, "gemini")
-        assert gemini is not None
-        gemini_pro = session.scalar(
+def _find(client, provider_slug: str, model: str) -> PricingOverride | None:
+    with client.app.state.session_factory() as session:
+        provider = get_provider_by_slug(session, provider_slug)
+        return session.scalar(
             select(PricingOverride).where(
-                PricingOverride.provider_id == gemini.id,
-                PricingOverride.model == "models/gemini-2.5-pro",
+                PricingOverride.provider_id == provider.id,
+                PricingOverride.model == model,
             )
         )
-    assert gemini_pro is not None
-    assert gemini_pro.input_per_1m_usd == 1.25
-    assert gemini_pro.output_per_1m_usd == 10.0
 
 
-def test_load_pricing_catalog_parses_provider_models() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    catalog = load_pricing_catalog(repo_root / "pricing_catalog.yaml")
-    assert "openai" in catalog
-    assert catalog["openai"]["gpt-4.1"]["input_per_1m_usd"] == 2.0
+def test_seeding_is_idempotent(client) -> None:
+    first = _seed(client)
+    second = _seed(client)
+
+    assert first["litellm"] == second["litellm"]
+
+
+def test_seeded_card_carries_cache_rates(client) -> None:
+    _seed(client)
+
+    record = _find(client, "anthropic", "claude-sonnet-4-6")
+
+    assert record is not None
+    assert record.source == "litellm"
+    assert record.input_per_1m_usd == 3.0
+    card = RateCard.model_validate_json(record.rate_card_json)
+    assert card.standard.cache_read_per_1m == Decimal("0.3")
+
+
+def test_manual_cards_are_not_overwritten_by_reimport(client) -> None:
+    _seed(client)
+
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        provider = get_provider_by_slug(session, "anthropic")
+        record = session.scalar(
+            select(PricingOverride).where(
+                PricingOverride.provider_id == provider.id,
+                PricingOverride.model == "claude-sonnet-4-6",
+            )
+        )
+        record.source = "manual"
+        record.input_per_1m_usd = 99.0
+        session.commit()
+
+    _seed(client)
+
+    assert _find(client, "anthropic", "claude-sonnet-4-6").input_per_1m_usd == 99.0
+
+
+def test_local_yaml_still_seeds_ollama_defaults(client) -> None:
+    catalog = load_pricing_catalog(REPO_ROOT / "pricing_catalog.yaml")
+
+    assert catalog["ollama"]["*"]["input_per_1m_usd"] == 0.0
+
+    _seed(client)
+    record = _find(client, "ollama", "*")
+
+    assert record is not None
+    assert record.rate_card_json is not None
+    assert RateCard.model_validate_json(record.rate_card_json).source == "local"
 
 
 def test_fetch_openrouter_pricing_skips_negative_sentinel_prices(monkeypatch) -> None:

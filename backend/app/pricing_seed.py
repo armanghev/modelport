@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
@@ -15,6 +16,8 @@ from app.model_metadata_service import (
     parse_openrouter_model,
     sync_openrouter_metadata,
 )
+from app.pricing.catalog_import import build_rate_cards, fetch_litellm_catalog
+from app.pricing.rate_card import RateCard, TierRates, source_rank
 DEFAULT_CATALOG_PATH = Path("../pricing_catalog.yaml")
 
 
@@ -26,6 +29,38 @@ def load_pricing_catalog(catalog_path: Path) -> dict[str, dict[str, dict[str, fl
     return catalog
 
 
+def upsert_rate_card(
+    session: Session,
+    *,
+    provider_id: str,
+    model: str,
+    card: RateCard,
+) -> bool:
+    """Write a rate card, refusing to downgrade a higher-precedence source."""
+    record = session.scalar(
+        select(PricingOverride).where(
+            PricingOverride.provider_id == provider_id,
+            PricingOverride.model == model,
+        )
+    )
+
+    if record is not None and source_rank(record.source) > source_rank(card.source):
+        return False
+
+    if record is None:
+        record = PricingOverride(provider_id=provider_id, model=model, enabled=True)
+        session.add(record)
+
+    record.rate_card_json = card.model_dump_json()
+    record.source = card.source
+    # Kept in the same transaction as the card so the two never diverge.
+    record.input_per_1m_usd = float(card.standard.input_per_1m)
+    record.output_per_1m_usd = float(card.standard.output_per_1m)
+    record.enabled = True
+    session.flush()
+    return True
+
+
 def upsert_pricing_override(
     session: Session,
     *,
@@ -33,29 +68,17 @@ def upsert_pricing_override(
     model: str,
     input_per_1m_usd: float,
     output_per_1m_usd: float,
-) -> PricingOverride:
-    record = session.scalar(
-        select(PricingOverride).where(
-            PricingOverride.provider_id == provider_id,
-            PricingOverride.model == model,
-        )
+    source: str = "legacy_seed",
+) -> bool:
+    """Upsert a flat two-rate card for sources that report no cache dimensions."""
+    card = RateCard(
+        standard=TierRates(
+            input_per_1m=Decimal(str(input_per_1m_usd)),
+            output_per_1m=Decimal(str(output_per_1m_usd)),
+        ),
+        source=source,
     )
-    if record is None:
-        record = PricingOverride(
-            provider_id=provider_id,
-            model=model,
-            input_per_1m_usd=input_per_1m_usd,
-            output_per_1m_usd=output_per_1m_usd,
-            currency="USD",
-            enabled=True,
-        )
-        session.add(record)
-    else:
-        record.input_per_1m_usd = input_per_1m_usd
-        record.output_per_1m_usd = output_per_1m_usd
-        record.enabled = True
-    session.flush()
-    return record
+    return upsert_rate_card(session, provider_id=provider_id, model=model, card=card)
 
 
 def resolve_provider_uuid(session: Session, slug: str) -> str | None:
@@ -88,6 +111,7 @@ def seed_catalog_pricing(
                 model=model,
                 input_per_1m_usd=float(rates["input_per_1m_usd"]),
                 output_per_1m_usd=float(rates["output_per_1m_usd"]),
+                source="local",
             )
             upserted += 1
     return upserted
@@ -143,6 +167,7 @@ def seed_openrouter_pricing(session: Session, *, configured_provider_slugs: set[
             model=model_id,
             input_per_1m_usd=input_per_1m,
             output_per_1m_usd=output_per_1m,
+            source="openrouter",
         )
         upserted += 1
     return upserted
@@ -194,8 +219,36 @@ def seed_ollama_discovered_models(
             model=model_id,
             input_per_1m_usd=float(default_rates["input_per_1m_usd"]),
             output_per_1m_usd=float(default_rates["output_per_1m_usd"]),
+            source="local",
         )
         upserted += 1
+    return upserted
+
+
+def seed_litellm_rate_cards(
+    session: Session,
+    payload: dict | None,
+    *,
+    configured_provider_slugs: set[str],
+) -> int:
+    if payload is None:
+        try:
+            payload = fetch_litellm_catalog()
+        except Exception:
+            # A failed fetch must never wipe or downgrade existing rates.
+            return 0
+
+    provider_uuids = {
+        slug: resolve_provider_uuid(session, slug) for slug in configured_provider_slugs
+    }
+
+    upserted = 0
+    for (provider_slug, model), card in build_rate_cards(payload).items():
+        provider_uuid = provider_uuids.get(provider_slug)
+        if provider_uuid is None:
+            continue
+        if upsert_rate_card(session, provider_id=provider_uuid, model=model, card=card):
+            upserted += 1
     return upserted
 
 
@@ -206,6 +259,8 @@ def seed_pricing_overrides(
     sync_openrouter: bool = True,
     discover_ollama: bool = True,
     sync_metadata: bool = True,
+    sync_litellm: bool = True,
+    litellm_payload: dict | None = None,
 ) -> dict[str, int]:
     catalog = load_pricing_catalog(catalog_path)
     with session_factory() as session:
@@ -216,6 +271,15 @@ def seed_pricing_overrides(
             session,
             catalog,
             configured_provider_slugs=configured_provider_slugs,
+        )
+        litellm_count = (
+            seed_litellm_rate_cards(
+                session,
+                litellm_payload,
+                configured_provider_slugs=configured_provider_slugs,
+            )
+            if sync_litellm or litellm_payload is not None
+            else 0
         )
         openrouter_count = (
             seed_openrouter_pricing(session, configured_provider_slugs=configured_provider_slugs)
@@ -242,6 +306,7 @@ def seed_pricing_overrides(
 
     return {
         "catalog": catalog_count,
+        "litellm": litellm_count,
         "openrouter": openrouter_count,
         "ollama_discovered": ollama_count,
         "metadata": metadata_count,
