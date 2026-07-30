@@ -84,6 +84,7 @@ def app_config(tmp_path: Path) -> Path:
 def managed_test_env(encryption_key: str) -> Iterator[None]:
     previous_proxy_token = os.environ.get("MODELPORT_TOKEN")
     previous_dashboard_token = os.environ.get("MODELPORT_DASHBOARD_TOKEN")
+    previous_dashboard_auth = os.environ.get("MODELPORT_DASHBOARD_AUTH_ENABLED")
     previous_openai = os.environ.get("OPENAI_API_KEY")
     previous_openrouter = os.environ.get("OPENROUTER_API_KEY")
     previous_anthropic = os.environ.get("ANTHROPIC_API_KEY")
@@ -91,6 +92,7 @@ def managed_test_env(encryption_key: str) -> Iterator[None]:
     previous_encryption = os.environ.get("PROXY_ENCRYPTION_KEY")
     os.environ["MODELPORT_TOKEN"] = "test-local-token"
     os.environ["MODELPORT_DASHBOARD_TOKEN"] = DASHBOARD_TOKEN
+    os.environ["MODELPORT_DASHBOARD_AUTH_ENABLED"] = "true"
     os.environ["OPENAI_API_KEY"] = "sk-openai-seeded"
     os.environ["OPENROUTER_API_KEY"] = "sk-openrouter-seeded"
     os.environ["ANTHROPIC_API_KEY"] = "sk-anthropic-seeded"
@@ -109,6 +111,11 @@ def managed_test_env(encryption_key: str) -> Iterator[None]:
             os.environ.pop("MODELPORT_DASHBOARD_TOKEN", None)
         else:
             os.environ["MODELPORT_DASHBOARD_TOKEN"] = previous_dashboard_token
+
+        if previous_dashboard_auth is None:
+            os.environ.pop("MODELPORT_DASHBOARD_AUTH_ENABLED", None)
+        else:
+            os.environ["MODELPORT_DASHBOARD_AUTH_ENABLED"] = previous_dashboard_auth
 
         if previous_openai is None:
             os.environ.pop("OPENAI_API_KEY", None)

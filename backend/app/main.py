@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,8 +11,9 @@ from dotenv import load_dotenv
 from app.api.admin import router as admin_router
 from app.api.analytics import router as analytics_router
 from app.api.anthropic import router as anthropic_router
+from app.api.dashboard_auth import router as dashboard_auth_router
 from app.api.openai import router as openai_router
-from app.config import load_config
+from app.config import load_config, read_env_bool
 from app.database import build_session_factory, initialize_database, purge_expired_tracking_data, seed_admin_data
 from app.compatibility.exception_handlers import register_exception_handlers
 from app.openapi import configure_openapi
@@ -24,10 +26,18 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
     if dotenv_path.exists():
         load_dotenv(dotenv_path=dotenv_path, override=False)
     config = load_config(config_path)
+    dashboard_auth_enabled = read_env_bool(
+        config.security.dashboard_auth_enabled_env,
+        default=True,
+    )
     session_factory = build_session_factory(config.database.url)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if dashboard_auth_enabled and not os.environ.get(config.security.dashboard_token):
+            raise RuntimeError(
+                f"{config.security.dashboard_token} is required when dashboard authentication is enabled."
+            )
         app.state.config = config
         app.state.session_factory = session_factory
         initialize_database(session_factory)
@@ -47,6 +57,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
         ),
         lifespan=lifespan,
     )
+    app.state.dashboard_auth_enabled = dashboard_auth_enabled
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -59,6 +70,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
     )
     app.include_router(admin_router)
     app.include_router(analytics_router)
+    app.include_router(dashboard_auth_router)
     app.include_router(anthropic_router)
     app.include_router(openai_router)
     register_exception_handlers(app)
