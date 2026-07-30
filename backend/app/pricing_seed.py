@@ -53,9 +53,10 @@ def upsert_rate_card(
 
     record.rate_card_json = card.model_dump_json()
     record.source = card.source
-    # Kept in the same transaction as the card so the two never diverge.
-    record.input_per_1m_usd = float(card.standard.input_per_1m)
-    record.output_per_1m_usd = float(card.standard.output_per_1m)
+    # Operation-only cards have no token rates; the legacy numeric columns
+    # remain zero while consumers use the serialized card's operation rates.
+    record.input_per_1m_usd = float(card.standard.input_per_1m) if card.standard else 0.0
+    record.output_per_1m_usd = float(card.standard.output_per_1m) if card.standard else 0.0
     record.enabled = True
     session.flush()
     return record

@@ -88,6 +88,30 @@ def test_local_yaml_still_seeds_ollama_defaults(client) -> None:
     assert RateCard.model_validate_json(record.rate_card_json).source == "local"
 
 
+def test_operation_only_litellm_card_does_not_prevent_seeding(client) -> None:
+    counts = seed_pricing_overrides(
+        client.app.state.session_factory,
+        catalog_path=REPO_ROOT / "pricing_catalog.yaml",
+        sync_openrouter=False,
+        discover_ollama=False,
+        litellm_payload={
+            "gpt-image-test": {
+                "litellm_provider": "openai",
+                "mode": "image_generation",
+                "output_cost_per_image": 0.04,
+            }
+        },
+    )
+
+    record = _find(client, "openai", "gpt-image-test")
+
+    assert counts["litellm"] == 1
+    assert record is not None
+    card = RateCard.model_validate_json(record.rate_card_json)
+    assert card.standard is None
+    assert card.operation_rates["image_output"] == Decimal("0.04")
+
+
 def test_fetch_openrouter_pricing_skips_negative_sentinel_prices(monkeypatch) -> None:
     from app.pricing_seed import fetch_openrouter_pricing
 
