@@ -64,11 +64,29 @@ def pricing_service_tier(request_payload: Any) -> str:
     return normalized
 
 
-def pricing_operation_units(endpoint: str, response_payload: Any) -> dict[str, int]:
+def pricing_operation_units(
+    endpoint: str,
+    request_payload: Any,
+    response_payload: Any,
+) -> dict[str, int]:
     if endpoint.startswith("/v1/images/") and isinstance(response_payload, dict):
         images = response_payload.get("data")
         if isinstance(images, list) and images:
-            return {"image_output": len(images)}
+            units = {"image_output": len(images)}
+            payload = (
+                request_payload
+                if isinstance(request_payload, dict)
+                else getattr(request_payload, "model_dump", lambda: {})()
+            )
+            size = payload.get("size") if isinstance(payload, dict) else None
+            if isinstance(size, str) and "x" in size:
+                try:
+                    width, height = (int(part) for part in size.lower().split("x", maxsplit=1))
+                    if width > 0 and height > 0:
+                        units["image_output_pixel"] = len(images) * width * height
+                except ValueError:
+                    pass
+            return units
     if endpoint.startswith("/v1/audio/") and isinstance(response_payload, dict):
         usage = response_payload.get("usage")
         if isinstance(usage, dict):
@@ -382,7 +400,7 @@ def log_tracked_proxy_request(
 
     context = pricing_context or RequestContext(
         service_tier=service_tier,
-        operation_units=pricing_operation_units(endpoint, response_payload),
+        operation_units=pricing_operation_units(endpoint, request_payload, response_payload),
         tool_calls=pricing_tool_calls(response_payload),
     )
     service_tier = context.service_tier
