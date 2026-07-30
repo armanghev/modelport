@@ -3,7 +3,7 @@
 ModelPort currently has three installable parts:
 
 - the FastAPI backend
-- the Next.js dashboard
+- the Vite-built dashboard assets served by FastAPI
 - the optional `modelport-configure` CLI
 
 ## Backend
@@ -166,37 +166,33 @@ Uvicorn should report `https://127.0.0.1:13243`. Plain HTTP still works if you o
 
 ## Dashboard
 
-```bash
-cd dashboard
-pnpm install
-pnpm dev
-```
-
-Point the dashboard at the HTTPS backend:
+Install frontend dependencies and produce the static build from the repository
+root:
 
 ```bash
-NEXT_PUBLIC_MODELPORT_BACKEND_URL=https://127.0.0.1:13243
+pnpm --dir dashboard install
+pnpm --dir dashboard build
 ```
 
-If the dashboard process does not trust mkcert certificates (common with Node), also set:
+Then start Uvicorn as shown above and open:
 
-### macOS
+```text
+https://127.0.0.1:13243/dashboard
+```
+
+The compiled files live in the gitignored
+`backend/app/static/dashboard/` directory. They are never generated during
+backend startup. If they are missing, dashboard routes return `503` while the
+proxy and API routes remain available.
+
+For frontend development, start FastAPI and run:
 
 ```bash
-export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
+pnpm --dir dashboard dev
 ```
 
-### Linux
-
-```bash
-export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
-```
-
-### Windows
-
-```cmd
-for /f "delims=" %A in ('mkcert -CAROOT') do set "NODE_EXTRA_CA_CERTS=%A\rootCA.pem"
-```
+Vite serves `/dashboard/` and proxies dashboard API paths to FastAPI. No
+frontend URL or token environment variables are required.
 
 ## Docs
 
@@ -244,12 +240,14 @@ modelport-configure
 The backend reads:
 
 - `config.yaml` for seeded providers and database location
-- `.env` for `MODELPORT_TOKEN` and provider API keys
+- `.env` for proxy/dashboard authentication and provider API keys
 
 At minimum:
 
 ```bash
 MODELPORT_TOKEN=dev-modelport-token
+MODELPORT_DASHBOARD_TOKEN=dev-dashboard-token
+MODELPORT_DASHBOARD_AUTH_ENABLED=true
 ```
 
 Provider keys are optional until you route traffic to those providers. Ollama is the exception because its default local setup does not require an API key.

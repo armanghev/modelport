@@ -39,7 +39,7 @@ Client
 ## Repository Layout
 
 - `backend/`: FastAPI proxy, routing, translators, tracking, admin APIs, analytics APIs, and tests
-- `dashboard/`: Next.js dashboard for observing usage and managing providers
+- `dashboard/`: Vite-built React dashboard served by FastAPI
 - `cli/`: `modelport-configure` CLI package
 - `config.yaml`: local provider defaults and database path
 - `pricing_catalog.yaml`: seeded pricing overrides
