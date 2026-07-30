@@ -89,6 +89,67 @@ def test_log_tracked_proxy_request_writes_cache_breakdown(client) -> None:
     assert record.context_tier == "standard"
 
 
+def test_log_tracked_proxy_request_uses_requested_service_tier(client) -> None:
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        provider = get_provider_by_slug(session, "anthropic")
+        assert provider is not None
+        card = RateCard(
+            standard=TierRates(input_per_1m=Decimal("3"), output_per_1m=Decimal("15")),
+            service_tiers={
+                "flex": TierRates(input_per_1m=Decimal("1"), output_per_1m=Decimal("5"))
+            },
+            source="manual",
+        )
+        session.add(
+            PricingOverride(
+                provider_id=provider.id,
+                model="claude-flex",
+                input_per_1m_usd=3.0,
+                output_per_1m_usd=15.0,
+                rate_card_json=card.model_dump_json(),
+                source="manual",
+                enabled=True,
+            )
+        )
+        session.commit()
+
+        from app.api.proxy_common import log_tracked_proxy_request
+        from app.routing.provider_router import select_provider_credential
+
+        route = ResolvedProviderRoute(
+            requested_model="claude-flex",
+            upstream_model="claude-flex",
+            provider=provider,
+            credential=select_provider_credential(provider),
+        )
+        log_tracked_proxy_request(
+            session,
+            input_format="openai",
+            output_format="openai",
+            endpoint="/v1/chat/completions",
+            client_name="test",
+            resolved_route=route,
+            requested_model="claude-flex",
+            duration_ms=10,
+            status_code=200,
+            streamed=False,
+            request_payload={"model": "claude-flex", "service_tier": "flex"},
+            response_payload={"id": "chatcmpl_flex"},
+            usage_snapshot=UsageSnapshot.flat(
+                input_tokens=1_000,
+                output_tokens=1_000,
+                total_tokens=2_000,
+                token_source="provider_reported",
+            ),
+        )
+        record = session.scalars(select(ApiRequest).order_by(ApiRequest.created_at.desc())).first()
+
+    assert record is not None
+    assert record.service_tier == "flex"
+    assert record.estimated_cost_usd == 0.006
+
+
 def test_log_tracked_proxy_request_does_not_price_legacy_rates(client) -> None:
     session_factory = client.app.state.session_factory
     with session_factory() as session:

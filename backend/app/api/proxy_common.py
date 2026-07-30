@@ -50,6 +50,19 @@ bearer_scheme = HTTPBearer(
 )
 
 
+def pricing_service_tier(request_payload: Any) -> str:
+    if isinstance(request_payload, dict):
+        value = request_payload.get("service_tier")
+    else:
+        value = getattr(request_payload, "service_tier", None)
+    if not isinstance(value, str):
+        return "standard"
+    normalized = value.strip().lower()
+    if normalized in {"", "auto", "default", "standard", "standard_only"}:
+        return "standard"
+    return normalized
+
+
 def get_session(request: Request) -> Session:
     session_factory: sessionmaker[Session] = request.app.state.session_factory
     with session_factory() as session:
@@ -314,7 +327,7 @@ def log_tracked_proxy_request(
     cost_cache_write_usd = None
     cost_tools_usd = None
     context_tier = None
-    service_tier = None
+    service_tier = pricing_service_tier(request_payload)
 
     if usage_snapshot is not None:
         input_tokens = usage_snapshot.input_tokens
@@ -334,7 +347,11 @@ def log_tracked_proxy_request(
                 requested_model=requested_model,
             )
             if card is not None:
-                breakdown = price(usage_snapshot, card, RequestContext())
+                breakdown = price(
+                    usage_snapshot,
+                    card,
+                    RequestContext(service_tier=service_tier),
+                )
                 estimated_cost_usd = to_storage_usd(breakdown.total_usd)
                 pricing_source = card.source
                 cost_input_usd = float(breakdown.input_usd)
