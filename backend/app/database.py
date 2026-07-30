@@ -85,6 +85,8 @@ class PricingOverride(TimestampMixin, Base):
     input_per_1m_usd: Mapped[float] = mapped_column(Float, nullable=False)
     output_per_1m_usd: Mapped[float] = mapped_column(Float, nullable=False)
     currency: Mapped[str] = mapped_column(String(16), default="USD", nullable=False)
+    rate_card_json: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(32), default="legacy_seed", nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
@@ -122,9 +124,24 @@ class ApiRequest(Base):
     provider: Mapped[str | None] = mapped_column(String(64))
     input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     token_source: Mapped[str | None] = mapped_column(String(64))
+    uncached_input_tokens: Mapped[int | None] = mapped_column(Integer)
+    cache_read_tokens: Mapped[int | None] = mapped_column(Integer)
+    cache_write_5m_tokens: Mapped[int | None] = mapped_column(Integer)
+    cache_write_1h_tokens: Mapped[int | None] = mapped_column(Integer)
     estimated_cost_usd: Mapped[float | None] = mapped_column(Float)
+    cost_input_usd: Mapped[float | None] = mapped_column(Float)
+    cost_output_usd: Mapped[float | None] = mapped_column(Float)
+    cost_reasoning_usd: Mapped[float | None] = mapped_column(Float)
+    cost_cache_read_usd: Mapped[float | None] = mapped_column(Float)
+    cost_cache_write_usd: Mapped[float | None] = mapped_column(Float)
+    cost_tools_usd: Mapped[float | None] = mapped_column(Float)
+    cost_modalities_usd: Mapped[float | None] = mapped_column(Float)
+    pricing_units_json: Mapped[str | None] = mapped_column(Text)
+    context_tier: Mapped[str | None] = mapped_column(String(32))
+    service_tier: Mapped[str | None] = mapped_column(String(32))
     pricing_source: Mapped[str | None] = mapped_column(String(64))
     ttfb_ms: Mapped[int | None] = mapped_column(Integer)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
@@ -201,6 +218,12 @@ def initialize_database(session_factory: sessionmaker[Session]) -> None:
             session.add(SchemaVersion(version=1))
         if session.get(SchemaVersion, 2) is None:
             session.add(SchemaVersion(version=2))
+        if session.get(SchemaVersion, 3) is None:
+            session.add(SchemaVersion(version=3))
+        if session.get(SchemaVersion, 4) is None:
+            session.add(SchemaVersion(version=4))
+        if session.get(SchemaVersion, 5) is None:
+            session.add(SchemaVersion(version=5))
         session.commit()
 
 
@@ -242,9 +265,46 @@ def ensure_runtime_columns(engine) -> None:
         if "response_body" not in existing_columns:
             statements.append("ALTER TABLE api_requests ADD COLUMN response_body TEXT")
 
+        breakdown_columns = {
+            "uncached_input_tokens": "INTEGER",
+            "cache_read_tokens": "INTEGER",
+            "cache_write_5m_tokens": "INTEGER",
+            "cache_write_1h_tokens": "INTEGER",
+            "cost_input_usd": "FLOAT",
+            "cost_output_usd": "FLOAT",
+            "reasoning_tokens": "INTEGER",
+            "cost_reasoning_usd": "FLOAT",
+            "cost_cache_read_usd": "FLOAT",
+            "cost_cache_write_usd": "FLOAT",
+            "cost_tools_usd": "FLOAT",
+            "cost_modalities_usd": "FLOAT",
+            "pricing_units_json": "TEXT",
+            "context_tier": "VARCHAR(32)",
+            "service_tier": "VARCHAR(32)",
+        }
+        for column_name, column_type in breakdown_columns.items():
+            if column_name not in existing_columns:
+                statements.append(
+                    f"ALTER TABLE api_requests ADD COLUMN {column_name} {column_type}"
+                )
+
         if statements:
             with engine.begin() as connection:
                 for statement in statements:
+                    connection.exec_driver_sql(statement)
+
+    if "pricing_overrides" in table_names:
+        pricing_columns = {column["name"] for column in inspector.get_columns("pricing_overrides")}
+        pricing_statements: list[str] = []
+        if "rate_card_json" not in pricing_columns:
+            pricing_statements.append("ALTER TABLE pricing_overrides ADD COLUMN rate_card_json TEXT")
+        if "source" not in pricing_columns:
+            pricing_statements.append(
+                "ALTER TABLE pricing_overrides ADD COLUMN source VARCHAR(32) DEFAULT 'legacy_seed'"
+            )
+        if pricing_statements:
+            with engine.begin() as connection:
+                for statement in pricing_statements:
                     connection.exec_driver_sql(statement)
 
     if "proxy_response_resources" not in table_names:

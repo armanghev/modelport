@@ -62,6 +62,7 @@ class OpenAIChatCompletionCreate(BaseModel):
     logprobs: bool | None = None
     top_logprobs: int | None = None
     parallel_tool_calls: bool | None = None
+    service_tier: str | None = None
 
 
 class OpenAIChatCompletionResponse(BaseModel):
@@ -107,6 +108,7 @@ class OpenAIResponseCreate(BaseModel):
     top_p: float | None = None
     tools: list[OpenAIToolDefinition] | None = None
     tool_choice: str | dict[str, Any] | None = None
+    service_tier: str | None = None
 
 
 class OpenAIResponse(BaseModel):

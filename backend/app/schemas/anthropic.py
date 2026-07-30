@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 
 class AnthropicTextBlock(BaseModel):
@@ -79,8 +79,24 @@ AnthropicResponseContent = Annotated[
 
 
 class AnthropicUsage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_creation: dict[str, Any] | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_usage(self, handler):
+        data = handler(self)
+        if not data.get("cache_read_input_tokens"):
+            data.pop("cache_read_input_tokens", None)
+        if not data.get("cache_creation_input_tokens"):
+            data.pop("cache_creation_input_tokens", None)
+        if not data.get("cache_creation"):
+            data.pop("cache_creation", None)
+        return data
 
 
 class AnthropicMessageResponse(BaseModel):

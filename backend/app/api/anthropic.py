@@ -5,6 +5,7 @@ import time
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.proxy_common import (
@@ -24,6 +25,8 @@ from app.api.proxy_common import (
     stream_tracked_proxy_routes,
 )
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
+from app.database import ApiRequest
+from app.pricing.calculator import RequestContext
 from app.providers.anthropic_compatible import (
     cancel_message_batch,
     count_message_tokens,
@@ -54,6 +57,7 @@ from app.tracking.usage_service import (
     build_stream_usage_snapshot,
     estimate_request_tokens,
     extract_usage_snapshot,
+    normalize_anthropic_shaped_usage,
 )
 from app.translators.anthropic_to_openai import translate_anthropic_message_to_openai
 from app.translators.openai_to_anthropic import (
@@ -87,6 +91,18 @@ def resolve_anthropic_compatible_route(
     return resolved_route, provider_secret
 
 
+def _merge_anthropic_usage(target: dict[str, object], source: dict[str, object]) -> None:
+    for key, value in source.items():
+        if key == "cache_creation" and isinstance(value, dict):
+            cache_creation = target.get("cache_creation")
+            if isinstance(cache_creation, dict):
+                cache_creation.update(value)
+            else:
+                target["cache_creation"] = dict(value)
+        else:
+            target[key] = value
+
+
 def update_anthropic_stream_summary(
     line: str,
     *,
@@ -116,12 +132,9 @@ def update_anthropic_stream_summary(
                 summary["request_id"] = message_id
             usage = message.get("usage")
             if isinstance(usage, dict):
-                input_tokens = usage.get("input_tokens")
-                output_tokens = usage.get("output_tokens")
-                if isinstance(input_tokens, int):
-                    summary["input_tokens"] = input_tokens
-                if isinstance(output_tokens, int):
-                    summary["output_tokens"] = output_tokens
+                if not isinstance(summary.get("usage"), dict):
+                    summary["usage"] = {}
+                _merge_anthropic_usage(summary["usage"], usage)
     elif event_type == "content_block_delta":
         delta = payload.get("delta")
         if isinstance(delta, dict) and delta.get("type") == "text_delta":
@@ -136,9 +149,9 @@ def update_anthropic_stream_summary(
                 summary["stop_reason"] = stop_reason
         usage = payload.get("usage")
         if isinstance(usage, dict):
-            output_tokens = usage.get("output_tokens")
-            if isinstance(output_tokens, int):
-                summary["output_tokens"] = output_tokens
+            if not isinstance(summary.get("usage"), dict):
+                summary["usage"] = {}
+            _merge_anthropic_usage(summary["usage"], usage)
 
 
 @router.post("/v1/messages/count_tokens", response_model=AnthropicMessageCountTokensResponse)
@@ -419,6 +432,37 @@ def retrieve_message_batch_results(
         },
         extract_request_id=lambda _result: None,
     )
+    for line in content.decode("utf-8").splitlines():
+        try:
+            item = json.loads(line)
+            custom_id = item.get("custom_id")
+            message = item.get("result", {}).get("message", {})
+            usage = message.get("usage")
+            model = message.get("model")
+            if not isinstance(custom_id, str) or not isinstance(usage, dict) or not isinstance(model, str):
+                continue
+            request_id = f"batch:{message_batch_id}:{custom_id}"
+            if session.scalar(select(ApiRequest.id).where(ApiRequest.request_id == request_id)):
+                continue
+            log_tracked_proxy_request(
+                session,
+                input_format="anthropic",
+                output_format="anthropic",
+                endpoint="/v1/messages/batches/{message_batch_id}/results/item",
+                client_name=resolve_client_name(request),
+                resolved_route=resolved_route,
+                requested_model=model,
+                duration_ms=0,
+                status_code=200,
+                streamed=False,
+                request_payload={"message_batch_id": message_batch_id, "custom_id": custom_id},
+                response_payload=item,
+                usage_snapshot=normalize_anthropic_shaped_usage(usage),
+                pricing_context=RequestContext(service_tier="batch"),
+                request_id=request_id,
+            )
+        except (UnicodeDecodeError, ValueError, TypeError):
+            continue
     return Response(content=content, media_type=content_type)
 
 
@@ -659,8 +703,7 @@ def create_message(
             )
             stream_summary: dict[str, object] = {
                 "request_id": None,
-                "input_tokens": 0,
-                "output_tokens": 0,
+                "usage": {},
                 "stop_reason": None,
                 "text_parts": streamed_text_parts,
             }
@@ -682,19 +725,21 @@ def create_message(
                 if isinstance(stream_summary.get("request_id"), str)
                 else None
             )
-            input_tokens = int(stream_summary.get("input_tokens", 0) or 0)
-            output_tokens = int(stream_summary.get("output_tokens", 0) or 0)
             completion_reason = (
                 str(stream_summary["stop_reason"])
                 if isinstance(stream_summary.get("stop_reason"), str)
                 else None
             )
-            usage_snapshot = UsageSnapshot(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=input_tokens + output_tokens,
-                token_source="provider",
-            )
+            raw_usage = stream_summary.get("usage")
+            if isinstance(raw_usage, dict) and raw_usage:
+                usage_snapshot = normalize_anthropic_shaped_usage(raw_usage)
+            else:
+                usage_snapshot = UsageSnapshot.flat(
+                    input_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    token_source="provider",
+                )
         else:
             openai_payload = translate_anthropic_message_to_openai(
                 payload,
@@ -832,12 +877,16 @@ def create_message(
                 payload=anthropic_payload,
             )
             anthropic_response = AnthropicMessageResponse.model_validate(upstream_response)
-            usage_snapshot = UsageSnapshot(
-                input_tokens=anthropic_response.usage.input_tokens,
-                output_tokens=anthropic_response.usage.output_tokens,
-                total_tokens=anthropic_response.usage.input_tokens + anthropic_response.usage.output_tokens,
-                token_source="provider",
-            )
+            raw_usage = upstream_response.get("usage")
+            if isinstance(raw_usage, dict):
+                usage_snapshot = normalize_anthropic_shaped_usage(raw_usage)
+            else:
+                usage_snapshot = UsageSnapshot.flat(
+                    input_tokens=anthropic_response.usage.input_tokens,
+                    output_tokens=anthropic_response.usage.output_tokens,
+                    total_tokens=anthropic_response.usage.input_tokens + anthropic_response.usage.output_tokens,
+                    token_source="provider",
+                )
             return anthropic_response, usage_snapshot
 
         openai_payload = translate_anthropic_message_to_openai(

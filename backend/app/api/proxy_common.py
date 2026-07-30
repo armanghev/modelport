@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import time
 from collections.abc import Callable, Generator, Iterator
@@ -22,10 +23,10 @@ from app.routing.model_prefixes import (
 )
 from app.routing.provider_router import ResolvedProviderRoute, resolve_provider_routes
 from app.security import EncryptionConfigurationError, decrypt_secret
-from app.tracking.cost_service import calculate_estimated_cost_usd
+from app.pricing.calculator import RequestContext, price, to_storage_usd
+from app.pricing.resolver import resolve_rate_card
 from app.tracking.io_logging import io_log_kwargs
 from app.tracking.log_service import create_api_request_log
-from app.tracking.pricing import resolve_pricing_override
 from app.tracking.usage_service import UsageSnapshot
 
 T = TypeVar("T")
@@ -48,6 +49,74 @@ bearer_scheme = HTTPBearer(
     scheme_name="BearerAuth",
     description="ModelPort proxy token from the MODELPORT_TOKEN environment variable.",
 )
+
+
+def pricing_service_tier(request_payload: Any) -> str:
+    if isinstance(request_payload, dict):
+        value = request_payload.get("service_tier")
+    else:
+        value = getattr(request_payload, "service_tier", None)
+    if not isinstance(value, str):
+        return "standard"
+    normalized = value.strip().lower()
+    if normalized in {"", "auto", "default", "standard", "standard_only"}:
+        return "standard"
+    return normalized
+
+
+def pricing_operation_units(
+    endpoint: str,
+    request_payload: Any,
+    response_payload: Any,
+) -> dict[str, int]:
+    if endpoint.startswith("/v1/images/") and isinstance(response_payload, dict):
+        images = response_payload.get("data")
+        if isinstance(images, list) and images:
+            units = {"image_output": len(images)}
+            payload = (
+                request_payload
+                if isinstance(request_payload, dict)
+                else getattr(request_payload, "model_dump", lambda: {})()
+            )
+            size = payload.get("size") if isinstance(payload, dict) else None
+            if isinstance(size, str) and "x" in size:
+                try:
+                    width, height = (int(part) for part in size.lower().split("x", maxsplit=1))
+                    if width > 0 and height > 0:
+                        units["image_output_pixel"] = len(images) * width * height
+                except ValueError:
+                    pass
+            return units
+    if endpoint.startswith("/v1/audio/") and isinstance(response_payload, dict):
+        usage = response_payload.get("usage")
+        if isinstance(usage, dict):
+            return {
+                operation: int(value)
+                for operation, value in {
+                    "audio_input_token": usage.get("input_audio_tokens"),
+                    "audio_output_token": usage.get("output_audio_tokens"),
+                }.items()
+                if isinstance(value, int) and value > 0
+            }
+    return {}
+
+
+def pricing_tool_calls(response_payload: Any) -> dict[str, int]:
+    if not isinstance(response_payload, dict):
+        return {}
+    output = response_payload.get("output")
+    if not isinstance(output, list):
+        return {}
+    names = {
+        "web_search_call": "web_search",
+        "code_interpreter_call": "code_interpreter",
+        "file_search_call": "file_search_call",
+    }
+    calls: dict[str, int] = {}
+    for item in output:
+        if isinstance(item, dict) and (name := names.get(item.get("type"))):
+            calls[name] = calls.get(name, 0) + 1
+    return calls
 
 
 def get_session(request: Request) -> Session:
@@ -293,6 +362,7 @@ def log_tracked_proxy_request(
     request_payload: Any,
     response_payload: Any,
     usage_snapshot: UsageSnapshot | None = None,
+    pricing_context: RequestContext | None = None,
     error_message: str | None = None,
     request_id: str | None = None,
     ttfb_ms: int | None = None,
@@ -300,27 +370,105 @@ def log_tracked_proxy_request(
 ) -> None:
     input_tokens = 0
     output_tokens = 0
+    reasoning_tokens = None
     total_tokens = 0
     token_source = None
     estimated_cost_usd = None
     pricing_source = None
+    uncached_input_tokens = None
+    cache_read_tokens = None
+    cache_write_5m_tokens = None
+    cache_write_1h_tokens = None
+    cost_input_usd = None
+    cost_output_usd = None
+    cost_reasoning_usd = None
+    cost_cache_read_usd = None
+    cost_cache_write_usd = None
+    cost_tools_usd = None
+    cost_modalities_usd = None
+    pricing_units_json = None
+    context_tier = None
+    service_tier = pricing_service_tier(request_payload)
 
     if usage_snapshot is not None:
+        if (
+            resolved_route.provider.slug == "gemini"
+            and usage_snapshot.reasoning_tokens == 0
+            and usage_snapshot.cache_read_tokens == 0
+            and usage_snapshot.cache_write_5m_tokens == 0
+            and usage_snapshot.cache_write_1h_tokens == 0
+        ):
+            # Gemini's OpenAI-compatible usage often supplies a combined total
+            # but not a thought-token field. The remainder is billable thinking.
+            inferred_reasoning_tokens = max(
+                0,
+                usage_snapshot.total_tokens
+                - usage_snapshot.input_tokens
+                - usage_snapshot.output_tokens,
+            )
+            usage_snapshot.reasoning_tokens = inferred_reasoning_tokens
+            usage_snapshot.output_tokens += inferred_reasoning_tokens
         input_tokens = usage_snapshot.input_tokens
         output_tokens = usage_snapshot.output_tokens
+        reasoning_tokens = usage_snapshot.reasoning_tokens
         total_tokens = usage_snapshot.total_tokens
         token_source = usage_snapshot.token_source
-        pricing_override = resolve_pricing_override(
-            session,
-            provider_id=resolved_route.provider.slug,
-            resolved_model=resolved_route.upstream_model,
-            requested_model=requested_model,
-        )
-        estimated_cost_usd, pricing_source = calculate_estimated_cost_usd(
-            pricing_override,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
+        uncached_input_tokens = usage_snapshot.uncached_input_tokens
+        cache_read_tokens = usage_snapshot.cache_read_tokens
+        cache_write_5m_tokens = usage_snapshot.cache_write_5m_tokens
+        cache_write_1h_tokens = usage_snapshot.cache_write_1h_tokens
+
+    context = pricing_context or RequestContext(
+        service_tier=service_tier,
+        operation_units=pricing_operation_units(endpoint, request_payload, response_payload),
+        tool_calls=pricing_tool_calls(response_payload),
+    )
+    service_tier = context.service_tier
+    if usage_snapshot is not None or context.operation_units or context.tool_calls:
+        try:
+            card = resolve_rate_card(
+                session,
+                provider_id=resolved_route.provider.slug,
+                resolved_model=resolved_route.upstream_model,
+                requested_model=requested_model,
+            )
+            if card is not None:
+                rates = card.rates_for(
+                    context_tier=card.context_tier_for(input_tokens),
+                    service_tier=context.service_tier,
+                )
+                has_priced_operations = any(
+                    count > 0 and name in card.operation_rates
+                    for name, count in context.operation_units.items()
+                )
+                has_priced_tools = any(
+                    count > 0 and charge.name in context.tool_calls for charge in card.tools
+                )
+                if rates is not None or has_priced_operations or has_priced_tools:
+                    breakdown = price(usage_snapshot, card, context)
+                    estimated_cost_usd = to_storage_usd(breakdown.total_usd)
+                    pricing_source = card.source
+                    cost_input_usd = float(breakdown.input_usd)
+                    cost_output_usd = float(breakdown.output_usd)
+                    cost_reasoning_usd = float(breakdown.reasoning_usd)
+                    cost_cache_read_usd = float(breakdown.cache_read_usd)
+                    cost_cache_write_usd = float(breakdown.cache_write_usd)
+                    cost_tools_usd = float(breakdown.tools_usd)
+                    cost_modalities_usd = float(breakdown.modalities_usd)
+                    pricing_units_json = json.dumps(
+                        context.operation_units,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ) or None
+                    context_tier = breakdown.context_tier
+                    service_tier = breakdown.service_tier
+        except Exception:
+            estimated_cost_usd = None
+            pricing_source = "pricing_error"
+            cost_input_usd = cost_output_usd = cost_reasoning_usd = cost_cache_read_usd = None
+            cost_cache_write_usd = cost_tools_usd = None
+            cost_modalities_usd = pricing_units_json = None
+            context_tier = service_tier = None
 
     create_api_request_log(
         session,
@@ -333,9 +481,24 @@ def log_tracked_proxy_request(
         provider=resolved_route.provider.slug,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
         total_tokens=total_tokens,
         token_source=token_source,
+        uncached_input_tokens=uncached_input_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_5m_tokens=cache_write_5m_tokens,
+        cache_write_1h_tokens=cache_write_1h_tokens,
         estimated_cost_usd=estimated_cost_usd,
+        cost_input_usd=cost_input_usd,
+        cost_output_usd=cost_output_usd,
+        cost_reasoning_usd=cost_reasoning_usd,
+        cost_cache_read_usd=cost_cache_read_usd,
+        cost_cache_write_usd=cost_cache_write_usd,
+        cost_tools_usd=cost_tools_usd,
+        cost_modalities_usd=cost_modalities_usd,
+        pricing_units_json=pricing_units_json,
+        context_tier=context_tier,
+        service_tier=service_tier,
         pricing_source=pricing_source,
         duration_ms=duration_ms,
         status_code=status_code,

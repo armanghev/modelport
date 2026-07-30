@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
-from app.database import ProviderHealthCheck
+from app.database import PricingOverride, ProviderHealthCheck
+from app.pricing.rate_card import RateCard
 
 from tests.test_helpers import cards_by_slug, provider_uuid
 
@@ -39,6 +41,38 @@ def test_provider_routes_list_create_and_patch(client: TestClient) -> None:
     assert patch_response.status_code == 200
     assert patch_response.json()["display_name"] == "Groq Cloud"
     assert patch_response.json()["enabled"] is False
+
+
+def test_patching_pricing_override_keeps_manual_card_source_in_sync(client: TestClient) -> None:
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        provider_id = provider_uuid(client, "openai")
+        card = RateCard(
+            standard={"input_per_1m": 2.5, "output_per_1m": 15.0},
+            source="litellm",
+        )
+        record = PricingOverride(
+            provider_id=provider_id,
+            model="gpt-source-sync",
+            input_per_1m_usd=2.5,
+            output_per_1m_usd=15.0,
+            rate_card_json=card.model_dump_json(),
+            source="litellm",
+            enabled=True,
+        )
+        session.add(record)
+        session.commit()
+        pricing_id = record.id
+
+    response = client.patch(f"/admin/pricing/{pricing_id}", json={"enabled": False})
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "manual"
+    with session_factory() as session:
+        record = session.get(PricingOverride, pricing_id)
+        assert record is not None
+        assert record.source == "manual"
+        assert RateCard.model_validate_json(record.rate_card_json).source == "manual"
 
 
 def test_provider_list_includes_latest_health_state(client: TestClient) -> None:
@@ -234,6 +268,33 @@ def test_invalid_provider_references_return_client_errors(client: TestClient) ->
         },
     )
     assert pricing_response.status_code == 404
+
+
+def test_create_pricing_override_writes_manual_rate_card(client: TestClient) -> None:
+    provider_id = provider_uuid(client, "openai")
+    response = client.post(
+        "/admin/pricing",
+        json={
+            "provider_id": provider_id,
+            "model": "gpt-5.6-terra",
+            "input_per_1m_usd": 2.5,
+            "output_per_1m_usd": 15.0,
+            "enabled": True,
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["source"] == "manual"
+
+    with client.app.state.session_factory() as session:
+        record = session.scalar(
+            select(PricingOverride).where(PricingOverride.id == body["id"])
+        )
+        assert record is not None
+        assert record.source == "manual"
+        card = RateCard.model_validate_json(record.rate_card_json)
+        assert float(card.standard.input_per_1m) == 2.5
+        assert card.source == "manual"
 
 
 def test_pricing_create_rejects_negative_rates(client: TestClient) -> None:
