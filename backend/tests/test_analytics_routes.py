@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 
 from app.database import ApiRequest, ModelMetadata, ProviderHealthCheck
 
@@ -320,6 +321,62 @@ def test_requests_analytics_rejects_page_size_over_limit(client: TestClient) -> 
     assert response.status_code == 422
 
 
+def test_requests_analytics_stays_bounded_with_ten_thousand_rows(
+    client: TestClient,
+) -> None:
+    session_factory = client.app.state.session_factory
+    now = datetime.now(UTC)
+    with session_factory() as session:
+        session.bulk_insert_mappings(
+            ApiRequest,
+            [
+                {
+                    "id": f"stress_{index:05d}",
+                    "created_at": now - timedelta(seconds=index),
+                    "input_format": "openai",
+                    "output_format": "openai",
+                    "endpoint": "/v1/chat/completions",
+                    "client_name": "stress-client",
+                    "requested_model": "stress-model",
+                    "resolved_model": "stress-model",
+                    "provider": "openai",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                    "estimated_cost_usd": 0.001,
+                    "duration_ms": 25,
+                    "status_code": 200,
+                    "streamed": False,
+                    "request_body": '{"large":"input"}',
+                    "response_body": '{"large":"output"}',
+                }
+                for index in range(10_000)
+            ],
+        )
+        session.commit()
+
+    statements: list[str] = []
+    engine = session_factory.kw["bind"]
+
+    def capture_statement(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_statement)
+    try:
+        response = client.get("/analytics/requests?page_size=25")
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_statement)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pagination"]["totalItems"] == 10_000
+    assert len(payload["rows"]) == 25
+    assert all("io" not in row for row in payload["rows"])
+    assert len(response.content) < 50_000
+    assert len(statements) <= 10
+
+
 def test_models_analytics_endpoint_groups_usage_by_provider_and_model(client: TestClient) -> None:
     seed_analytics_data(client)
 
@@ -353,6 +410,12 @@ def test_costs_analytics_endpoint_returns_breakdowns_and_trend(client: TestClien
     assert payload["byProvider"][0]["amountUsd"] == 0.04
     assert payload["byModel"][0]["label"] == "gpt-4.1"
     assert len(payload["dailyTrend"]) == 30
+    assert set(payload["costUsage"]) == {"1h", "6h", "1d", "7d", "30d"}
+    assert len(payload["costUsage"]["1h"]) == 12
+    assert len(payload["costUsage"]["6h"]) == 24
+    assert len(payload["costUsage"]["1d"]) == 24
+    assert len(payload["costUsage"]["7d"]) == 7
+    assert len(payload["costUsage"]["30d"]) == 30
 
 
 def test_provider_health_endpoint_includes_request_counts(client: TestClient) -> None:

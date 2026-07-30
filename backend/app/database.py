@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -154,6 +155,40 @@ class ApiRequest(Base):
     response_body: Mapped[str | None] = mapped_column(Text)
 
 
+ANALYTICS_INDEXES = (
+    Index("ix_api_requests_created_at", ApiRequest.created_at),
+    Index(
+        "ix_api_requests_provider_created_at",
+        ApiRequest.provider,
+        ApiRequest.created_at,
+    ),
+    Index(
+        "ix_api_requests_resolved_model_created_at",
+        ApiRequest.resolved_model,
+        ApiRequest.created_at,
+    ),
+    Index(
+        "ix_api_requests_requested_model_created_at",
+        ApiRequest.requested_model,
+        ApiRequest.created_at,
+    ),
+    Index(
+        "ix_api_requests_client_name_created_at",
+        ApiRequest.client_name,
+        ApiRequest.created_at,
+    ),
+    Index(
+        "ix_api_requests_status_code_created_at",
+        ApiRequest.status_code,
+        ApiRequest.created_at,
+    ),
+    Index(
+        "ix_api_requests_estimated_cost_usd",
+        ApiRequest.estimated_cost_usd,
+    ),
+)
+
+
 class ProviderHealthCheck(Base):
     __tablename__ = "provider_health_checks"
 
@@ -211,6 +246,7 @@ def initialize_database(session_factory: sessionmaker[Session]) -> None:
     engine = session_factory.kw["bind"]
     Base.metadata.create_all(engine)
     ensure_runtime_columns(engine)
+    ensure_analytics_indexes(engine)
     migrate_provider_schema_v2(engine, session_factory)
 
     with session_factory() as session:
@@ -224,7 +260,14 @@ def initialize_database(session_factory: sessionmaker[Session]) -> None:
             session.add(SchemaVersion(version=4))
         if session.get(SchemaVersion, 5) is None:
             session.add(SchemaVersion(version=5))
+        if session.get(SchemaVersion, 6) is None:
+            session.add(SchemaVersion(version=6))
         session.commit()
+
+
+def ensure_analytics_indexes(engine) -> None:
+    for index in ANALYTICS_INDEXES:
+        index.create(engine, checkfirst=True)
 
 
 def migrate_provider_schema_v2(engine, session_factory: sessionmaker[Session]) -> None:

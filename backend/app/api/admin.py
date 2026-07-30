@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.analytics_service import build_provider_details, list_requests, requests_today_count
+from app.analytics_service import build_provider_details, requests_today_counts
 from app.api.proxy_common import (
     get_session,
     provider_supports_anonymous_access,
@@ -420,10 +420,10 @@ def serialize_provider_health_card(
 
 def collect_provider_health_payload(session: Session) -> dict:
     providers = session.scalars(select(Provider).order_by(Provider.id)).all()
-    all_requests = list_requests(session)
     cards: list[dict] = []
     details: list[dict] = []
     now = datetime.now(UTC)
+    request_counts = requests_today_counts(session, now)
     freshness_cutoff = datetime.now(UTC) - timedelta(seconds=60)
 
     for provider in providers:
@@ -445,10 +445,10 @@ def collect_provider_health_payload(session: Session) -> dict:
                 provider,
                 latest_check,
                 recent_checks,
-                requests_today=requests_today_count(all_requests, provider.slug, now),
+                requests_today=request_counts.get(provider.slug, 0),
             )
         )
-        details.append(build_provider_details(all_requests, provider, now))
+        details.append(build_provider_details(session, provider, now))
 
     return {
         "cards": cards,

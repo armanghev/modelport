@@ -140,12 +140,20 @@ class CostTotals(BaseModel):
     monthUsd: float
 
 
+class CostUsagePoint(BaseModel):
+    date: str
+    primary: float
+    secondary: float
+
+
 class CostsAnalyticsResponse(BaseModel):
     note: str
     totals: CostTotals
+    averageCostPerRequest: float
     byProvider: list[CostBucket]
     byModel: list[CostBucket]
     dailyTrend: list[CostBucket]
+    costUsage: dict[Literal["1h", "6h", "1d", "7d", "30d"], list[CostUsagePoint]]
     recentHighCostRequests: list[RequestRow]
 
 
