@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import time
 from collections.abc import Callable, Generator, Iterator
@@ -61,6 +62,43 @@ def pricing_service_tier(request_payload: Any) -> str:
     if normalized in {"", "auto", "default", "standard", "standard_only"}:
         return "standard"
     return normalized
+
+
+def pricing_operation_units(endpoint: str, response_payload: Any) -> dict[str, int]:
+    if endpoint.startswith("/v1/images/") and isinstance(response_payload, dict):
+        images = response_payload.get("data")
+        if isinstance(images, list) and images:
+            return {"image_output": len(images)}
+    if endpoint.startswith("/v1/audio/") and isinstance(response_payload, dict):
+        usage = response_payload.get("usage")
+        if isinstance(usage, dict):
+            return {
+                operation: int(value)
+                for operation, value in {
+                    "audio_input_token": usage.get("input_audio_tokens"),
+                    "audio_output_token": usage.get("output_audio_tokens"),
+                }.items()
+                if isinstance(value, int) and value > 0
+            }
+    return {}
+
+
+def pricing_tool_calls(response_payload: Any) -> dict[str, int]:
+    if not isinstance(response_payload, dict):
+        return {}
+    output = response_payload.get("output")
+    if not isinstance(output, list):
+        return {}
+    names = {
+        "web_search_call": "web_search",
+        "code_interpreter_call": "code_interpreter",
+        "file_search_call": "file_search_call",
+    }
+    calls: dict[str, int] = {}
+    for item in output:
+        if isinstance(item, dict) and (name := names.get(item.get("type"))):
+            calls[name] = calls.get(name, 0) + 1
+    return calls
 
 
 def get_session(request: Request) -> Session:
@@ -306,6 +344,7 @@ def log_tracked_proxy_request(
     request_payload: Any,
     response_payload: Any,
     usage_snapshot: UsageSnapshot | None = None,
+    pricing_context: RequestContext | None = None,
     error_message: str | None = None,
     request_id: str | None = None,
     ttfb_ms: int | None = None,
@@ -326,6 +365,8 @@ def log_tracked_proxy_request(
     cost_cache_read_usd = None
     cost_cache_write_usd = None
     cost_tools_usd = None
+    cost_modalities_usd = None
+    pricing_units_json = None
     context_tier = None
     service_tier = pricing_service_tier(request_payload)
 
@@ -339,6 +380,13 @@ def log_tracked_proxy_request(
         cache_write_5m_tokens = usage_snapshot.cache_write_5m_tokens
         cache_write_1h_tokens = usage_snapshot.cache_write_1h_tokens
 
+    context = pricing_context or RequestContext(
+        service_tier=service_tier,
+        operation_units=pricing_operation_units(endpoint, response_payload),
+        tool_calls=pricing_tool_calls(response_payload),
+    )
+    service_tier = context.service_tier
+    if usage_snapshot is not None or context.operation_units or context.tool_calls:
         try:
             card = resolve_rate_card(
                 session,
@@ -347,25 +395,40 @@ def log_tracked_proxy_request(
                 requested_model=requested_model,
             )
             if card is not None:
-                breakdown = price(
-                    usage_snapshot,
-                    card,
-                    RequestContext(service_tier=service_tier),
+                rates = card.rates_for(
+                    context_tier=card.context_tier_for(input_tokens),
+                    service_tier=context.service_tier,
                 )
-                estimated_cost_usd = to_storage_usd(breakdown.total_usd)
-                pricing_source = card.source
-                cost_input_usd = float(breakdown.input_usd)
-                cost_output_usd = float(breakdown.output_usd)
-                cost_cache_read_usd = float(breakdown.cache_read_usd)
-                cost_cache_write_usd = float(breakdown.cache_write_usd)
-                cost_tools_usd = float(breakdown.tools_usd)
-                context_tier = breakdown.context_tier
-                service_tier = breakdown.service_tier
+                has_priced_operations = any(
+                    count > 0 and name in card.operation_rates
+                    for name, count in context.operation_units.items()
+                )
+                has_priced_tools = any(
+                    count > 0 and charge.name in context.tool_calls for charge in card.tools
+                )
+                if rates is not None or has_priced_operations or has_priced_tools:
+                    breakdown = price(usage_snapshot, card, context)
+                    estimated_cost_usd = to_storage_usd(breakdown.total_usd)
+                    pricing_source = card.source
+                    cost_input_usd = float(breakdown.input_usd)
+                    cost_output_usd = float(breakdown.output_usd)
+                    cost_cache_read_usd = float(breakdown.cache_read_usd)
+                    cost_cache_write_usd = float(breakdown.cache_write_usd)
+                    cost_tools_usd = float(breakdown.tools_usd)
+                    cost_modalities_usd = float(breakdown.modalities_usd)
+                    pricing_units_json = json.dumps(
+                        context.operation_units,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ) or None
+                    context_tier = breakdown.context_tier
+                    service_tier = breakdown.service_tier
         except Exception:
             estimated_cost_usd = None
             pricing_source = "pricing_error"
             cost_input_usd = cost_output_usd = cost_cache_read_usd = None
             cost_cache_write_usd = cost_tools_usd = None
+            cost_modalities_usd = pricing_units_json = None
             context_tier = service_tier = None
 
     create_api_request_log(
@@ -391,6 +454,8 @@ def log_tracked_proxy_request(
         cost_cache_read_usd=cost_cache_read_usd,
         cost_cache_write_usd=cost_cache_write_usd,
         cost_tools_usd=cost_tools_usd,
+        cost_modalities_usd=cost_modalities_usd,
+        pricing_units_json=pricing_units_json,
         context_tier=context_tier,
         service_tier=service_tier,
         pricing_source=pricing_source,

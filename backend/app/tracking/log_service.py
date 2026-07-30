@@ -39,6 +39,8 @@ def create_api_request_log(
     cost_cache_read_usd: float | None = None,
     cost_cache_write_usd: float | None = None,
     cost_tools_usd: float | None = None,
+    cost_modalities_usd: float | None = None,
+    pricing_units_json: str | None = None,
     context_tier: str | None = None,
     service_tier: str | None = None,
 ) -> ApiRequest:
@@ -64,6 +66,8 @@ def create_api_request_log(
         cost_cache_read_usd=cost_cache_read_usd,
         cost_cache_write_usd=cost_cache_write_usd,
         cost_tools_usd=cost_tools_usd,
+        cost_modalities_usd=cost_modalities_usd,
+        pricing_units_json=pricing_units_json,
         context_tier=context_tier,
         service_tier=service_tier,
         pricing_source=pricing_source,

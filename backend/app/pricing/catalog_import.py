@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from app.pricing.rate_card import RateCard, TierRates
+from app.pricing.rate_card import RateCard, TierRates, ToolCharge
 
 LITELLM_CATALOG_URL = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
@@ -42,6 +42,15 @@ def _per_1m(value: Any) -> Decimal | None:
         return None
 
 
+def _decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
+
+
 def _threshold_tokens(entry: dict[str, Any]) -> int | None:
     for key in entry:
         match = _ABOVE_THRESHOLD_RE.match(key)
@@ -66,9 +75,36 @@ def _tier_rates(entry: dict[str, Any], suffix: str) -> TierRates | None:
     )
 
 
+def _operation_rates(entry: dict[str, Any]) -> dict[str, Decimal]:
+    fields = {
+        "image_output": "output_cost_per_image",
+        "image_output_pixel": "output_cost_per_pixel",
+        "audio_input_token": "input_cost_per_audio_token",
+        "audio_output_token": "output_cost_per_audio_token",
+    }
+    return {
+        operation: rate
+        for operation, field in fields.items()
+        if (rate := _decimal(entry.get(field))) is not None
+    }
+
+
+def _tool_charges(entry: dict[str, Any]) -> list[ToolCharge]:
+    fields = {
+        "code_interpreter": "code_interpreter_cost_per_session",
+        "file_search_call": "file_search_cost_per_call",
+    }
+    return [
+        ToolCharge(name=name, per_call_usd=rate)
+        for name, field in fields.items()
+        if (rate := _decimal(entry.get(field))) is not None
+    ]
+
+
 def build_rate_card(entry: dict[str, Any], *, fetched_at: datetime) -> RateCard | None:
     standard = _tier_rates(entry, "")
-    if standard is None:
+    operation_rates = _operation_rates(entry)
+    if standard is None and not operation_rates:
         return None
 
     threshold = _threshold_tokens(entry)
@@ -89,6 +125,8 @@ def build_rate_card(entry: dict[str, Any], *, fetched_at: datetime) -> RateCard 
         above_threshold=above,
         context_threshold_tokens=threshold,
         service_tiers=service_tiers,
+        tools=_tool_charges(entry),
+        operation_rates=operation_rates,
         source="litellm",
         source_fetched_at=fetched_at,
     )
@@ -102,7 +140,7 @@ def build_rate_cards(payload: dict[str, Any]) -> dict[tuple[str, str], RateCard]
     for model_id, entry in payload.items():
         if model_id == "sample_spec" or not isinstance(entry, dict):
             continue
-        if entry.get("mode") != "chat":
+        if entry.get("mode") not in {"chat", "image_generation", "audio_transcription", "audio_speech"}:
             continue
 
         provider_slug = PROVIDER_MAP.get(str(entry.get("litellm_provider") or ""))

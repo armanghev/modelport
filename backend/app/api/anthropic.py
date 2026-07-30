@@ -5,6 +5,7 @@ import time
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.proxy_common import (
@@ -24,6 +25,8 @@ from app.api.proxy_common import (
     stream_tracked_proxy_routes,
 )
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
+from app.database import ApiRequest
+from app.pricing.calculator import RequestContext
 from app.providers.anthropic_compatible import (
     cancel_message_batch,
     count_message_tokens,
@@ -429,6 +432,37 @@ def retrieve_message_batch_results(
         },
         extract_request_id=lambda _result: None,
     )
+    for line in content.decode("utf-8").splitlines():
+        try:
+            item = json.loads(line)
+            custom_id = item.get("custom_id")
+            message = item.get("result", {}).get("message", {})
+            usage = message.get("usage")
+            model = message.get("model")
+            if not isinstance(custom_id, str) or not isinstance(usage, dict) or not isinstance(model, str):
+                continue
+            request_id = f"batch:{message_batch_id}:{custom_id}"
+            if session.scalar(select(ApiRequest.id).where(ApiRequest.request_id == request_id)):
+                continue
+            log_tracked_proxy_request(
+                session,
+                input_format="anthropic",
+                output_format="anthropic",
+                endpoint="/v1/messages/batches/{message_batch_id}/results/item",
+                client_name=resolve_client_name(request),
+                resolved_route=resolved_route,
+                requested_model=model,
+                duration_ms=0,
+                status_code=200,
+                streamed=False,
+                request_payload={"message_batch_id": message_batch_id, "custom_id": custom_id},
+                response_payload=item,
+                usage_snapshot=normalize_anthropic_shaped_usage(usage),
+                pricing_context=RequestContext(service_tier="batch"),
+                request_id=request_id,
+            )
+        except (UnicodeDecodeError, ValueError, TypeError):
+            continue
     return Response(content=content, media_type=content_type)
 
 

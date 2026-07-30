@@ -29,11 +29,12 @@ class ToolCharge(BaseModel):
 
 
 class RateCard(BaseModel):
-    standard: TierRates
+    standard: TierRates | None = None
     above_threshold: TierRates | None = None
     context_threshold_tokens: int | None = None
     service_tiers: dict[str, TierRates] = Field(default_factory=dict)
     tools: list[ToolCharge] = Field(default_factory=list)
+    operation_rates: dict[str, Decimal] = Field(default_factory=dict)
     source: str = "litellm"
     source_fetched_at: datetime | None = None
 
@@ -44,7 +45,7 @@ class RateCard(BaseModel):
             return "above_threshold"
         return "standard"
 
-    def rates_for(self, *, context_tier: str, service_tier: str) -> TierRates:
+    def rates_for(self, *, context_tier: str, service_tier: str) -> TierRates | None:
         if service_tier != "standard":
             tier_rates = self.service_tiers.get(service_tier)
             if tier_rates is not None:

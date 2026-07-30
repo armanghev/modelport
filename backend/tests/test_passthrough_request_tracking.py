@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.database import ApiRequest, build_session_factory
+from app.database import PricingOverride
+from app.pricing.rate_card import RateCard
 from app.tracking.pricing import resolve_pricing_override
 
 from tests.test_helpers import provider_uuid
@@ -69,6 +73,23 @@ def test_image_generations_route_persists_request_log(
     app_config,
     monkeypatch,
 ) -> None:
+    with client.app.state.session_factory() as session:
+        session.add(
+            PricingOverride(
+                provider_id=provider_uuid(client, "openai"),
+                model="gpt-image-1",
+                input_per_1m_usd=0.0,
+                output_per_1m_usd=0.0,
+                rate_card_json=RateCard(
+                    operation_rates={"image_output": Decimal("0.04")},
+                    source="manual",
+                ).model_dump_json(),
+                source="manual",
+                enabled=True,
+            )
+        )
+        session.commit()
+
     def fake_create_image_generation(provider, api_key, payload):
         return {"created": 1, "data": [{"b64_json": "abc"}]}
 
@@ -89,7 +110,8 @@ def test_image_generations_route_persists_request_log(
     assert record.endpoint == "/v1/images/generations"
     assert record.provider == "openai"
     assert record.requested_model == "gpt-image-1"
-    assert record.estimated_cost_usd is None
+    assert record.estimated_cost_usd == 0.04
+    assert record.cost_modalities_usd == 0.04
     assert record.input_tokens == 0
 
 

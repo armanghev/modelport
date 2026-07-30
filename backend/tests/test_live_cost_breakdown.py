@@ -150,6 +150,61 @@ def test_log_tracked_proxy_request_uses_requested_service_tier(client) -> None:
     assert record.estimated_cost_usd == 0.006
 
 
+def test_log_tracked_proxy_request_prices_operation_units(client) -> None:
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        provider = get_provider_by_slug(session, "openai")
+        assert provider is not None
+        card = RateCard(
+            operation_rates={"image_output": Decimal("0.04")},
+            source="manual",
+        )
+        session.add(
+            PricingOverride(
+                provider_id=provider.id,
+                model="gpt-image-test",
+                input_per_1m_usd=0.0,
+                output_per_1m_usd=0.0,
+                rate_card_json=card.model_dump_json(),
+                source="manual",
+                enabled=True,
+            )
+        )
+        session.commit()
+
+        from app.api.proxy_common import log_tracked_proxy_request
+        from app.pricing.calculator import RequestContext
+        from app.routing.provider_router import select_provider_credential
+
+        route = ResolvedProviderRoute(
+            requested_model="gpt-image-test",
+            upstream_model="gpt-image-test",
+            provider=provider,
+            credential=select_provider_credential(provider),
+        )
+        log_tracked_proxy_request(
+            session,
+            input_format="openai",
+            output_format="openai",
+            endpoint="/v1/images/generations",
+            client_name="test",
+            resolved_route=route,
+            requested_model="gpt-image-test",
+            duration_ms=10,
+            status_code=200,
+            streamed=False,
+            request_payload={"model": "gpt-image-test"},
+            response_payload={"data": [{}, {}]},
+            pricing_context=RequestContext(operation_units={"image_output": 2}),
+        )
+        record = session.scalars(select(ApiRequest).order_by(ApiRequest.created_at.desc())).first()
+
+    assert record is not None
+    assert record.estimated_cost_usd == 0.08
+    assert record.cost_modalities_usd == 0.08
+    assert record.pricing_units_json == '{"image_output":2}'
+
+
 def test_log_tracked_proxy_request_does_not_price_legacy_rates(client) -> None:
     session_factory = client.app.state.session_factory
     with session_factory() as session:

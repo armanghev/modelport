@@ -136,6 +136,8 @@ class ApiRequest(Base):
     cost_cache_read_usd: Mapped[float | None] = mapped_column(Float)
     cost_cache_write_usd: Mapped[float | None] = mapped_column(Float)
     cost_tools_usd: Mapped[float | None] = mapped_column(Float)
+    cost_modalities_usd: Mapped[float | None] = mapped_column(Float)
+    pricing_units_json: Mapped[str | None] = mapped_column(Text)
     context_tier: Mapped[str | None] = mapped_column(String(32))
     service_tier: Mapped[str | None] = mapped_column(String(32))
     pricing_source: Mapped[str | None] = mapped_column(String(64))
@@ -216,6 +218,8 @@ def initialize_database(session_factory: sessionmaker[Session]) -> None:
             session.add(SchemaVersion(version=2))
         if session.get(SchemaVersion, 3) is None:
             session.add(SchemaVersion(version=3))
+        if session.get(SchemaVersion, 4) is None:
+            session.add(SchemaVersion(version=4))
         session.commit()
 
 
@@ -267,6 +271,8 @@ def ensure_runtime_columns(engine) -> None:
             "cost_cache_read_usd": "FLOAT",
             "cost_cache_write_usd": "FLOAT",
             "cost_tools_usd": "FLOAT",
+            "cost_modalities_usd": "FLOAT",
+            "pricing_units_json": "TEXT",
             "context_tier": "VARCHAR(32)",
             "service_tier": "VARCHAR(32)",
         }

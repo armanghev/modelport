@@ -51,6 +51,22 @@ def test_non_chat_modes_are_skipped() -> None:
     assert ("openai", "text-embedding-3-small") not in _cards()
 
 
+def test_image_generation_entry_keeps_its_exact_per_image_rate() -> None:
+    cards = build_rate_cards(
+        {
+            "gpt-image-test": {
+                "litellm_provider": "openai",
+                "mode": "image_generation",
+                "output_cost_per_image": 0.04,
+            }
+        }
+    )
+
+    card = cards[("openai", "gpt-image-test")]
+    assert card.standard is None
+    assert card.operation_rates["image_output"] == Decimal("0.04")
+
+
 def test_entries_without_base_rates_are_skipped_without_raising() -> None:
     assert ("openai", "broken-entry") not in _cards()
 

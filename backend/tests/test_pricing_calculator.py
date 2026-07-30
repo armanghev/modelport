@@ -156,6 +156,22 @@ def test_tool_calls_add_per_call_charges() -> None:
     assert breakdown.tools_usd == Decimal("0.030000")
 
 
+def test_operation_units_price_modality_only_requests() -> None:
+    card = RateCard(
+        operation_rates={"image_output": Decimal("0.04")},
+        source="litellm",
+    )
+
+    breakdown = price(
+        None,
+        card,
+        RequestContext(operation_units={"image_output": 2}),
+    )
+
+    assert breakdown.modalities_usd == Decimal("0.08")
+    assert breakdown.total_usd == Decimal("0.08")
+
+
 def test_unknown_service_tier_falls_back_to_standard() -> None:
     # 100k keeps this on the standard context tier, isolating the service-tier fallback.
     usage = UsageSnapshot(100_000, 0, 0, 0, 0, 100_000, "provider_reported")
