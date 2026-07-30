@@ -89,6 +89,12 @@ export interface RequestsAnalyticsData {
   totals: RequestTotals;
   filters: RequestFilters;
   rows: RequestRow[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+  };
 }
 
 export interface CostTotals {

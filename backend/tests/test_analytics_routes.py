@@ -47,6 +47,8 @@ def seed_analytics_data(client: TestClient) -> None:
                     error_message=None,
                     streamed=True,
                     request_id="req_analytics_01",
+                    request_body='{"messages":[{"role":"user","content":"hello"}]}',
+                    response_body='{"choices":[{"message":{"content":"hi"}}]}',
                 ),
                 ApiRequest(
                     created_at=max(now - timedelta(hours=3), start_of_day),
@@ -226,9 +228,96 @@ def test_requests_analytics_endpoint_returns_filters_rows_and_totals(client: Tes
     assert payload["totals"]["streamingRate"] == 66.7
     assert payload["filters"]["providers"] == ["Ollama", "OpenAI", "OpenRouter"]
     assert payload["filters"]["statuses"] == ["error", "success"]
+    assert payload["pagination"] == {
+        "page": 1,
+        "pageSize": 25,
+        "totalItems": 6,
+        "totalPages": 1,
+    }
     assert payload["rows"][0]["provider"] == "OpenAI"
+    assert "io" not in payload["rows"][0]
     error_row = next(row for row in payload["rows"] if row["status"] == "error")
     assert error_row["costUsd"] == 0.001
+
+
+def test_requests_analytics_endpoint_paginates_filters_and_sorts(client: TestClient) -> None:
+    seed_analytics_data(client)
+
+    response = client.get(
+        "/analytics/requests",
+        params={
+            "page": 1,
+            "page_size": 2,
+            "provider": "OpenAI",
+            "time_range": "all",
+            "sort": "costUsd",
+            "direction": "desc",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pagination"] == {
+        "page": 1,
+        "pageSize": 2,
+        "totalItems": 3,
+        "totalPages": 2,
+    }
+    assert [row["costUsd"] for row in payload["rows"]] == [0.02, 0.012]
+    assert {row["provider"] for row in payload["rows"]} == {"OpenAI"}
+
+
+def test_requests_analytics_search_and_status_filter_are_server_side(
+    client: TestClient,
+) -> None:
+    seed_analytics_data(client)
+
+    response = client.get(
+        "/analytics/requests",
+        params={
+            "search": "custom app",
+            "status": "error",
+            "time_range": "all",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pagination"]["totalItems"] == 1
+    assert payload["rows"][0]["upstreamRequestId"] == "req_analytics_04"
+
+
+def test_request_detail_returns_stored_io_only_for_requested_row(
+    client: TestClient,
+) -> None:
+    seed_analytics_data(client)
+    list_payload = client.get("/analytics/requests").json()
+    request_id = next(
+        row["id"]
+        for row in list_payload["rows"]
+        if row["upstreamRequestId"] == "req_analytics_01"
+    )
+
+    response = client.get(f"/analytics/requests/{request_id}")
+
+    assert response.status_code == 200
+    assert response.json()["io"] == {
+        "input": '{"messages":[{"role":"user","content":"hello"}]}',
+        "output": '{"choices":[{"message":{"content":"hi"}}]}',
+    }
+
+
+def test_request_detail_returns_404_for_unknown_request(client: TestClient) -> None:
+    response = client.get("/analytics/requests/req_missing")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Request not found."
+
+
+def test_requests_analytics_rejects_page_size_over_limit(client: TestClient) -> None:
+    response = client.get("/analytics/requests", params={"page_size": 101})
+
+    assert response.status_code == 422
 
 
 def test_models_analytics_endpoint_groups_usage_by_provider_and_model(client: TestClient) -> None:

@@ -94,6 +94,14 @@ class RequestsAnalyticsResponse(BaseModel):
     totals: RequestTotals
     filters: RequestFilters
     rows: list[RequestRow]
+    pagination: "RequestPagination"
+
+
+class RequestPagination(BaseModel):
+    page: int
+    pageSize: int
+    totalItems: int
+    totalPages: int
 
 
 class ModelUsageSummary(BaseModel):
