@@ -21,6 +21,7 @@ class RequestContext:
 class CostBreakdown:
     input_usd: Decimal
     output_usd: Decimal
+    reasoning_usd: Decimal
     cache_read_usd: Decimal
     cache_write_usd: Decimal
     tools_usd: Decimal
@@ -50,7 +51,12 @@ def price(
     rates = card.rates_for(context_tier=context_tier, service_tier=context.service_tier)
 
     input_usd = _component(usage.uncached_input_tokens, rates.input_per_1m) if usage and rates else Decimal(0)
-    output_usd = _component(usage.output_tokens, rates.output_per_1m) if usage and rates else Decimal(0)
+    visible_output_tokens = max(0, usage.output_tokens - usage.reasoning_tokens) if usage else 0
+    output_usd = _component(visible_output_tokens, rates.output_per_1m) if usage and rates else Decimal(0)
+    reasoning_usd = _component(
+        usage.reasoning_tokens,
+        rates.reasoning_output_per_1m or rates.output_per_1m,
+    ) if usage and rates else Decimal(0)
     cache_read_usd = _component(usage.cache_read_tokens, rates.cache_read_per_1m) if usage and rates else Decimal(0)
     cache_write_usd = (
         _component(usage.cache_write_5m_tokens, rates.cache_write_5m_per_1m)
@@ -72,11 +78,12 @@ def price(
     )
 
     # Keep full Decimal precision so the caller can round the total only once on write.
-    total_usd = input_usd + output_usd + cache_read_usd + cache_write_usd + tools_usd + modalities_usd
+    total_usd = input_usd + output_usd + reasoning_usd + cache_read_usd + cache_write_usd + tools_usd + modalities_usd
 
     return CostBreakdown(
         input_usd=input_usd,
         output_usd=output_usd,
+        reasoning_usd=reasoning_usd,
         cache_read_usd=cache_read_usd,
         cache_write_usd=cache_write_usd,
         tools_usd=tools_usd,

@@ -13,6 +13,7 @@ class UsageSnapshot:
     output_tokens: int
     total_tokens: int
     token_source: str | None
+    reasoning_tokens: int = 0
 
     @property
     def input_tokens(self) -> int:
@@ -164,6 +165,7 @@ def normalize_openai_shaped_usage(usage: dict[str, Any]) -> UsageSnapshot:
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         token_source="provider_reported",
+        reasoning_tokens=reasoning_tokens,
     )
 
 

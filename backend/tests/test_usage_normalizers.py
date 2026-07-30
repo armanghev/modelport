@@ -23,7 +23,7 @@ def test_openai_cached_tokens_are_a_subset_of_prompt_tokens() -> None:
     assert snapshot.output_tokens == 200
 
 
-def test_openai_reasoning_tokens_fold_into_output() -> None:
+def test_openai_reasoning_tokens_remain_in_output_and_are_tracked_separately() -> None:
     snapshot = normalize_openai_shaped_usage(
         {
             "prompt_tokens": 100,
@@ -33,6 +33,7 @@ def test_openai_reasoning_tokens_fold_into_output() -> None:
     )
 
     assert snapshot.output_tokens == 450
+    assert snapshot.reasoning_tokens == 400
 
 
 def test_openai_falls_back_to_gemini_native_keys() -> None:

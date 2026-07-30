@@ -370,6 +370,7 @@ def log_tracked_proxy_request(
 ) -> None:
     input_tokens = 0
     output_tokens = 0
+    reasoning_tokens = None
     total_tokens = 0
     token_source = None
     estimated_cost_usd = None
@@ -380,6 +381,7 @@ def log_tracked_proxy_request(
     cache_write_1h_tokens = None
     cost_input_usd = None
     cost_output_usd = None
+    cost_reasoning_usd = None
     cost_cache_read_usd = None
     cost_cache_write_usd = None
     cost_tools_usd = None
@@ -389,8 +391,26 @@ def log_tracked_proxy_request(
     service_tier = pricing_service_tier(request_payload)
 
     if usage_snapshot is not None:
+        if (
+            resolved_route.provider.slug == "gemini"
+            and usage_snapshot.reasoning_tokens == 0
+            and usage_snapshot.cache_read_tokens == 0
+            and usage_snapshot.cache_write_5m_tokens == 0
+            and usage_snapshot.cache_write_1h_tokens == 0
+        ):
+            # Gemini's OpenAI-compatible usage often supplies a combined total
+            # but not a thought-token field. The remainder is billable thinking.
+            inferred_reasoning_tokens = max(
+                0,
+                usage_snapshot.total_tokens
+                - usage_snapshot.input_tokens
+                - usage_snapshot.output_tokens,
+            )
+            usage_snapshot.reasoning_tokens = inferred_reasoning_tokens
+            usage_snapshot.output_tokens += inferred_reasoning_tokens
         input_tokens = usage_snapshot.input_tokens
         output_tokens = usage_snapshot.output_tokens
+        reasoning_tokens = usage_snapshot.reasoning_tokens
         total_tokens = usage_snapshot.total_tokens
         token_source = usage_snapshot.token_source
         uncached_input_tokens = usage_snapshot.uncached_input_tokens
@@ -430,6 +450,7 @@ def log_tracked_proxy_request(
                     pricing_source = card.source
                     cost_input_usd = float(breakdown.input_usd)
                     cost_output_usd = float(breakdown.output_usd)
+                    cost_reasoning_usd = float(breakdown.reasoning_usd)
                     cost_cache_read_usd = float(breakdown.cache_read_usd)
                     cost_cache_write_usd = float(breakdown.cache_write_usd)
                     cost_tools_usd = float(breakdown.tools_usd)
@@ -444,7 +465,7 @@ def log_tracked_proxy_request(
         except Exception:
             estimated_cost_usd = None
             pricing_source = "pricing_error"
-            cost_input_usd = cost_output_usd = cost_cache_read_usd = None
+            cost_input_usd = cost_output_usd = cost_reasoning_usd = cost_cache_read_usd = None
             cost_cache_write_usd = cost_tools_usd = None
             cost_modalities_usd = pricing_units_json = None
             context_tier = service_tier = None
@@ -460,6 +481,7 @@ def log_tracked_proxy_request(
         provider=resolved_route.provider.slug,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
         total_tokens=total_tokens,
         token_source=token_source,
         uncached_input_tokens=uncached_input_tokens,
@@ -469,6 +491,7 @@ def log_tracked_proxy_request(
         estimated_cost_usd=estimated_cost_usd,
         cost_input_usd=cost_input_usd,
         cost_output_usd=cost_output_usd,
+        cost_reasoning_usd=cost_reasoning_usd,
         cost_cache_read_usd=cost_cache_read_usd,
         cost_cache_write_usd=cost_cache_write_usd,
         cost_tools_usd=cost_tools_usd,

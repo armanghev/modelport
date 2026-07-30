@@ -72,6 +72,7 @@ def _tier_rates(entry: dict[str, Any], suffix: str) -> TierRates | None:
         cache_write_1h_per_1m=_per_1m(
             entry.get(f"cache_creation_input_token_cost_above_1hr{suffix}")
         ),
+        reasoning_output_per_1m=_per_1m(entry.get(f"output_cost_per_reasoning_token{suffix}")),
     )
 
 

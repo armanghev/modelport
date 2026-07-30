@@ -63,6 +63,7 @@ def test_components_always_sum_to_the_total() -> None:
     assert (
         breakdown.input_usd
         + breakdown.output_usd
+        + breakdown.reasoning_usd
         + breakdown.cache_read_usd
         + breakdown.cache_write_usd
         + breakdown.tools_usd
@@ -180,3 +181,20 @@ def test_unknown_service_tier_falls_back_to_standard() -> None:
 
     assert breakdown.input_usd == Decimal("0.300000")
     assert breakdown.service_tier == "nonexistent"
+
+
+def test_reasoning_tokens_use_the_catalog_reasoning_rate() -> None:
+    card = RateCard(
+        standard=TierRates(
+            input_per_1m=Decimal("1.5"),
+            output_per_1m=Decimal("9"),
+            reasoning_output_per_1m=Decimal("9"),
+        ),
+        source="litellm",
+    )
+    usage = UsageSnapshot(16, 0, 0, 0, 141, 157, "provider_reported", reasoning_tokens=130)
+
+    breakdown = price(usage, card, RequestContext())
+
+    assert breakdown.reasoning_usd == Decimal("0.001170")
+    assert breakdown.total_usd == Decimal("0.001293")

@@ -21,6 +21,7 @@ class TierRates(BaseModel):
     cache_read_per_1m: Decimal | None = None
     cache_write_5m_per_1m: Decimal | None = None
     cache_write_1h_per_1m: Decimal | None = None
+    reasoning_output_per_1m: Decimal | None = None
 
 
 class ToolCharge(BaseModel):

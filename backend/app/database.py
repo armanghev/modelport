@@ -124,6 +124,7 @@ class ApiRequest(Base):
     provider: Mapped[str | None] = mapped_column(String(64))
     input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     token_source: Mapped[str | None] = mapped_column(String(64))
     uncached_input_tokens: Mapped[int | None] = mapped_column(Integer)
@@ -133,6 +134,7 @@ class ApiRequest(Base):
     estimated_cost_usd: Mapped[float | None] = mapped_column(Float)
     cost_input_usd: Mapped[float | None] = mapped_column(Float)
     cost_output_usd: Mapped[float | None] = mapped_column(Float)
+    cost_reasoning_usd: Mapped[float | None] = mapped_column(Float)
     cost_cache_read_usd: Mapped[float | None] = mapped_column(Float)
     cost_cache_write_usd: Mapped[float | None] = mapped_column(Float)
     cost_tools_usd: Mapped[float | None] = mapped_column(Float)
@@ -220,6 +222,8 @@ def initialize_database(session_factory: sessionmaker[Session]) -> None:
             session.add(SchemaVersion(version=3))
         if session.get(SchemaVersion, 4) is None:
             session.add(SchemaVersion(version=4))
+        if session.get(SchemaVersion, 5) is None:
+            session.add(SchemaVersion(version=5))
         session.commit()
 
 
@@ -268,6 +272,8 @@ def ensure_runtime_columns(engine) -> None:
             "cache_write_1h_tokens": "INTEGER",
             "cost_input_usd": "FLOAT",
             "cost_output_usd": "FLOAT",
+            "reasoning_tokens": "INTEGER",
+            "cost_reasoning_usd": "FLOAT",
             "cost_cache_read_usd": "FLOAT",
             "cost_cache_write_usd": "FLOAT",
             "cost_tools_usd": "FLOAT",
