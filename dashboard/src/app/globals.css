@@ -1,9 +1,9 @@
-@import "tailwindcss";
 @import "fumadocs-ui/css/solar.css";
 @import "fumadocs-ui/css/preset.css";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "../styles/modelport-theme.css";
+@import "tailwindcss";
 
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
 @source "../../node_modules/fumadocs-core/dist/**/*.js";
@@ -90,6 +90,9 @@ html > body[data-scroll-locked] {
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --font-nunito-sans: "Nunito Sans Variable";
+  --font-geist-mono: "Geist Mono Variable";
+
   /* Terminal */
   --terminal-bg: #171a20;
   --terminal-surface: #1f2430;

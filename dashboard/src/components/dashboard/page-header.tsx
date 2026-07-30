@@ -1,6 +1,9 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { SignOutIcon } from "@phosphor-icons/react";
+import { useLocation } from "react-router";
+
+import { useDashboardAuth } from "@/components/dashboard/dashboard-auth-context";
 
 const pages = {
   overview: { title: "Overview", description: "Usage and routing overview" },
@@ -14,7 +17,8 @@ const pages = {
 const DEFAULT_PAGE = pages.overview;
 
 export function PageHeader() {
-  const pathname = usePathname();
+  const { pathname } = useLocation();
+  const { authEnabled, logout } = useDashboardAuth();
   const segments = pathname.split("/").filter(Boolean);
   const currentPage = segments.at(-1) as keyof typeof pages | undefined;
   const currentPageData =
@@ -32,6 +36,16 @@ export function PageHeader() {
           {currentPageData.description}
         </p>
       </div>
+      {authEnabled ? (
+        <button
+          type="button"
+          onClick={() => void logout()}
+          className="inline-flex items-center gap-2 rounded-lg border border-border-default px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+        >
+          <SignOutIcon size={16} />
+          Log out
+        </button>
+      ) : null}
     </header>
   );
 }

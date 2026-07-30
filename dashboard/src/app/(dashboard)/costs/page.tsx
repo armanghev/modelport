@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { Link } from "react-router";
 
 import {
   CaretLeftIcon,
@@ -319,7 +319,7 @@ export default function CostsPage() {
         <header className="flex items-center justify-between border-b border-border-subtle px-5 py-4">
           <h2 className="text-xl">Recent high-cost requests</h2>
           <Link
-            href="/requests"
+            to="/requests"
             className="text-sm text-text-secondary hover:text-text-primary"
           >
             View all requests

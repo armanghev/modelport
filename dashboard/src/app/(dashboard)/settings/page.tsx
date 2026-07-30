@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useTheme } from "@teispace/next-themes";
+import { useTheme } from "next-themes";
 
 import {
   CheckIcon,
