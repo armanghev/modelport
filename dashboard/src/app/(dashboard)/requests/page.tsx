@@ -9,7 +9,11 @@ import {
   CaretUpIcon,
   MagnifyingGlassIcon,
 } from "@phosphor-icons/react";
-import { ClaudeCode, GeminiCLI, Codex, Cursor, OpenAI } from "@lobehub/icons";
+import ClaudeCode from "@lobehub/icons/es/ClaudeCode/components/Color";
+import Codex from "@lobehub/icons/es/Codex/components/Color";
+import Cursor from "@lobehub/icons/es/Cursor/components/Mono";
+import GeminiCLI from "@lobehub/icons/es/GeminiCLI/components/Color";
+import OpenAI from "@lobehub/icons/es/OpenAI/components/Mono";
 
 import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { RequestDetailSheet } from "@/components/dashboard/requests/request-detail-sheet";
@@ -73,13 +77,13 @@ function getOutcome(row: RequestRow): RequestOutcome {
 function renderClientIcon(client: RequestRow["client"]) {
   switch (client) {
     case "Claude Code":
-      return <ClaudeCode.Color size={20} />;
+      return <ClaudeCode size={20} />;
     case "OpenAI SDK":
       return <OpenAI size={20} />;
     case "Gemini CLI":
-      return <GeminiCLI.Color size={20} />;
+      return <GeminiCLI size={20} />;
     case "Codex":
-      return <Codex.Color size={20} />;
+      return <Codex size={20} />;
     case "Cursor":
       return <Cursor size={20} />;
     default:
