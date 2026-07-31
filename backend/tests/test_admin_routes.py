@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-from app.database import ProviderHealthCheck
+from app.database import ApiRequest, ProviderHealthCheck
 
 from tests.test_helpers import cards_by_slug, provider_uuid
 
@@ -612,8 +612,145 @@ def test_model_catalog_returns_paginated_provider_models(
         "total_items": 2,
         "total_pages": 2,
     }
+    assert payload["totals"]["live_model_count"] == 2
+    assert payload["totals"]["provider_count"] == 1
+    assert {"value": "openai", "label": "OpenAI", "count": 2} in payload["facets"]["providers"]
+    assert {"value": "openai", "label": "openai", "count": 2} in payload["facets"]["owners"]
     assert payload["items"][0]["provider_id"] == "openai"
     assert payload["items"][0]["model"]["id"] == "gpt-4.1"
+
+
+def test_model_catalog_filters_sorts_and_paginates_enriched_models(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.model_metadata_service import parse_openrouter_model
+
+    catalog = {
+        "openai": [
+            {"id": "gpt-4.1", "display_name": "GPT 4.1", "owned_by": "openai"},
+            {"id": "gpt-4.1-mini", "display_name": "GPT Mini", "owned_by": "openai"},
+        ],
+        "openrouter": [
+            {
+                "id": "meta/mini-free",
+                "display_name": "Mini Free",
+                "owned_by": "meta",
+                "openrouter_metadata": parse_openrouter_model(
+                    {
+                        "id": "meta/mini-free",
+                        "name": "Mini Free",
+                        "description": "A miniature free model",
+                        "context_length": 128000,
+                        "architecture": {
+                            "input_modalities": ["text"],
+                            "output_modalities": ["text"],
+                        },
+                        "supported_parameters": ["tools"],
+                        "pricing": {"prompt": "0", "completion": "0"},
+                    }
+                ),
+            },
+            {
+                "id": "meta/large-paid",
+                "display_name": "Large Paid",
+                "owned_by": "meta",
+                "openrouter_metadata": parse_openrouter_model(
+                    {
+                        "id": "meta/large-paid",
+                        "name": "Large Paid",
+                        "description": "A premium image model",
+                        "context_length": 1_000_000,
+                        "architecture": {
+                            "input_modalities": ["text", "image"],
+                            "output_modalities": ["text"],
+                        },
+                        "supported_parameters": ["tools", "reasoning"],
+                        "pricing": {"prompt": "0.000002", "completion": "0.000004"},
+                    }
+                ),
+            },
+            {
+                "id": "meta/mid-context",
+                "display_name": "Mid Context",
+                "owned_by": "meta",
+                "openrouter_metadata": parse_openrouter_model(
+                    {
+                        "id": "meta/mid-context",
+                        "name": "Mid Context",
+                        "context_length": 200000,
+                        "architecture": {
+                            "input_modalities": ["audio"],
+                            "output_modalities": ["text"],
+                        },
+                        "supported_parameters": ["json"],
+                        "pricing": {"prompt": "0", "completion": "0"},
+                    }
+                ),
+            },
+        ],
+        "ollama": [{"id": "qwen2.5-coder:latest", "owned_by": "ollama"}],
+    }
+
+    def fake_fetch(provider, secret):
+        return catalog.get(provider.slug, []), 1
+
+    monkeypatch.setattr("app.api.admin.ensure_openrouter_metadata_fresh", lambda session: None)
+    monkeypatch.setattr("app.api.admin.fetch_provider_models_from_upstream", fake_fetch)
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        session.add(
+            ApiRequest(
+                input_format="chat_completions",
+                output_format="chat_completions",
+                endpoint="/v1/chat/completions",
+                provider="openrouter",
+                resolved_model="meta/large-paid",
+                total_tokens=10,
+            )
+        )
+        session.commit()
+
+    mini = client.get("/admin/model-catalog?q=mini")
+    assert mini.status_code == 200
+    assert [item["model"]["id"] for item in mini.json()["items"]] == ["gpt-4.1-mini", "meta/mini-free"]
+
+    repeated_provider = client.get("/admin/model-catalog?provider=ollama&provider=openai")
+    assert repeated_provider.status_code == 200
+    assert {item["provider_id"] for item in repeated_provider.json()["items"]} == {"ollama", "openai"}
+
+    owner = client.get("/admin/model-catalog?owner=openai")
+    assert owner.status_code == 200
+    assert {item["model"]["id"] for item in owner.json()["items"]} == {"gpt-4.1", "gpt-4.1-mini"}
+
+    assert [item["model"]["id"] for item in client.get("/admin/model-catalog?modality=image").json()["items"]] == ["meta/large-paid"]
+    assert [item["model"]["id"] for item in client.get("/admin/model-catalog?capability=reasoning").json()["items"]] == ["meta/large-paid"]
+    assert {item["model"]["id"] for item in client.get("/admin/model-catalog?price_tier=free").json()["items"]} == {"meta/mini-free", "meta/mid-context"}
+    assert [item["model"]["id"] for item in client.get("/admin/model-catalog?price_tier=paid").json()["items"]] == ["meta/large-paid"]
+    assert [item["model"]["id"] for item in client.get("/admin/model-catalog?usage=used").json()["items"]] == ["meta/large-paid"]
+    assert {item["model"]["id"] for item in client.get("/admin/model-catalog?usage=unused").json()["items"]} == {"gpt-4.1", "gpt-4.1-mini", "meta/mini-free", "meta/mid-context", "qwen2.5-coder:latest"}
+    assert [item["model"]["id"] for item in client.get("/admin/model-catalog?context=128k").json()["items"]] == ["meta/mini-free"]
+    assert [item["model"]["id"] for item in client.get("/admin/model-catalog?context=200k").json()["items"]] == ["meta/mid-context"]
+    assert [item["model"]["id"] for item in client.get("/admin/model-catalog?context=1m").json()["items"]] == ["meta/large-paid"]
+
+    by_name = client.get("/admin/model-catalog?sort=name")
+    by_provider = client.get("/admin/model-catalog?sort=provider")
+    by_context = client.get("/admin/model-catalog?sort=context")
+    by_price = client.get("/admin/model-catalog?sort=price")
+    assert [item["model"]["id"] for item in by_name.json()["items"]] == ["gpt-4.1", "gpt-4.1-mini", "meta/large-paid", "meta/mid-context", "meta/mini-free", "qwen2.5-coder:latest"]
+    assert [item["provider_id"] for item in by_provider.json()["items"]] == ["ollama", "openai", "openai", "openrouter", "openrouter", "openrouter"]
+    assert [item["model"]["id"] for item in by_context.json()["items"]] == ["meta/mini-free", "meta/mid-context", "meta/large-paid", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini"]
+    assert [item["model"]["id"] for item in by_price.json()["items"]] == ["meta/mid-context", "meta/mini-free", "meta/large-paid", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini"]
+
+    beyond_end = client.get("/admin/model-catalog?page=99&page_size=2")
+    assert beyond_end.status_code == 200
+    assert beyond_end.json()["items"] == []
+    assert beyond_end.json()["pagination"] == {"page": 99, "page_size": 2, "total_items": 6, "total_pages": 3}
+
+
+def test_model_catalog_rejects_invalid_pagination(client: TestClient) -> None:
+    assert client.get("/admin/model-catalog?page=0").status_code == 422
+    assert client.get("/admin/model-catalog?page_size=101").status_code == 422
 
 
 def test_provider_models_endpoint_includes_anthropic_provider(

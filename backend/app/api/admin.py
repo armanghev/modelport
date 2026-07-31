@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from urllib.parse import urljoin
 
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -52,6 +53,10 @@ from app.schemas.admin import (
     ProviderModelsEntry,
     ProviderModelsPayload,
     ProviderModelsTotals,
+    ProviderModelCatalogItem,
+    ModelCatalogFacet,
+    ModelCatalogPagination,
+    ModelCatalogPayload,
     ProviderCreate,
     ProviderPresetResponse,
     ProviderCredentialCreate,
@@ -456,8 +461,36 @@ def get_provider_health(session: Session = Depends(get_session)) -> ProviderHeal
     return ProviderHealthPayload.model_validate(collect_provider_health_payload(session))
 
 
-@router.get("/providers/models", response_model=ProviderModelsPayload)
-def list_provider_models(session: Session = Depends(get_session)) -> ProviderModelsPayload:
+def _provider_models_totals(
+    results: list[ProviderModelsEntry],
+    metadata_synced_at: str | None,
+) -> ProviderModelsTotals:
+    live_model_count = sum(entry.available_model_count for entry in results)
+    priced_model_count = sum(
+        1
+        for entry in results
+        for model in entry.models
+        if (model.input_per_1m_usd is not None and model.input_per_1m_usd >= 0)
+        or (model.output_per_1m_usd is not None and model.output_per_1m_usd >= 0)
+    )
+    used_model_count = sum(
+        1
+        for entry in results
+        for model in entry.models
+        if model.usage is not None and model.usage.requestCount > 0
+    )
+    return ProviderModelsTotals(
+        live_model_count=live_model_count,
+        provider_count=len(results),
+        priced_model_count=priced_model_count,
+        used_model_count=used_model_count,
+        metadata_synced_at=metadata_synced_at,
+    )
+
+
+def _collect_provider_models(
+    session: Session,
+) -> tuple[list[ProviderModelsEntry], ProviderModelsTotals]:
     providers = session.scalars(select(Provider).order_by(Provider.id)).all()
     results: list[ProviderModelsEntry] = []
     ensure_openrouter_metadata_fresh(session)
@@ -552,30 +585,204 @@ def list_provider_models(session: Session = Depends(get_session)) -> ProviderMod
 
     session.commit()
 
-    live_model_count = sum(entry.available_model_count for entry in results)
-    priced_model_count = sum(
-        1
-        for entry in results
-        for model in entry.models
-        if (model.input_per_1m_usd is not None and model.input_per_1m_usd >= 0)
-        or (model.output_per_1m_usd is not None and model.output_per_1m_usd >= 0)
-    )
-    used_model_count = sum(
-        1
-        for entry in results
-        for model in entry.models
-        if model.usage is not None and model.usage.requestCount > 0
-    )
-
-    totals = ProviderModelsTotals(
-        live_model_count=live_model_count,
-        provider_count=len(results),
-        priced_model_count=priced_model_count,
-        used_model_count=used_model_count,
+    totals = _provider_models_totals(
+        results,
         metadata_synced_at=latest_metadata.fetched_at.isoformat() if latest_metadata else None,
     )
+    return results, totals
+
+
+@router.get("/providers/models", response_model=ProviderModelsPayload)
+def list_provider_models(session: Session = Depends(get_session)) -> ProviderModelsPayload:
+    results, totals = _collect_provider_models(session)
 
     return ProviderModelsPayload(totals=totals, providers=results)
+
+
+def _catalog_context_bucket(context_length: int | None) -> str | None:
+    if context_length is None:
+        return None
+    if context_length < 200_000:
+        return "128k"
+    if context_length < 1_000_000:
+        return "200k"
+    return "1m"
+
+
+def _catalog_price_tier(item: ProviderModelCatalogItem) -> str | None:
+    prices = (item.model.input_per_1m_usd, item.model.output_per_1m_usd)
+    if any(price is not None and price > 0 for price in prices):
+        return "paid"
+    if any(price == 0 for price in prices):
+        return "free"
+    return None
+
+
+def _catalog_usage(item: ProviderModelCatalogItem) -> str:
+    return "used" if item.model.usage is not None and item.model.usage.requestCount > 0 else "unused"
+
+
+def _matches_catalog_filters(
+    item: ProviderModelCatalogItem,
+    *,
+    q: str | None,
+    provider: list[str],
+    owner: list[str],
+    modality: list[str],
+    capability: list[str],
+    price_tier: list[str],
+    usage: list[str],
+    context: list[str],
+) -> bool:
+    model = item.model
+    if q:
+        searchable = [
+            model.id,
+            model.display_name or "",
+            item.provider_id,
+            item.provider_name,
+            model.owned_by or "",
+            model.description or "",
+            model.canonical_slug or "",
+            model.metadata_source,
+            *model.input_modalities,
+            *model.output_modalities,
+            *model.supported_parameters,
+        ]
+        if q.casefold() not in " ".join(searchable).casefold():
+            return False
+    if provider and item.provider_id.casefold() not in {value.casefold() for value in provider}:
+        return False
+    if owner and (model.owned_by or "").casefold() not in {value.casefold() for value in owner}:
+        return False
+    if modality:
+        modalities = {value.casefold() for value in (*model.input_modalities, *model.output_modalities)}
+        if not modalities.intersection(value.casefold() for value in modality):
+            return False
+    if capability:
+        capabilities = {value.casefold() for value in model.supported_parameters}
+        if not capabilities.intersection(value.casefold() for value in capability):
+            return False
+    if price_tier and _catalog_price_tier(item) not in price_tier:
+        return False
+    if usage and _catalog_usage(item) not in usage:
+        return False
+    return not context or _catalog_context_bucket(model.context_length) in context
+
+
+def _catalog_sort_key(item: ProviderModelCatalogItem, sort: str) -> tuple:
+    model = item.model
+    usage_count = model.usage.requestCount if model.usage is not None else 0
+    price = next((value for value in (model.input_per_1m_usd, model.output_per_1m_usd) if value is not None), None)
+    primary: object
+    if sort == "usage":
+        primary = -usage_count
+    elif sort == "name":
+        primary = (model.display_name or model.id).casefold()
+    elif sort == "provider":
+        primary = item.provider_id.casefold()
+    elif sort == "context":
+        primary = (model.context_length is None, model.context_length or 0)
+    elif sort == "price":
+        primary = (price is None, price or 0)
+    else:
+        primary = item.fetched_at
+    return primary, item.provider_id.casefold(), model.id.casefold()
+
+
+def _catalog_facets(items: list[ProviderModelCatalogItem], key: str) -> list[ModelCatalogFacet]:
+    counts: dict[str, tuple[str, int]] = {}
+    for item in items:
+        value = item.provider_id if key == "providers" else item.model.owned_by
+        if not value:
+            continue
+        label = item.provider_name if key == "providers" else value
+        existing = counts.get(value)
+        counts[value] = (label, (existing[1] if existing else 0) + 1)
+    return [
+        ModelCatalogFacet(value=value, label=label, count=count)
+        for value, (label, count) in sorted(counts.items(), key=lambda pair: pair[0].casefold())
+    ]
+
+
+@router.get("/model-catalog", response_model=ModelCatalogPayload)
+def list_model_catalog(
+    q: str | None = None,
+    provider: list[str] = Query(default=[]),
+    owner: list[str] = Query(default=[]),
+    modality: list[str] = Query(default=[]),
+    capability: list[str] = Query(default=[]),
+    price_tier: list[Literal["free", "paid"]] = Query(default=[]),
+    usage: list[Literal["used", "unused"]] = Query(default=[]),
+    context: list[Literal["128k", "200k", "1m"]] = Query(default=[]),
+    sort: Literal["usage", "name", "provider", "context", "price", "fetched"] = "usage",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=24, ge=1, le=100),
+    session: Session = Depends(get_session),
+) -> ModelCatalogPayload:
+    entries, totals = _collect_provider_models(session)
+    all_items = [
+        ProviderModelCatalogItem(
+            provider_id=entry.provider_id,
+            provider_uuid=entry.provider_uuid,
+            provider_name=entry.display_name,
+            provider_type=entry.provider_type,
+            base_url=entry.base_url,
+            fetched_at=entry.fetched_at,
+            model=model,
+        )
+        for entry in entries
+        for model in entry.models
+    ]
+    filter_values = {
+        "q": q.strip() if q and q.strip() else None,
+        "provider": provider,
+        "owner": owner,
+        "modality": modality,
+        "capability": capability,
+        "price_tier": list(price_tier),
+        "usage": list(usage),
+        "context": list(context),
+    }
+
+    def filtered(**overrides: object) -> list[ProviderModelCatalogItem]:
+        values = {**filter_values, **overrides}
+        return [item for item in all_items if _matches_catalog_filters(item, **values)]
+
+    matched = filtered()
+    matched.sort(key=lambda item: _catalog_sort_key(item, sort))
+    metadata_synced_at = totals.metadata_synced_at
+    matched_models_by_provider: dict[str, list] = {}
+    for item in matched:
+        matched_models_by_provider.setdefault(item.provider_id, []).append(item.model)
+    selected_entries = [
+        entry.model_copy(
+            update={
+                "available_model_count": len(matched_models_by_provider[entry.provider_id]),
+                "models": matched_models_by_provider[entry.provider_id],
+            }
+        )
+        for entry in entries
+        if entry.provider_id in matched_models_by_provider
+    ]
+    filtered_totals = _provider_models_totals(selected_entries, metadata_synced_at)
+    total_items = len(matched)
+    total_pages = max(1, (total_items + page_size - 1) // page_size)
+    start = (page - 1) * page_size
+    return ModelCatalogPayload(
+        items=matched[start : start + page_size],
+        pagination=ModelCatalogPagination(
+            page=page,
+            page_size=page_size,
+            total_items=total_items,
+            total_pages=total_pages,
+        ),
+        totals=filtered_totals,
+        facets={
+            "providers": _catalog_facets(filtered(provider=[]), "providers"),
+            "owners": _catalog_facets(filtered(owner=[]), "owners"),
+        },
+    )
 
 
 @router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
