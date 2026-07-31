@@ -192,7 +192,9 @@ pnpm --dir dashboard dev
 ```
 
 Vite serves `/dashboard/` and proxies dashboard API paths to FastAPI. No
-frontend URL or token environment variables are required.
+frontend URL or token environment variables are required for the documented TLS
+setup. If the backend is running over plain HTTP, use
+`MODELPORT_BACKEND_DEV_URL=http://127.0.0.1:13243 pnpm --dir dashboard dev`.
 
 ## Docs
 

@@ -7,7 +7,7 @@ import { defineConfig } from "vitest/config";
 
 const dashboardRoot = fileURLToPath(new URL(".", import.meta.url));
 const backendTarget =
-  process.env.MODELPORT_BACKEND_DEV_URL ?? "http://127.0.0.1:13243";
+  process.env.MODELPORT_BACKEND_DEV_URL ?? "https://127.0.0.1:13243";
 
 export default defineConfig({
   base: "/dashboard/",

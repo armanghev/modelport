@@ -126,6 +126,7 @@ function FilterSelect({
 
 export default function RequestsPage() {
   const hasLoadedRequests = useRef(false);
+  const activeDetailRequest = useRef<string | null>(null);
   const [payload, setPayload] = useState<Awaited<ReturnType<typeof fetchRequestsAnalytics>> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -262,19 +263,27 @@ export default function RequestsPage() {
   const totalPages = Math.max(1, payload?.pagination.totalPages ?? 0);
 
   const openRequestDetails = async (rowId: string) => {
+    activeDetailRequest.current = rowId;
     setSelectedRowId(rowId);
     setSelectedRow(null);
     setDetailError(null);
     setIsDetailLoading(true);
     setDetailOpen(true);
     try {
-      setSelectedRow(await fetchRequestDetail(rowId));
+      const detail = await fetchRequestDetail(rowId);
+      if (activeDetailRequest.current === rowId) {
+        setSelectedRow(detail);
+      }
     } catch (error) {
-      setDetailError(
-        error instanceof Error ? error.message : "Failed to load request details.",
-      );
+      if (activeDetailRequest.current === rowId) {
+        setDetailError(
+          error instanceof Error ? error.message : "Failed to load request details.",
+        );
+      }
     } finally {
-      setIsDetailLoading(false);
+      if (activeDetailRequest.current === rowId) {
+        setIsDetailLoading(false);
+      }
     }
   };
 
@@ -589,6 +598,7 @@ export default function RequestsPage() {
         onOpenChange={(open) => {
           setDetailOpen(open);
           if (!open) {
+            activeDetailRequest.current = null;
             setSelectedRowId(null);
             setSelectedRow(null);
             setDetailError(null);

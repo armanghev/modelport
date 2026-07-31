@@ -597,7 +597,7 @@ def build_overview_payload(session: Session) -> dict:
     recent_requests = session.scalars(
         select(ApiRequest)
         .options(defer(ApiRequest.request_body), defer(ApiRequest.response_body))
-        .order_by(ApiRequest.created_at.desc())
+        .order_by(ApiRequest.created_at.desc(), ApiRequest.request_id.asc())
         .limit(10)
     ).all()
 
@@ -636,7 +636,7 @@ def build_requests_payload(
         .options(defer(ApiRequest.request_body), defer(ApiRequest.response_body))
         .outerjoin(Provider, Provider.slug == ApiRequest.provider)
         .where(*conditions)
-        .order_by(order_by, ApiRequest.id.asc())
+        .order_by(order_by, ApiRequest.request_id.asc(), ApiRequest.id.asc())
         .offset((query.page - 1) * query.page_size)
         .limit(query.page_size)
     ).all()

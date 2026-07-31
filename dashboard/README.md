@@ -22,7 +22,8 @@ proxy, health, admin, and analytics routes continue to operate.
 
 ## Development
 
-Start FastAPI on port 13243, then run:
+Start FastAPI with the documented local TLS configuration on port 13243, then
+run:
 
 ```bash
 pnpm --dir dashboard install
@@ -32,7 +33,8 @@ pnpm --dir dashboard dev
 Vite serves the SPA under `/dashboard/` and proxies `/admin`, `/analytics`, and
 dashboard-auth requests to FastAPI. Browser requests use same-origin cookies and
 relative URLs, so no frontend backend-URL or token environment variables are
-needed.
+needed. If FastAPI is running without TLS, start Vite with
+`MODELPORT_BACKEND_DEV_URL=http://127.0.0.1:13243 pnpm --dir dashboard dev`.
 
 ## Checks
 

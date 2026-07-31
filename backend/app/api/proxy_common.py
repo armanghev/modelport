@@ -172,7 +172,7 @@ def require_dashboard_token(
 ) -> None:
     if not request.app.state.dashboard_auth_enabled:
         return
-    if credentials is None and has_valid_dashboard_session(request):
+    if has_valid_dashboard_session(request):
         return
     _require_bearer_token(
         request,

@@ -53,12 +53,16 @@ def test_analytics_route_accepts_dashboard_token(bare_client: TestClient) -> Non
     response = bare_client.get("/analytics/overview", headers=DASHBOARD_AUTH_HEADERS)
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    assert "Cookie" in response.headers["vary"]
 
 
 def test_dashboard_auth_status_reports_locked_session(bare_client: TestClient) -> None:
     response = bare_client.get("/dashboard/auth/status")
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    assert "Cookie" in response.headers["vary"]
     assert response.json() == {"authEnabled": True, "authenticated": False}
 
 
@@ -90,6 +94,20 @@ def test_dashboard_login_cookie_authenticates_and_logout_clears_session(
     logout = bare_client.post("/dashboard/auth/logout")
     assert logout.status_code == 204
     assert bare_client.get("/admin/providers").status_code == 401
+
+
+def test_valid_dashboard_session_is_accepted_with_an_invalid_bearer_header(
+    bare_client: TestClient,
+) -> None:
+    login = bare_client.post("/dashboard/auth/login", json={"token": DASHBOARD_TOKEN})
+    assert login.status_code == 204
+
+    response = bare_client.get(
+        "/admin/providers",
+        headers={"Authorization": "Bearer stale-token"},
+    )
+
+    assert response.status_code == 200
 
 
 def test_dashboard_login_marks_cookie_secure_over_https(configured_app) -> None:

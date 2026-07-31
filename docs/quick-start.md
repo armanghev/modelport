@@ -187,6 +187,8 @@ Unlock the dashboard with `MODELPORT_DASHBOARD_TOKEN`. The login creates an
 HttpOnly same-origin session cookie; the token is not compiled into browser
 assets. For UI development, run `pnpm --dir dashboard dev` in a second terminal.
 Vite proxies dashboard API routes to the FastAPI process.
+Its default target is the documented HTTPS backend. For a plain-HTTP backend,
+run `MODELPORT_BACKEND_DEV_URL=http://127.0.0.1:13243 pnpm --dir dashboard dev`.
 
 ## 5. Send a test request
 

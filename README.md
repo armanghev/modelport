@@ -316,6 +316,7 @@ server:
 security:
   modelport_token: "MODELPORT_TOKEN"
   dashboard_token: "MODELPORT_DASHBOARD_TOKEN"
+  dashboard_auth_enabled_env: "MODELPORT_DASHBOARD_AUTH_ENABLED"
 
 database:
   url: "sqlite:///./data/modelport.db"
@@ -373,7 +374,8 @@ Useful backend modules:
 ModelPort is designed as a local development tool. Do not expose the backend directly to an untrusted network.
 
 - Keep real provider API keys out of client tools; clients should only receive the local ModelPort URL and `MODELPORT_TOKEN`.
-- The admin and analytics APIs (including credential reveal) require a separate `MODELPORT_DASHBOARD_TOKEN` bearer token; the proxy token is not accepted there.
+- With dashboard auth enabled, admin and analytics APIs (including credential reveal) accept a dashboard session or the separate `MODELPORT_DASHBOARD_TOKEN` bearer token; the proxy token is not accepted there.
+- Setting `MODELPORT_DASHBOARD_AUTH_ENABLED=false` makes admin and analytics APIs unauthenticated and should only be used behind another trusted access-control layer.
 - Raw provider keys from `.env` are not displayed in the dashboard.
 - Database-stored credentials are encrypted using `PROXY_ENCRYPTION_KEY`.
 - Request/response body logging can capture prompts, completions, tool inputs, and other sensitive data.

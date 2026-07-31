@@ -4,7 +4,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 
 from app.api.admin import router as admin_router
@@ -61,6 +61,23 @@ def create_app(
         ),
         lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def prevent_dashboard_api_caching(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith(
+            ("/admin", "/analytics", "/dashboard/auth")
+        ):
+            response.headers["Cache-Control"] = "private, no-store"
+            vary_values = {
+                value.strip()
+                for value in response.headers.get("Vary", "").split(",")
+                if value.strip()
+            }
+            vary_values.add("Cookie")
+            response.headers["Vary"] = ", ".join(sorted(vary_values))
+        return response
+
     app.state.dashboard_auth_enabled = dashboard_auth_enabled
     app.include_router(admin_router)
     app.include_router(analytics_router)
