@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from app.database import ApiRequest, ProviderHealthCheck
@@ -697,6 +698,10 @@ def test_model_catalog_filters_sorts_and_paginates_enriched_models(
 
     monkeypatch.setattr("app.api.admin.ensure_openrouter_metadata_fresh", lambda session: None)
     monkeypatch.setattr("app.api.admin.fetch_provider_models_from_upstream", fake_fetch)
+    monkeypatch.setattr(
+        "app.api.admin.record_provider_health_check",
+        lambda *args, **kwargs: SimpleNamespace(checked_at=datetime(2026, 7, 31, tzinfo=UTC)),
+    )
     session_factory = client.app.state.session_factory
     with session_factory() as session:
         session.add(
@@ -722,11 +727,13 @@ def test_model_catalog_filters_sorts_and_paginates_enriched_models(
     owner = client.get("/admin/model-catalog?owner=openai")
     assert owner.status_code == 200
     assert {item["model"]["id"] for item in owner.json()["items"]} == {"gpt-4.1", "gpt-4.1-mini"}
+    repeated_owner = client.get("/admin/model-catalog?owner=openai&owner=meta")
+    assert {item["model"]["owned_by"] for item in repeated_owner.json()["items"]} == {"openai", "meta"}
 
     assert [item["model"]["id"] for item in client.get("/admin/model-catalog?modality=image").json()["items"]] == ["meta/large-paid"]
     assert [item["model"]["id"] for item in client.get("/admin/model-catalog?capability=reasoning").json()["items"]] == ["meta/large-paid"]
     assert {item["model"]["id"] for item in client.get("/admin/model-catalog?price_tier=free").json()["items"]} == {"meta/mini-free", "meta/mid-context"}
-    assert [item["model"]["id"] for item in client.get("/admin/model-catalog?price_tier=paid").json()["items"]] == ["meta/large-paid"]
+    assert {item["model"]["id"] for item in client.get("/admin/model-catalog?price_tier=paid").json()["items"]} == {"meta/mini-free", "meta/mid-context", "meta/large-paid"}
     assert [item["model"]["id"] for item in client.get("/admin/model-catalog?usage=used").json()["items"]] == ["meta/large-paid"]
     assert {item["model"]["id"] for item in client.get("/admin/model-catalog?usage=unused").json()["items"]} == {"gpt-4.1", "gpt-4.1-mini", "meta/mini-free", "meta/mid-context", "qwen2.5-coder:latest"}
     assert [item["model"]["id"] for item in client.get("/admin/model-catalog?context=128k").json()["items"]] == ["meta/mini-free"]
@@ -735,12 +742,24 @@ def test_model_catalog_filters_sorts_and_paginates_enriched_models(
 
     by_name = client.get("/admin/model-catalog?sort=name")
     by_provider = client.get("/admin/model-catalog?sort=provider")
+    by_usage = client.get("/admin/model-catalog?sort=usage")
     by_context = client.get("/admin/model-catalog?sort=context")
     by_price = client.get("/admin/model-catalog?sort=price")
+    by_fetched = client.get("/admin/model-catalog?sort=fetched")
     assert [item["model"]["id"] for item in by_name.json()["items"]] == ["gpt-4.1", "gpt-4.1-mini", "meta/large-paid", "meta/mid-context", "meta/mini-free", "qwen2.5-coder:latest"]
     assert [item["provider_id"] for item in by_provider.json()["items"]] == ["ollama", "openai", "openai", "openrouter", "openrouter", "openrouter"]
+    assert [item["model"]["id"] for item in by_usage.json()["items"]] == ["meta/large-paid", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini", "meta/mid-context", "meta/mini-free"]
     assert [item["model"]["id"] for item in by_context.json()["items"]] == ["meta/mini-free", "meta/mid-context", "meta/large-paid", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini"]
     assert [item["model"]["id"] for item in by_price.json()["items"]] == ["meta/mid-context", "meta/mini-free", "meta/large-paid", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini"]
+    assert [item["model"]["id"] for item in by_fetched.json()["items"]] == ["qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini", "meta/large-paid", "meta/mid-context", "meta/mini-free"]
+
+    detail = client.get("/admin/model-catalog/openai/gpt-4.1")
+    assert detail.status_code == 200
+    assert detail.json()["provider_id"] == "openai"
+    assert detail.json()["model"]["id"] == "gpt-4.1"
+    missing = client.get("/admin/model-catalog/openai/not-a-model")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Model not found in the current healthy provider catalogs."
 
     beyond_end = client.get("/admin/model-catalog?page=99&page_size=2")
     assert beyond_end.status_code == 200
@@ -750,7 +769,19 @@ def test_model_catalog_filters_sorts_and_paginates_enriched_models(
 
 def test_model_catalog_rejects_invalid_pagination(client: TestClient) -> None:
     assert client.get("/admin/model-catalog?page=0").status_code == 422
+    assert client.get("/admin/model-catalog?page_size=0").status_code == 422
     assert client.get("/admin/model-catalog?page_size=101").status_code == 422
+    assert client.get("/admin/model-catalog?price_tier=unknown").status_code == 422
+    assert client.get("/admin/model-catalog?usage=maybe").status_code == 422
+    assert client.get("/admin/model-catalog?context=64k").status_code == 422
+    assert client.get("/admin/model-catalog?sort=random").status_code == 422
+
+
+def test_model_catalog_context_buckets_require_positive_context_length() -> None:
+    from app.api.admin import _catalog_context_bucket
+
+    assert _catalog_context_bucket(0) is None
+    assert _catalog_context_bucket(-1) is None
 
 
 def test_provider_models_endpoint_includes_anthropic_provider(

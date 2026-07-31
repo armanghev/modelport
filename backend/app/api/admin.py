@@ -600,7 +600,7 @@ def list_provider_models(session: Session = Depends(get_session)) -> ProviderMod
 
 
 def _catalog_context_bucket(context_length: int | None) -> str | None:
-    if context_length is None:
+    if context_length is None or context_length <= 0:
         return None
     if context_length < 200_000:
         return "128k"
@@ -609,13 +609,14 @@ def _catalog_context_bucket(context_length: int | None) -> str | None:
     return "1m"
 
 
-def _catalog_price_tier(item: ProviderModelCatalogItem) -> str | None:
+def _catalog_has_pricing(item: ProviderModelCatalogItem) -> bool:
     prices = (item.model.input_per_1m_usd, item.model.output_per_1m_usd)
-    if any(price is not None and price > 0 for price in prices):
-        return "paid"
-    if any(price == 0 for price in prices):
-        return "free"
-    return None
+    return any(price is not None and price >= 0 for price in prices)
+
+
+def _catalog_is_free(item: ProviderModelCatalogItem) -> bool:
+    prices = (item.model.input_per_1m_usd, item.model.output_per_1m_usd)
+    return any(price == 0 for price in prices) and not any(price is not None and price > 0 for price in prices)
 
 
 def _catalog_usage(item: ProviderModelCatalogItem) -> str:
@@ -663,7 +664,10 @@ def _matches_catalog_filters(
         capabilities = {value.casefold() for value in model.supported_parameters}
         if not capabilities.intersection(value.casefold() for value in capability):
             return False
-    if price_tier and _catalog_price_tier(item) not in price_tier:
+    if price_tier and not (
+        ("free" in price_tier and _catalog_is_free(item))
+        or ("paid" in price_tier and _catalog_has_pricing(item))
+    ):
         return False
     if usage and _catalog_usage(item) not in usage:
         return False
@@ -705,6 +709,22 @@ def _catalog_facets(items: list[ProviderModelCatalogItem], key: str) -> list[Mod
     ]
 
 
+def _flatten_provider_models(entries: list[ProviderModelsEntry]) -> list[ProviderModelCatalogItem]:
+    return [
+        ProviderModelCatalogItem(
+            provider_id=entry.provider_id,
+            provider_uuid=entry.provider_uuid,
+            provider_name=entry.display_name,
+            provider_type=entry.provider_type,
+            base_url=entry.base_url,
+            fetched_at=entry.fetched_at,
+            model=model,
+        )
+        for entry in entries
+        for model in entry.models
+    ]
+
+
 @router.get("/model-catalog", response_model=ModelCatalogPayload)
 def list_model_catalog(
     q: str | None = None,
@@ -721,19 +741,7 @@ def list_model_catalog(
     session: Session = Depends(get_session),
 ) -> ModelCatalogPayload:
     entries, totals = _collect_provider_models(session)
-    all_items = [
-        ProviderModelCatalogItem(
-            provider_id=entry.provider_id,
-            provider_uuid=entry.provider_uuid,
-            provider_name=entry.display_name,
-            provider_type=entry.provider_type,
-            base_url=entry.base_url,
-            fetched_at=entry.fetched_at,
-            model=model,
-        )
-        for entry in entries
-        for model in entry.models
-    ]
+    all_items = _flatten_provider_models(entries)
     filter_values = {
         "q": q.strip() if q and q.strip() else None,
         "provider": provider,
@@ -783,6 +791,29 @@ def list_model_catalog(
             "owners": _catalog_facets(filtered(owner=[]), "owners"),
         },
     )
+
+
+@router.get("/model-catalog/{provider_id}/{model_id:path}", response_model=ProviderModelCatalogItem)
+def get_model_catalog_item(
+    provider_id: str,
+    model_id: str,
+    session: Session = Depends(get_session),
+) -> ProviderModelCatalogItem:
+    entries, _ = _collect_provider_models(session)
+    item = next(
+        (
+            candidate
+            for candidate in _flatten_provider_models(entries)
+            if candidate.provider_id == provider_id and candidate.model.id == model_id
+        ),
+        None,
+    )
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Model not found in the current healthy provider catalogs.",
+        )
+    return item
 
 
 @router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
