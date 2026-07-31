@@ -49,12 +49,9 @@ from app.model_metadata_service import (
 from app.schemas.admin import (
     AppearanceSettings,
     CredentialSecretResponse,
-    PricingOverrideCreate,
     ProviderModelsEntry,
     ProviderModelsPayload,
     ProviderModelsTotals,
-    PricingOverrideResponse,
-    PricingOverrideUpdate,
     ProviderCreate,
     ProviderPresetResponse,
     ProviderCredentialCreate,
@@ -66,8 +63,6 @@ from app.schemas.admin import (
     SettingsResponse,
     TrackingSettings,
 )
-from app.pricing.rate_card import RateCard, TierRates
-from app.pricing_seed import upsert_rate_card
 from app.security import EncryptionConfigurationError, decrypt_secret, encrypt_secret
 
 router = APIRouter(
@@ -103,13 +98,6 @@ def delete_provider_and_related(session: Session, provider_id: str) -> None:
     provider = session.get(Provider, provider_id)
     if provider is not None:
         session.delete(provider)
-
-
-def require_pricing_override(session: Session, pricing_id: str) -> PricingOverride:
-    record = session.get(PricingOverride, pricing_id)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pricing override not found.")
-    return record
 
 
 def serialize_provider(
@@ -155,36 +143,6 @@ def serialize_credential(
             "created_at": credential.created_at,
             "updated_at": credential.updated_at,
         }
-    )
-
-
-def serialize_pricing(record: PricingOverride, provider_slug: str | None = None) -> PricingOverrideResponse:
-    return PricingOverrideResponse.model_validate(
-        {
-            "id": record.id,
-            "provider_id": record.provider_id,
-            "provider_slug": provider_slug,
-            "model": record.model,
-            "input_per_1m_usd": record.input_per_1m_usd,
-            "output_per_1m_usd": record.output_per_1m_usd,
-            "currency": record.currency,
-            "enabled": record.enabled,
-            "source": record.source,
-            "created_at": record.created_at,
-            "updated_at": record.updated_at,
-        }
-    )
-
-
-def manual_rate_card(input_per_1m_usd: float, output_per_1m_usd: float) -> RateCard:
-    from decimal import Decimal
-
-    return RateCard(
-        standard=TierRates(
-            input_per_1m=Decimal(str(input_per_1m_usd)),
-            output_per_1m=Decimal(str(output_per_1m_usd)),
-        ),
-        source="manual",
     )
 
 
@@ -803,98 +761,6 @@ def reveal_provider_credential(
     )
 
 
-@router.get("/pricing", response_model=list[PricingOverrideResponse])
-def list_pricing(session: Session = Depends(get_session)) -> list[PricingOverrideResponse]:
-    records = session.scalars(select(PricingOverride).order_by(PricingOverride.provider_id, PricingOverride.model)).all()
-    providers_by_id = {
-        provider.id: provider
-        for provider in session.scalars(select(Provider)).all()
-    }
-    return [
-        serialize_pricing(
-            record,
-            provider_slug=providers_by_id[record.provider_id].slug
-            if record.provider_id in providers_by_id
-            else None,
-        )
-        for record in records
-    ]
-
-
-@router.post("/pricing", response_model=PricingOverrideResponse, status_code=status.HTTP_201_CREATED)
-def create_pricing_override(
-    payload: PricingOverrideCreate,
-    session: Session = Depends(get_session),
-) -> PricingOverrideResponse:
-    require_provider_by_id(session, payload.provider_id)
-    card = manual_rate_card(payload.input_per_1m_usd, payload.output_per_1m_usd)
-    record = upsert_rate_card(
-        session,
-        provider_id=payload.provider_id,
-        model=payload.model,
-        card=card,
-    )
-    if record is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A higher-precedence pricing override already exists for this model.",
-        )
-    record.currency = payload.currency
-    record.enabled = payload.enabled
-    session.commit()
-    session.refresh(record)
-    return serialize_pricing(record)
-
-
-@router.patch("/pricing/{pricing_id}", response_model=PricingOverrideResponse)
-def update_pricing_override(
-    pricing_id: str,
-    payload: PricingOverrideUpdate,
-    session: Session = Depends(get_session),
-) -> PricingOverrideResponse:
-    record = require_pricing_override(session, pricing_id)
-    updates = payload.model_dump(exclude_unset=True)
-    if "provider_id" in updates and updates["provider_id"] is not None:
-        require_provider_by_id(session, updates["provider_id"])
-
-    rates_changed = False
-    for field, value in updates.items():
-        if field in {"input_per_1m_usd", "output_per_1m_usd"} and value != getattr(record, field):
-            rates_changed = True
-        setattr(record, field, value)
-
-    record.source = "manual"
-    if rates_changed or not record.rate_card_json:
-        card = manual_rate_card(record.input_per_1m_usd, record.output_per_1m_usd)
-    else:
-        try:
-            card = RateCard.model_validate_json(record.rate_card_json).model_copy(
-                update={"source": "manual"}
-            )
-        except ValueError:
-            card = manual_rate_card(record.input_per_1m_usd, record.output_per_1m_usd)
-    record.rate_card_json = card.model_dump_json()
-
-    session.commit()
-    session.refresh(record)
-    return serialize_pricing(record)
-
-
-@router.delete(
-    "/pricing/{pricing_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
-)
-def delete_pricing_override(
-    pricing_id: str,
-    session: Session = Depends(get_session),
-) -> Response:
-    record = require_pricing_override(session, pricing_id)
-    session.delete(record)
-    session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
 @router.patch("/settings/tracking")
 def update_tracking_settings(
     payload: TrackingSettings,
@@ -925,10 +791,6 @@ def get_settings(session: Session = Depends(get_session)) -> SettingsResponse:
     credentials = session.scalars(
         select(ProviderCredential).order_by(ProviderCredential.provider_id, ProviderCredential.display_name)
     ).all()
-    pricing = session.scalars(
-        select(PricingOverride).order_by(PricingOverride.provider_id, PricingOverride.model)
-    ).all()
-
     providers_by_id = {provider.id: provider for provider in providers}
 
     return SettingsResponse(
@@ -941,15 +803,6 @@ def get_settings(session: Session = Depends(get_session)) -> SettingsResponse:
                 else "",
             )
             for credential in credentials
-        ],
-        pricing_overrides=[
-            serialize_pricing(
-                record,
-                provider_slug=providers_by_id[record.provider_id].slug
-                if record.provider_id in providers_by_id
-                else None,
-            )
-            for record in pricing
         ],
         settings=SettingsEnvelope(
             tracking=normalize_tracking_settings(get_setting(session, "tracking", {})),

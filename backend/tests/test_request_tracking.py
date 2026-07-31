@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.database import ApiRequest, build_session_factory
 
-from tests.test_helpers import provider_uuid
+from tests.test_helpers import seed_pricing
 
 
 def test_messages_route_persists_request_usage_and_cost(
@@ -12,18 +12,13 @@ def test_messages_route_persists_request_usage_and_cost(
     app_config,
     monkeypatch,
 ) -> None:
-    pricing_response = client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "openai"),
-            "model": "gpt-5.5",
-            "input_per_1m_usd": 2.0,
-            "output_per_1m_usd": 8.0,
-            "currency": "USD",
-            "enabled": True,
-        },
+    seed_pricing(
+        client,
+        provider_slug="openai",
+        model="gpt-5.5",
+        input_per_1m_usd=2.0,
+        output_per_1m_usd=8.0,
     )
-    assert pricing_response.status_code == 201
 
     class FakeResponse:
         def raise_for_status(self) -> None:
@@ -91,7 +86,7 @@ def test_messages_route_persists_request_usage_and_cost(
         assert record.total_tokens == 1500
         assert record.token_source == "provider_reported"
         assert record.estimated_cost_usd == 0.006
-        assert record.pricing_source == "manual"
+        assert record.pricing_source == "fixture"
         assert record.status_code == 200
         assert record.error_message is None
         assert record.request_id == "chatcmpl_req_123"
@@ -203,18 +198,13 @@ def test_messages_route_persists_stream_request_with_gemini_usage_and_reasoning(
     app_config,
     monkeypatch,
 ) -> None:
-    pricing_response = client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "gemini"),
-            "model": "models/gemini-2.5-pro",
-            "input_per_1m_usd": 1.25,
-            "output_per_1m_usd": 10.0,
-            "currency": "USD",
-            "enabled": True,
-        },
+    seed_pricing(
+        client,
+        provider_slug="gemini",
+        model="models/gemini-2.5-pro",
+        input_per_1m_usd=1.25,
+        output_per_1m_usd=10.0,
     )
-    assert pricing_response.status_code == 201
 
     def fake_stream_chat_completion_chunks(provider, api_key, payload):
         assert payload.get("stream_options") == {"include_usage": True}
@@ -269,18 +259,13 @@ def test_messages_route_persists_stream_request_metadata(
     app_config,
     monkeypatch,
 ) -> None:
-    pricing_response = client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "openai"),
-            "model": "gpt-5.5",
-            "input_per_1m_usd": 2.0,
-            "output_per_1m_usd": 8.0,
-            "currency": "USD",
-            "enabled": True,
-        },
+    seed_pricing(
+        client,
+        provider_slug="openai",
+        model="gpt-5.5",
+        input_per_1m_usd=2.0,
+        output_per_1m_usd=8.0,
     )
-    assert pricing_response.status_code == 201
 
     def fake_stream_chat_completion_chunks(provider, api_key, payload):
         yield '{"id":"chatcmpl_stream_456","choices":[{"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}'
@@ -330,18 +315,13 @@ def test_chat_completions_route_persists_request_usage_and_cost(
     app_config,
     monkeypatch,
 ) -> None:
-    pricing_response = client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "openai"),
-            "model": "gpt-5.5",
-            "input_per_1m_usd": 2.0,
-            "output_per_1m_usd": 8.0,
-            "currency": "USD",
-            "enabled": True,
-        },
+    seed_pricing(
+        client,
+        provider_slug="openai",
+        model="gpt-5.5",
+        input_per_1m_usd=2.0,
+        output_per_1m_usd=8.0,
     )
-    assert pricing_response.status_code == 201
 
     class FakeResponse:
         def raise_for_status(self) -> None:

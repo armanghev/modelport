@@ -112,38 +112,6 @@ class CredentialSecretResponse(BaseModel):
     api_key: str | None
 
 
-class PricingOverrideCreate(BaseModel):
-    provider_id: str
-    model: str
-    input_per_1m_usd: float = Field(ge=0)
-    output_per_1m_usd: float = Field(ge=0)
-    currency: str = "USD"
-    enabled: bool = True
-
-
-class PricingOverrideUpdate(BaseModel):
-    provider_id: str | None = None
-    model: str | None = None
-    input_per_1m_usd: float | None = Field(default=None, ge=0)
-    output_per_1m_usd: float | None = Field(default=None, ge=0)
-    currency: str | None = None
-    enabled: bool | None = None
-
-
-class PricingOverrideResponse(ORMModel):
-    id: str
-    provider_id: str
-    provider_slug: str | None = None
-    model: str
-    input_per_1m_usd: float
-    output_per_1m_usd: float
-    currency: str
-    enabled: bool
-    source: str | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
 class TrackingSettings(BaseModel):
     io_logging: bool | None = None
     retention_days: int | None = None
@@ -162,7 +130,6 @@ class SettingsEnvelope(BaseModel):
 class SettingsResponse(BaseModel):
     providers: list[ProviderResponse]
     provider_credentials: list[ProviderCredentialResponse]
-    pricing_overrides: list[PricingOverrideResponse]
     settings: SettingsEnvelope
 
 

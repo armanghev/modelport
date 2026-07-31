@@ -5,7 +5,7 @@ from sqlalchemy import select
 from app.backfill_request_costs import backfill_request_costs
 from app.database import ApiRequest
 
-from tests.test_helpers import provider_uuid
+from tests.test_helpers import provider_uuid, seed_pricing
 
 
 def test_backfill_request_costs_updates_existing_rows(client) -> None:
@@ -33,14 +33,12 @@ def test_backfill_request_costs_updates_existing_rows(client) -> None:
         )
         session.commit()
 
-    client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "openai"),
-            "model": "gpt-4.1",
-            "input_per_1m_usd": 2.0,
-            "output_per_1m_usd": 8.0,
-        },
+    seed_pricing(
+        client,
+        provider_slug="openai",
+        model="gpt-4.1",
+        input_per_1m_usd=2.0,
+        output_per_1m_usd=8.0,
     )
 
     summary = backfill_request_costs(session_factory)
@@ -55,7 +53,7 @@ def test_backfill_request_costs_updates_existing_rows(client) -> None:
         )
     assert record is not None
     assert record.estimated_cost_usd == 6.0
-    assert record.pricing_source == "manual"
+    assert record.pricing_source == "fixture"
 
 
 def test_backfill_clears_stale_negative_estimated_cost(client) -> None:
@@ -109,4 +107,3 @@ def test_backfill_clears_stale_negative_estimated_cost(client) -> None:
     assert record is not None
     assert record.estimated_cost_usd is None
     assert record.pricing_source is None
-

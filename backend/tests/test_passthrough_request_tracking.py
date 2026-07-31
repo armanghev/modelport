@@ -11,7 +11,7 @@ from app.database import PricingOverride
 from app.pricing.rate_card import RateCard
 from app.tracking.pricing import resolve_pricing_override
 
-from tests.test_helpers import provider_uuid
+from tests.test_helpers import provider_uuid, seed_pricing
 
 
 def _api_request_records(app_config) -> list[ApiRequest]:
@@ -25,16 +25,12 @@ def test_embeddings_route_persists_request_usage_and_cost(
     app_config,
     monkeypatch,
 ) -> None:
-    client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "openai"),
-            "model": "text-embedding-3-small",
-            "input_per_1m_usd": 1.0,
-            "output_per_1m_usd": 0.0,
-            "currency": "USD",
-            "enabled": True,
-        },
+    seed_pricing(
+        client,
+        provider_slug="openai",
+        model="text-embedding-3-small",
+        input_per_1m_usd=1.0,
+        output_per_1m_usd=0.0,
     )
 
     def fake_create_embedding(provider, api_key, payload):
@@ -65,7 +61,7 @@ def test_embeddings_route_persists_request_usage_and_cost(
     assert record.provider == "openai"
     assert record.input_tokens == 1000
     assert record.estimated_cost_usd == 0.001
-    assert record.pricing_source == "manual"
+    assert record.pricing_source == "fixture"
 
 
 def test_image_generations_route_persists_request_log(
@@ -176,16 +172,12 @@ def test_responses_route_persists_non_stream_request_usage(
     app_config,
     monkeypatch,
 ) -> None:
-    client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "openai"),
-            "model": "gpt-4.1",
-            "input_per_1m_usd": 2.0,
-            "output_per_1m_usd": 8.0,
-            "currency": "USD",
-            "enabled": True,
-        },
+    seed_pricing(
+        client,
+        provider_slug="openai",
+        model="gpt-4.1",
+        input_per_1m_usd=2.0,
+        output_per_1m_usd=8.0,
     )
 
     def fake_create_response(provider, api_key, payload):
@@ -388,16 +380,12 @@ def test_embeddings_route_persists_failed_upstream_request(
 
 
 def test_live_pricing_lookup_resolves_models_prefix_variant(client: TestClient) -> None:
-    client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "gemini"),
-            "model": "gemini-2.5-flash",
-            "input_per_1m_usd": 1.0,
-            "output_per_1m_usd": 2.0,
-            "currency": "USD",
-            "enabled": True,
-        },
+    seed_pricing(
+        client,
+        provider_slug="gemini",
+        model="gemini-2.5-flash",
+        input_per_1m_usd=1.0,
+        output_per_1m_usd=2.0,
     )
 
     session_factory = client.app.state.session_factory

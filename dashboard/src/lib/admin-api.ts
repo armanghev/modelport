@@ -1,5 +1,4 @@
 import type {
-  PricingEntry,
   ProviderDetail,
   ProviderHealth,
   ProviderType,
@@ -28,21 +27,9 @@ export interface AdminCredential {
   enabled: boolean;
 }
 
-export interface AdminPricingOverride {
-  id: string;
-  provider_id: string;
-  provider_slug: string | null;
-  model: string;
-  input_per_1m_usd: number;
-  output_per_1m_usd: number;
-  currency: string;
-  enabled: boolean;
-}
-
 export interface AdminSettingsPayload {
   providers: AdminProvider[];
   provider_credentials: AdminCredential[];
-  pricing_overrides: AdminPricingOverride[];
   settings: {
     tracking: {
       io_logging?: boolean;
@@ -215,7 +202,6 @@ export function inferProviderType(
 
 export function mapAdminSettingsToUi(payload: AdminSettingsPayload): {
   providerRows: ProviderConfigRow[];
-  pricingTable: PricingEntry[];
   tracking: SettingsTrackingOption[];
   retentionDays: number;
   appearance: SettingsAppearance;
@@ -269,21 +255,6 @@ export function mapAdminSettingsToUi(payload: AdminSettingsPayload): {
 
   return {
     providerRows: [...credentialRows, ...providerOnlyRows],
-    pricingTable: payload.pricing_overrides.map((entry) => {
-      const provider = providerByUuid.get(entry.provider_id);
-      const slug = entry.provider_slug || provider?.slug || entry.provider_id;
-      return {
-        id: entry.id,
-        providerId: entry.provider_id,
-        provider: provider?.display_name ?? titleizeProvider(slug),
-        providerSlug: entry.provider_slug ?? provider?.slug ?? null,
-        model: entry.model,
-        inputPer1mUsd: entry.input_per_1m_usd,
-        outputPer1mUsd: entry.output_per_1m_usd,
-        currency: entry.currency,
-        enabled: entry.enabled,
-      };
-    }),
     tracking: Object.entries(payload.settings.tracking)
       .filter(([, value]) => typeof value === "boolean")
       .map(([key, value]) => ({
@@ -391,43 +362,6 @@ export async function deleteProviderCredential(credentialId: string) {
 
 export async function deleteProvider(providerUuid: string) {
   return fetchJson<void>(`/admin/providers/${providerUuid}`, {
-    method: "DELETE",
-  });
-}
-
-export async function createPricingOverride(payload: {
-  provider_id: string;
-  model: string;
-  input_per_1m_usd: number;
-  output_per_1m_usd: number;
-  currency?: string;
-  enabled?: boolean;
-}) {
-  return fetchJson<AdminPricingOverride>("/admin/pricing", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function updatePricingOverride(
-  pricingId: string,
-  payload: Partial<{
-    provider_id: string;
-    model: string;
-    input_per_1m_usd: number;
-    output_per_1m_usd: number;
-    currency: string;
-    enabled: boolean;
-  }>,
-) {
-  return fetchJson<AdminPricingOverride>(`/admin/pricing/${pricingId}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function deletePricingOverride(pricingId: string) {
-  return fetchJson<void>(`/admin/pricing/${pricingId}`, {
     method: "DELETE",
   });
 }

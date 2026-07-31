@@ -3,10 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
-
-from app.database import PricingOverride, ProviderHealthCheck
-from app.pricing.rate_card import RateCard
+from app.database import ProviderHealthCheck
 
 from tests.test_helpers import cards_by_slug, provider_uuid
 
@@ -41,38 +38,6 @@ def test_provider_routes_list_create_and_patch(client: TestClient) -> None:
     assert patch_response.status_code == 200
     assert patch_response.json()["display_name"] == "Groq Cloud"
     assert patch_response.json()["enabled"] is False
-
-
-def test_patching_pricing_override_keeps_manual_card_source_in_sync(client: TestClient) -> None:
-    session_factory = client.app.state.session_factory
-    with session_factory() as session:
-        provider_id = provider_uuid(client, "openai")
-        card = RateCard(
-            standard={"input_per_1m": 2.5, "output_per_1m": 15.0},
-            source="litellm",
-        )
-        record = PricingOverride(
-            provider_id=provider_id,
-            model="gpt-source-sync",
-            input_per_1m_usd=2.5,
-            output_per_1m_usd=15.0,
-            rate_card_json=card.model_dump_json(),
-            source="litellm",
-            enabled=True,
-        )
-        session.add(record)
-        session.commit()
-        pricing_id = record.id
-
-    response = client.patch(f"/admin/pricing/{pricing_id}", json={"enabled": False})
-
-    assert response.status_code == 200
-    assert response.json()["source"] == "manual"
-    with session_factory() as session:
-        record = session.get(PricingOverride, pricing_id)
-        assert record is not None
-        assert record.source == "manual"
-        assert RateCard.model_validate_json(record.rate_card_json).source == "manual"
 
 
 def test_provider_list_includes_latest_health_state(client: TestClient) -> None:
@@ -210,27 +175,7 @@ def test_credential_routes_mask_and_reveal(client: TestClient) -> None:
     assert reveal_response.json()["api_key"] == "sk-replaced-from-dashboard"
 
 
-def test_pricing_and_settings_routes(client: TestClient) -> None:
-    pricing_create = client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "openai"),
-            "model": "gpt-5.5",
-            "input_per_1m_usd": 2.0,
-            "output_per_1m_usd": 8.0,
-            "currency": "USD",
-        },
-    )
-    assert pricing_create.status_code == 201
-    pricing_id = pricing_create.json()["id"]
-
-    pricing_patch = client.patch(
-        f"/admin/pricing/{pricing_id}",
-        json={"output_per_1m_usd": 9.0},
-    )
-    assert pricing_patch.status_code == 200
-    assert pricing_patch.json()["output_per_1m_usd"] == 9.0
-
+def test_settings_excludes_manual_pricing_configuration(client: TestClient) -> None:
     tracking_patch = client.patch(
         "/admin/settings/tracking",
         json={"io_logging": True, "retention_days": 14},
@@ -251,89 +196,11 @@ def test_pricing_and_settings_routes(client: TestClient) -> None:
     payload = settings_response.json()
     assert "model_aliases" not in payload
     assert "routing_rules" not in payload
+    assert "pricing_overrides" not in payload
     assert "default_routing" not in payload["settings"]
     assert payload["settings"]["tracking"]["retention_days"] == 14
     assert payload["settings"]["appearance"]["theme"] == "system"
-
-
-def test_invalid_provider_references_return_client_errors(client: TestClient) -> None:
-    pricing_response = client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": "missing",
-            "model": "broken-model",
-            "input_per_1m_usd": 1.0,
-            "output_per_1m_usd": 2.0,
-            "currency": "USD",
-        },
-    )
-    assert pricing_response.status_code == 404
-
-
-def test_create_pricing_override_writes_manual_rate_card(client: TestClient) -> None:
-    provider_id = provider_uuid(client, "openai")
-    response = client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_id,
-            "model": "gpt-5.6-terra",
-            "input_per_1m_usd": 2.5,
-            "output_per_1m_usd": 15.0,
-            "enabled": True,
-        },
-    )
-    assert response.status_code == 201
-    body = response.json()
-    assert body["source"] == "manual"
-
-    with client.app.state.session_factory() as session:
-        record = session.scalar(
-            select(PricingOverride).where(PricingOverride.id == body["id"])
-        )
-        assert record is not None
-        assert record.source == "manual"
-        card = RateCard.model_validate_json(record.rate_card_json)
-        assert float(card.standard.input_per_1m) == 2.5
-        assert card.source == "manual"
-
-
-def test_pricing_create_rejects_negative_rates(client: TestClient) -> None:
-    response = client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "openrouter"),
-            "model": "openrouter/auto",
-            "input_per_1m_usd": -1.0,
-            "output_per_1m_usd": 8.0,
-            "currency": "USD",
-        },
-    )
-    assert response.status_code == 422
-
-
-def test_pricing_delete_removes_override(client: TestClient) -> None:
-    create_response = client.post(
-        "/admin/pricing",
-        json={
-            "provider_id": provider_uuid(client, "openai"),
-            "model": "gpt-delete-me",
-            "input_per_1m_usd": 1.5,
-            "output_per_1m_usd": 6.0,
-            "currency": "USD",
-        },
-    )
-    assert create_response.status_code == 201
-    pricing_id = create_response.json()["id"]
-
-    delete_response = client.delete(f"/admin/pricing/{pricing_id}")
-    assert delete_response.status_code == 204
-
-    list_response = client.get("/admin/pricing")
-    assert list_response.status_code == 200
-    assert all(entry["id"] != pricing_id for entry in list_response.json())
-
-    missing_response = client.delete("/admin/pricing/missing-pricing-id")
-    assert missing_response.status_code == 404
+    assert client.get("/admin/pricing").status_code == 404
 
 
 def test_provider_health_endpoint_returns_dashboard_ready_cards(
