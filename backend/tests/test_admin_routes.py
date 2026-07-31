@@ -673,12 +673,12 @@ def test_model_catalog_filters_sorts_and_paginates_enriched_models(
             },
             {
                 "id": "meta/mid-context",
-                "display_name": "Mid Context",
+                "display_name": "Aardvark Context",
                 "owned_by": "meta",
                 "openrouter_metadata": parse_openrouter_model(
                     {
                         "id": "meta/mid-context",
-                        "name": "Mid Context",
+                        "name": "Aardvark Context",
                         "context_length": 200000,
                         "architecture": {
                             "input_modalities": ["audio"],
@@ -696,11 +696,19 @@ def test_model_catalog_filters_sorts_and_paginates_enriched_models(
     def fake_fetch(provider, secret):
         return catalog.get(provider.slug, []), 1
 
+    provider_ids = {provider["slug"]: provider["id"] for provider in client.get("/admin/providers").json()}
+    fetched_at_by_provider = {
+        provider_ids["openai"]: datetime(2026, 7, 29, tzinfo=UTC),
+        provider_ids["ollama"]: datetime(2026, 7, 30, tzinfo=UTC),
+        provider_ids["openrouter"]: datetime(2026, 7, 31, tzinfo=UTC),
+    }
     monkeypatch.setattr("app.api.admin.ensure_openrouter_metadata_fresh", lambda session: None)
     monkeypatch.setattr("app.api.admin.fetch_provider_models_from_upstream", fake_fetch)
     monkeypatch.setattr(
         "app.api.admin.record_provider_health_check",
-        lambda *args, **kwargs: SimpleNamespace(checked_at=datetime(2026, 7, 31, tzinfo=UTC)),
+        lambda session, provider_id, *args, **kwargs: SimpleNamespace(
+            checked_at=fetched_at_by_provider.get(provider_id, datetime(2026, 7, 28, tzinfo=UTC))
+        ),
     )
     session_factory = client.app.state.session_factory
     with session_factory() as session:
@@ -746,12 +754,12 @@ def test_model_catalog_filters_sorts_and_paginates_enriched_models(
     by_context = client.get("/admin/model-catalog?sort=context")
     by_price = client.get("/admin/model-catalog?sort=price")
     by_fetched = client.get("/admin/model-catalog?sort=fetched")
-    assert [item["model"]["id"] for item in by_name.json()["items"]] == ["gpt-4.1", "gpt-4.1-mini", "meta/large-paid", "meta/mid-context", "meta/mini-free", "qwen2.5-coder:latest"]
-    assert [item["provider_id"] for item in by_provider.json()["items"]] == ["ollama", "openai", "openai", "openrouter", "openrouter", "openrouter"]
+    assert [item["model"]["id"] for item in by_name.json()["items"]] == ["meta/mid-context", "gpt-4.1", "gpt-4.1-mini", "meta/large-paid", "meta/mini-free", "qwen2.5-coder:latest"]
+    assert [item["model"]["id"] for item in by_provider.json()["items"]] == ["qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini", "meta/mid-context", "meta/large-paid", "meta/mini-free"]
     assert [item["model"]["id"] for item in by_usage.json()["items"]] == ["meta/large-paid", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini", "meta/mid-context", "meta/mini-free"]
-    assert [item["model"]["id"] for item in by_context.json()["items"]] == ["meta/mini-free", "meta/mid-context", "meta/large-paid", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini"]
+    assert [item["model"]["id"] for item in by_context.json()["items"]] == ["meta/large-paid", "meta/mid-context", "meta/mini-free", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini"]
     assert [item["model"]["id"] for item in by_price.json()["items"]] == ["meta/mid-context", "meta/mini-free", "meta/large-paid", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini"]
-    assert [item["model"]["id"] for item in by_fetched.json()["items"]] == ["qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini", "meta/large-paid", "meta/mid-context", "meta/mini-free"]
+    assert [item["model"]["id"] for item in by_fetched.json()["items"]] == ["meta/large-paid", "meta/mid-context", "meta/mini-free", "qwen2.5-coder:latest", "gpt-4.1", "gpt-4.1-mini"]
 
     detail = client.get("/admin/model-catalog/openai/gpt-4.1")
     assert detail.status_code == 200

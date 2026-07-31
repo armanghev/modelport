@@ -678,19 +678,20 @@ def _catalog_sort_key(item: ProviderModelCatalogItem, sort: str) -> tuple:
     model = item.model
     usage_count = model.usage.requestCount if model.usage is not None else 0
     price = next((value for value in (model.input_per_1m_usd, model.output_per_1m_usd) if value is not None), None)
+    model_name = (model.display_name or model.id).casefold()
     primary: object
     if sort == "usage":
         primary = -usage_count
     elif sort == "name":
-        primary = (model.display_name or model.id).casefold()
+        primary = model_name
     elif sort == "provider":
-        primary = item.provider_id.casefold()
+        primary = (item.provider_name.casefold(), model_name)
     elif sort == "context":
-        primary = (model.context_length is None, model.context_length or 0)
+        primary = (model.context_length is None or model.context_length <= 0, -(model.context_length or 0))
     elif sort == "price":
         primary = (price is None, price or 0)
     else:
-        primary = item.fetched_at
+        primary = -datetime.fromisoformat(item.fetched_at).timestamp()
     return primary, item.provider_id.casefold(), model.id.casefold()
 
 
