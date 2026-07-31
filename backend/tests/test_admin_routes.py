@@ -552,6 +552,70 @@ def test_provider_models_endpoint_returns_live_models_for_healthy_providers_only
     assert providers["ollama"]["models"][0]["id"] == "qwen2.5-coder:latest"
 
 
+def test_model_catalog_returns_paginated_provider_models(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    import httpx
+
+    class FakeResponse:
+        def __init__(self, payload: dict) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self._payload
+
+    class FakeHttpClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None, **kwargs):
+            headers = headers or {}
+            if "api.openai.com" in url:
+                assert headers.get("Authorization") == "Bearer sk-openai-seeded"
+                return FakeResponse(
+                    {
+                        "data": [
+                            {"id": "gpt-4.1", "owned_by": "openai"},
+                            {"id": "gpt-4.1-mini", "owned_by": "openai"},
+                        ]
+                    }
+                )
+            if "localhost:11434" in url:
+                return FakeResponse(
+                    {
+                        "data": [
+                            {"id": "qwen2.5-coder:latest", "owned_by": "ollama"},
+                        ]
+                    }
+                )
+            raise httpx.ConnectError("provider unavailable")
+
+    monkeypatch.setattr("app.api.admin.httpx.Client", FakeHttpClient)
+
+    response = client.get("/admin/model-catalog?page=1&page_size=1&provider=openai")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pagination"] == {
+        "page": 1,
+        "page_size": 1,
+        "total_items": 2,
+        "total_pages": 2,
+    }
+    assert payload["items"][0]["provider_id"] == "openai"
+    assert payload["items"][0]["model"]["id"] == "gpt-4.1"
+
+
 def test_provider_models_endpoint_includes_anthropic_provider(
     client: TestClient,
     monkeypatch,

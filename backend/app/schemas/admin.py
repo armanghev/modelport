@@ -184,3 +184,33 @@ class ProviderModelsTotals(BaseModel):
 class ProviderModelsPayload(BaseModel):
     totals: ProviderModelsTotals = ProviderModelsTotals()
     providers: list[ProviderModelsEntry]
+
+
+class ProviderModelCatalogItem(BaseModel):
+    provider_id: str
+    provider_uuid: str | None = None
+    provider_name: str
+    provider_type: ProviderType
+    base_url: str
+    fetched_at: str
+    model: ProviderModelSummary
+
+
+class ModelCatalogPagination(BaseModel):
+    page: int
+    page_size: int
+    total_items: int
+    total_pages: int
+
+
+class ModelCatalogFacet(BaseModel):
+    value: str
+    label: str
+    count: int
+
+
+class ModelCatalogPayload(BaseModel):
+    items: list[ProviderModelCatalogItem]
+    pagination: ModelCatalogPagination
+    totals: ProviderModelsTotals
+    facets: dict[str, list[ModelCatalogFacet]]
