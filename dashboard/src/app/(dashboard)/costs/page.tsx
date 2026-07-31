@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { Link } from "react-router";
 
 import {
   CaretLeftIcon,
@@ -25,9 +25,7 @@ import {
 } from "@/components/ui/select";
 import {
   fetchCostsAnalytics,
-  fetchRequestsAnalytics,
 } from "@/lib/analytics-api";
-import { type RequestRow } from "@/lib/dashboard-types";
 import {
   buildPageButtons,
   formatCost,
@@ -42,34 +40,6 @@ interface CostBreakdownItem {
   label: string;
   amountUsd: number;
   provider?: string;
-}
-
-function buildCostRangeSeries(
-  rows: RequestRow[],
-  hours: number,
-  buckets: number,
-  referenceDate: Date,
-): InteractiveAreaChartPoint[] {
-  const bucketMs = (hours * 60 * 60 * 1000) / buckets;
-  const startTime = referenceDate.getTime() - bucketMs * (buckets - 1);
-
-  return Array.from({ length: buckets }, (_, index) => {
-    const bucketStart = startTime + bucketMs * index;
-    const bucketEnd = bucketStart + bucketMs;
-    const primary = rows.reduce((sum, row) => {
-      const timestamp = new Date(row.timestamp).getTime();
-      if (timestamp >= bucketStart && timestamp < bucketEnd) {
-        return sum + row.costUsd;
-      }
-      return sum;
-    }, 0);
-
-    return {
-      date: new Date(bucketStart).toISOString(),
-      primary: Number(primary.toFixed(4)),
-      secondary: 0,
-    };
-  });
 }
 
 function CostMetricCard({
@@ -107,7 +77,6 @@ export default function CostsPage() {
   const [breakdownView, setBreakdownView] = useState<CostBreakdownView>("provider");
   const [currentPage, setCurrentPage] = useState(1);
   const [costsPayload, setCostsPayload] = useState<Awaited<ReturnType<typeof fetchCostsAnalytics>> | null>(null);
-  const [requestRows, setRequestRows] = useState<RequestRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -118,15 +87,11 @@ export default function CostsPage() {
 
     void (async () => {
       try {
-        const [nextCosts, nextRequests] = await Promise.all([
-          fetchCostsAnalytics(),
-          fetchRequestsAnalytics(),
-        ]);
+        const nextCosts = await fetchCostsAnalytics();
         if (!active) {
           return;
         }
         setCostsPayload(nextCosts);
-        setRequestRows(nextRequests.rows);
         setErrorMessage(null);
       } catch {
         if (!active) {
@@ -145,16 +110,14 @@ export default function CostsPage() {
     };
   }, []);
 
-  const chartDataByRange = useMemo(() => {
-    const referenceDate = new Date();
-    return {
-      "1h": buildCostRangeSeries(requestRows, 1, 12, referenceDate),
-      "6h": buildCostRangeSeries(requestRows, 6, 24, referenceDate),
-      "1d": buildCostRangeSeries(requestRows, 24, 24, referenceDate),
-      "7d": buildCostRangeSeries(requestRows, 24 * 7, 7, referenceDate),
-      "30d": buildCostRangeSeries(requestRows, 24 * 30, 30, referenceDate),
+  const chartDataByRange: Record<string, InteractiveAreaChartPoint[]> =
+    costsPayload?.costUsage ?? {
+      "1h": [],
+      "6h": [],
+      "1d": [],
+      "7d": [],
+      "30d": [],
     };
-  }, [requestRows]);
 
   const highCostRows = useMemo(
     () => costsPayload?.recentHighCostRequests ?? [],
@@ -191,10 +154,7 @@ export default function CostsPage() {
           amountUsd: item.amountUsd,
         }));
   const breakdownTotal = breakdownItems.reduce((sum, item) => sum + item.amountUsd, 0);
-  const averageCostPerRequest =
-    requestRows.length > 0
-      ? requestRows.reduce((sum, row) => sum + row.costUsd, 0) / requestRows.length
-      : 0;
+  const averageCostPerRequest = costsPayload?.averageCostPerRequest ?? 0;
 
   if (isLoading) {
     return <div className="text-sm text-text-secondary">Loading cost analytics...</div>;
@@ -319,7 +279,7 @@ export default function CostsPage() {
         <header className="flex items-center justify-between border-b border-border-subtle px-5 py-4">
           <h2 className="text-xl">Recent high-cost requests</h2>
           <Link
-            href="/requests"
+            to="/requests"
             className="text-sm text-text-secondary hover:text-text-primary"
           >
             View all requests

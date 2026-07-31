@@ -89,6 +89,12 @@ export interface RequestsAnalyticsData {
   totals: RequestTotals;
   filters: RequestFilters;
   rows: RequestRow[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+  };
 }
 
 export interface CostTotals {
@@ -99,8 +105,13 @@ export interface CostTotals {
 
 export interface CostsAnalyticsData {
   totals: CostTotals;
+  averageCostPerRequest: number;
   byProvider: CostBucket[];
   byModel: CostBucket[];
+  costUsage: Record<
+    "1h" | "6h" | "1d" | "7d" | "30d",
+    Array<{ date: string; primary: number; secondary: number }>
+  >;
   recentHighCostRequests: RequestRow[];
 }
 

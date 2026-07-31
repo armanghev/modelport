@@ -1,7 +1,7 @@
 'use client';
 
 import { MoonIcon, SunIcon } from '@phosphor-icons/react';
-import { useTheme } from '@teispace/next-themes';
+import { useTheme } from 'next-themes';
 
 import { cn } from '@/lib/utils';
 

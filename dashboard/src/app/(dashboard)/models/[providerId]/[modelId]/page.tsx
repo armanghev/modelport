@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { useParams } from "next/navigation";
+import { useParams } from "react-router";
 
 import { ModelDetailView } from "@/components/dashboard/models/model-detail-view";
 import { fetchProviderModels } from "@/lib/admin-api";

@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "react-router";
 
 import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import {
@@ -22,7 +22,7 @@ export function ModelCard({ row }: { row: ModelDirectoryRow }) {
 
   return (
     <Link
-      href={detailHref}
+      to={detailHref}
       className="card-surface flex h-full flex-col p-5 transition-colors hover:bg-bg-card-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-default"
     >
       <div className="flex items-start justify-between gap-3">

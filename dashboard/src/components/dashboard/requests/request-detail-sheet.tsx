@@ -30,6 +30,8 @@ type RequestOutcome = RequestStatus;
 interface RequestDetailSheetProps {
   row: RequestRow | null;
   open: boolean;
+  isLoading: boolean;
+  errorMessage: string | null;
   onOpenChange: (open: boolean) => void;
   ioLoggingEnabled: boolean;
   isEnablingIoLogging: boolean;
@@ -301,6 +303,8 @@ function IoSection({
 export function RequestDetailSheet({
   row,
   open,
+  isLoading,
+  errorMessage,
   onOpenChange,
   ioLoggingEnabled,
   isEnablingIoLogging,
@@ -345,7 +349,15 @@ export function RequestDetailSheet({
           ) : null}
         </SheetHeader>
 
-        {row ? (
+        {isLoading ? (
+          <div className="px-5 py-8 text-sm text-text-secondary">
+            Loading request details...
+          </div>
+        ) : errorMessage ? (
+          <div className="mx-5 my-5 rounded-xl border border-accent-red/20 bg-accent-red-bg px-4 py-3 text-sm text-accent-red">
+            {errorMessage}
+          </div>
+        ) : row ? (
           <div className="space-y-6 px-5 py-5">
             <section>
               <h4 className="mb-3 text-sm font-semibold text-text-primary">Metadata</h4>

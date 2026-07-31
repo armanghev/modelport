@@ -6,11 +6,11 @@ from urllib.parse import urljoin
 
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.analytics_service import build_provider_details, list_requests, requests_today_count
+from app.analytics_service import build_provider_details, requests_today_counts
 from app.api.proxy_common import (
     get_session,
     provider_supports_anonymous_access,
@@ -420,10 +420,10 @@ def serialize_provider_health_card(
 
 def collect_provider_health_payload(session: Session) -> dict:
     providers = session.scalars(select(Provider).order_by(Provider.id)).all()
-    all_requests = list_requests(session)
     cards: list[dict] = []
     details: list[dict] = []
     now = datetime.now(UTC)
+    request_counts = requests_today_counts(session, now)
     freshness_cutoff = datetime.now(UTC) - timedelta(seconds=60)
 
     for provider in providers:
@@ -445,10 +445,10 @@ def collect_provider_health_payload(session: Session) -> dict:
                 provider,
                 latest_check,
                 recent_checks,
-                requests_today=requests_today_count(all_requests, provider.slug, now),
+                requests_today=request_counts.get(provider.slug, 0),
             )
         )
-        details.append(build_provider_details(all_requests, provider, now))
+        details.append(build_provider_details(session, provider, now))
 
     return {
         "cards": cards,
@@ -659,14 +659,19 @@ def update_provider(
     return serialize_provider(provider)
 
 
-@router.delete("/providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/providers/{provider_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
 def delete_provider(
     provider_id: str,
     session: Session = Depends(get_session),
-) -> None:
+) -> Response:
     require_provider_by_id(session, provider_id)
     delete_provider_and_related(session, provider_id)
     session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/provider-credentials", response_model=list[ProviderCredentialResponse])
@@ -742,11 +747,15 @@ def update_provider_credential(
     return serialize_credential(credential)
 
 
-@router.delete("/provider-credentials/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/provider-credentials/{credential_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
 def delete_provider_credential(
     credential_id: str,
     session: Session = Depends(get_session),
-) -> None:
+) -> Response:
     credential = require_credential(session, credential_id)
     provider_id = credential.provider_id
     was_default = credential.is_default
@@ -766,6 +775,7 @@ def delete_provider_credential(
         remaining_credentials[0].is_default = True
 
     session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/provider-credentials/{credential_id}/secret", response_model=CredentialSecretResponse)
@@ -870,14 +880,19 @@ def update_pricing_override(
     return serialize_pricing(record)
 
 
-@router.delete("/pricing/{pricing_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/pricing/{pricing_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
 def delete_pricing_override(
     pricing_id: str,
     session: Session = Depends(get_session),
-) -> None:
+) -> Response:
     record = require_pricing_override(session, pricing_id)
     session.delete(record)
     session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/settings/tracking")

@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownIcon,
@@ -223,7 +223,7 @@ export default function OverviewPage() {
           <div className="flex items-center justify-between">
             <h2 className="text-xl">Top models</h2>
             <Link
-              href="/models"
+              to="/models"
               className="text-sm text-text-secondary hover:text-text-primary"
             >
               View all
@@ -273,7 +273,7 @@ export default function OverviewPage() {
         <div className="flex items-center justify-between border-b border-border-subtle px-5 py-4">
           <h2 className="text-xl">Recent requests</h2>
           <Link
-            href="/requests"
+            to="/requests"
             className="text-sm text-text-secondary hover:text-text-primary"
           >
             View all requests

@@ -5,6 +5,7 @@ server:
 security:
   modelport_token: "MODELPORT_TOKEN"
   dashboard_token: "MODELPORT_DASHBOARD_TOKEN"
+  dashboard_auth_enabled_env: "MODELPORT_DASHBOARD_AUTH_ENABLED"
 
 database:
   url: "sqlite:///./data/modelport.db"

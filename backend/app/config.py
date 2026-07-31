@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -17,6 +18,7 @@ ProviderType = Literal[
 class SecurityConfig(BaseModel):
     modelport_token: str = "MODELPORT_TOKEN"
     dashboard_token: str = "MODELPORT_DASHBOARD_TOKEN"
+    dashboard_auth_enabled_env: str = "MODELPORT_DASHBOARD_AUTH_ENABLED"
 
 
 class DatabaseConfig(BaseModel):
@@ -33,6 +35,21 @@ class AppConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     providers: dict[str, ProviderPresetConfig] = Field(default_factory=dict)
+
+
+def read_env_bool(name: str, *, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    raise ValueError(
+        f"{name} must be one of true, false, 1, 0, yes, no, on, or off."
+    )
 
 
 def resolve_database_url(database_url: str, *, config_dir: Path) -> str:

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker, sessionmaker
 from sqlalchemy import select
 
 from app.database import Provider, ProviderCredential, ProviderHealthCheck
+from app.api.dashboard_auth import has_valid_dashboard_session
 from app.errors.upstream import build_logged_error_response, format_exception_detail_for_log
 from app.routing.model_prefixes import (
     ResolvedModelSelection,
@@ -169,6 +170,10 @@ def require_dashboard_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> None:
+    if not request.app.state.dashboard_auth_enabled:
+        return
+    if has_valid_dashboard_session(request):
+        return
     _require_bearer_token(
         request,
         credentials,

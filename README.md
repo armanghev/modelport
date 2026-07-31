@@ -7,7 +7,7 @@ The bigger goal is to make model access portable across clients, providers, and 
 The current default runtime is:
 
 - Backend proxy/API: `https://127.0.0.1:13243` (local TLS via mkcert)
-- Dashboard UI: `http://localhost:3000`
+- Dashboard UI: `https://127.0.0.1:13243/dashboard`
 - Database: `./data/modelport.db`
 - Config: `./config.yaml`
 - Provider credentials: `.env`
@@ -28,7 +28,7 @@ Working today:
 - Provider routing by request body `provider`, `fallback_providers`, or `X-ModelPort-Provider`.
 - Seeded provider config for OpenAI, Anthropic, Gemini OpenAI compatibility, OpenRouter, and Ollama.
 - SQLite-backed request logs across all proxied routes (chat, embeddings, images, audio, responses, batches, files, and more), provider settings, credentials metadata, pricing overrides, provider health snapshots, and model metadata.
-- Admin and analytics APIs for dashboard pages, gated by a dedicated dashboard bearer token (`MODELPORT_DASHBOARD_TOKEN`).
+- Admin and analytics APIs for dashboard pages, gated by a dashboard login/session or a dedicated bearer token (`MODELPORT_DASHBOARD_TOKEN`).
 - Dashboard pages for overview, requests, models, providers, costs, and settings.
 - Model directory metadata from OpenRouter, Gemini native model listing, local providers, pricing catalog entries, and observed usage.
 - Pricing seed from `pricing_catalog.yaml`.
@@ -69,7 +69,7 @@ Client
 Repository layout:
 
 - `backend/`: FastAPI proxy, admin APIs, analytics APIs, SQLAlchemy models, translators, routing, pricing, and tests.
-- `dashboard/`: Next.js 16 / React 19 dashboard using Tailwind CSS 4 and shadcn/Radix UI primitives.
+- `dashboard/`: Vite / React 19 dashboard using Tailwind CSS 4 and shadcn/Radix UI primitives; FastAPI serves its production build.
 - `config.yaml`: local provider defaults and database location.
 - `.env.example`: required local environment variables.
 - `pricing_catalog.yaml`: model pricing seed data.
@@ -90,6 +90,7 @@ At minimum, set the proxy token and the dashboard token:
 ```bash
 MODELPORT_TOKEN=dev-modelport-token
 MODELPORT_DASHBOARD_TOKEN=dev-dashboard-token
+MODELPORT_DASHBOARD_AUTH_ENABLED=true
 ```
 
 Then add whichever provider keys you want to use:
@@ -138,7 +139,17 @@ That creates `localhost+2.pem` (certificate) and `localhost+2-key.pem` (private 
 
 3. **Do not commit certificates.** `local/.certs/` and `*.pem` are listed in `.gitignore`. If you place certs elsewhere, add that path to `.gitignore` before contributing to the main repo.
 
-4. Start the backend with TLS:
+4. Build the dashboard:
+
+```bash
+pnpm --dir dashboard install
+pnpm --dir dashboard build
+```
+
+Generated assets remain untracked and are not built automatically at backend
+startup.
+
+5. Start the backend with TLS:
 
 ```bash
 set -a; source .env; set +a
@@ -153,22 +164,10 @@ python -m uvicorn app.main:app \
 
 Uvicorn should report `https://127.0.0.1:13243`. Plain HTTP still works if you omit the `--ssl-*` flags.
 
-Install and run the dashboard:
-
-```bash
-cd dashboard
-pnpm install
-pnpm dev
-```
-
-Open `http://localhost:3000`.
-
-Configure the dashboard in `dashboard/.env` — the backend URL (default if unset is still HTTP) and the dashboard token, which must match `MODELPORT_DASHBOARD_TOKEN` in the root `.env`:
-
-```bash
-NEXT_PUBLIC_MODELPORT_BACKEND_URL=https://127.0.0.1:13243
-NEXT_PUBLIC_MODELPORT_DASHBOARD_TOKEN=dev-dashboard-token
-```
+Open `https://127.0.0.1:13243/dashboard` and unlock it with
+`MODELPORT_DASHBOARD_TOKEN`. For frontend development, run
+`pnpm --dir dashboard dev`; Vite proxies backend routes on the same development
+origin.
 
 ## Using the Proxy
 
@@ -317,6 +316,7 @@ server:
 security:
   modelport_token: "MODELPORT_TOKEN"
   dashboard_token: "MODELPORT_DASHBOARD_TOKEN"
+  dashboard_auth_enabled_env: "MODELPORT_DASHBOARD_AUTH_ENABLED"
 
 database:
   url: "sqlite:///./data/modelport.db"
@@ -374,7 +374,8 @@ Useful backend modules:
 ModelPort is designed as a local development tool. Do not expose the backend directly to an untrusted network.
 
 - Keep real provider API keys out of client tools; clients should only receive the local ModelPort URL and `MODELPORT_TOKEN`.
-- The admin and analytics APIs (including credential reveal) require a separate `MODELPORT_DASHBOARD_TOKEN` bearer token; the proxy token is not accepted there.
+- With dashboard auth enabled, admin and analytics APIs (including credential reveal) accept a dashboard session or the separate `MODELPORT_DASHBOARD_TOKEN` bearer token; the proxy token is not accepted there.
+- Setting `MODELPORT_DASHBOARD_AUTH_ENABLED=false` makes admin and analytics APIs unauthenticated and should only be used behind another trusted access-control layer.
 - Raw provider keys from `.env` are not displayed in the dashboard.
 - Database-stored credentials are encrypted using `PROXY_ENCRYPTION_KEY`.
 - Request/response body logging can capture prompts, completions, tool inputs, and other sensitive data.

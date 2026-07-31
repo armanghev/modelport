@@ -1,17 +1,5 @@
-import { backendUrl as backendBaseUrl } from "@/lib/backend-url";
-
 export function buildBackendUrl(path: string) {
-  return `${backendBaseUrl}${path}`;
-}
-
-function dashboardAuthHeaders(): HeadersInit {
-  const token = process.env.NEXT_PUBLIC_MODELPORT_DASHBOARD_TOKEN;
-  if (!token) {
-    throw new Error("Set NEXT_PUBLIC_MODELPORT_DASHBOARD_TOKEN in dashboard/.env");
-  }
-  return {
-    Authorization: `Bearer ${token}`,
-  };
+  return path;
 }
 
 export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -19,14 +7,17 @@ export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T>
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...dashboardAuthHeaders(),
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
+    credentials: "same-origin",
   });
 
   if (!response.ok) {
     const detail = await response.text();
+    if (response.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("modelport:unauthorized"));
+    }
     throw new Error(detail || `Request failed with status ${response.status}`);
   }
 

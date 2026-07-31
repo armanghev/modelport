@@ -6,11 +6,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.analytics_service import list_providers, list_requests, model_name, request_status, round_decimal, round_percent
-from app.database import ModelMetadata, PricingOverride, Provider
+from app.analytics_service import list_providers, round_decimal, round_percent
+from app.database import ApiRequest, ModelMetadata, PricingOverride, Provider
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 OPENROUTER_MODELS_QUERY_PARAMS = {"output_modalities": "all"}
@@ -641,27 +641,37 @@ def build_pricing_index(session: Session) -> dict[tuple[str, str], PricingOverri
 
 def build_usage_index(session: Session) -> dict[tuple[str, str], ModelUsageStats]:
     providers_by_id = list_providers(session)
-    groups: dict[tuple[str, str], list] = {}
-
-    for record in list_requests(session):
-        provider_id = record.provider or "unknown"
-        resolved_model = model_name(record)
-        groups.setdefault((provider_id, resolved_model), []).append(record)
-
+    provider_expression = func.coalesce(ApiRequest.provider, "unknown")
+    model_expression = func.coalesce(
+        ApiRequest.resolved_model,
+        ApiRequest.requested_model,
+        "unknown",
+    )
+    error_condition = or_(
+        ApiRequest.status_code >= 400,
+        ApiRequest.error_message.is_not(None),
+    )
+    groups = session.execute(
+        select(
+            provider_expression,
+            model_expression,
+            func.count(ApiRequest.id),
+            func.sum(ApiRequest.total_tokens),
+            func.sum(func.coalesce(ApiRequest.estimated_cost_usd, 0.0)),
+            func.avg(func.coalesce(ApiRequest.duration_ms, 0)),
+            func.sum(case((error_condition, 1), else_=0)),
+        ).group_by(provider_expression, model_expression)
+    ).all()
     usage_index: dict[tuple[str, str], ModelUsageStats] = {}
-    for (provider_id, model_id), records in groups.items():
-        token_total = sum(record.total_tokens for record in records)
-        cost_total = sum(record.estimated_cost_usd or 0.0 for record in records)
-        average_latency = round(
-            sum((record.duration_ms or 0) for record in records) / max(1, len(records)),
-        )
-        error_count = sum(1 for record in records if request_status(record) == "error")
+    for row in groups:
+        provider_id, model_id = str(row[0]), str(row[1])
+        request_count = int(row[2] or 0)
         usage_index[(provider_id, model_id)] = ModelUsageStats(
-            request_count=len(records),
-            token_total=token_total,
-            cost_usd=round_decimal(cost_total),
-            avg_latency_ms=average_latency,
-            error_rate=round_percent((error_count / max(1, len(records))) * 100),
+            request_count=request_count,
+            token_total=int(row[3] or 0),
+            cost_usd=round_decimal(float(row[4] or 0.0)),
+            avg_latency_ms=round(float(row[5] or 0.0)),
+            error_rate=round_percent((int(row[6] or 0) / max(1, request_count)) * 100),
         )
 
         display_name = providers_by_id[provider_id].display_name if provider_id in providers_by_id else None

@@ -19,6 +19,7 @@ At minimum, set the proxy token and the dashboard token:
 ```bash
 MODELPORT_TOKEN=dev-modelport-token
 MODELPORT_DASHBOARD_TOKEN=dev-dashboard-token
+MODELPORT_DASHBOARD_AUTH_ENABLED=true
 ```
 
 Then add whichever provider keys you want to use:
@@ -108,7 +109,17 @@ That creates `localhost+2.pem` and `localhost+2-key.pem`.
 
 See [Installation](installation.md) for more detail.
 
-## 3. Start the backend
+## 3. Build the dashboard
+
+Generated dashboard assets are not committed and are not built by backend
+startup:
+
+```bash
+pnpm --dir dashboard install
+pnpm --dir dashboard build
+```
+
+## 4. Start ModelPort
 
 From the repository root:
 
@@ -166,55 +177,18 @@ The default proxy URL is:
 https://127.0.0.1:13243
 ```
 
-## 4. Start the dashboard
-
-In a second terminal:
-
-```bash
-cd dashboard
-pnpm install
-```
-
-If the dashboard process does not trust mkcert certificates (common with Node), set:
-
-### macOS
-
-```bash
-export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
-```
-
-### Linux
-
-```bash
-export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
-```
-
-### Windows
-
-```cmd
-for /f "delims=" %A in ('mkcert -CAROOT') do set "NODE_EXTRA_CA_CERTS=%A\rootCA.pem"
-```
-
-Then start the dashboard:
-
-```bash
-pnpm dev
-```
-
 Open:
 
 ```text
-http://localhost:3000
+https://127.0.0.1:13243/dashboard
 ```
 
-Point the dashboard at the HTTPS backend and give it the dashboard token (in `dashboard/.env`):
-
-```bash
-NEXT_PUBLIC_MODELPORT_BACKEND_URL=https://127.0.0.1:13243
-NEXT_PUBLIC_MODELPORT_DASHBOARD_TOKEN=dev-dashboard-token
-```
-
-The value must match `MODELPORT_DASHBOARD_TOKEN` in the root `.env`; the backend rejects admin and analytics requests without it.
+Unlock the dashboard with `MODELPORT_DASHBOARD_TOKEN`. The login creates an
+HttpOnly same-origin session cookie; the token is not compiled into browser
+assets. For UI development, run `pnpm --dir dashboard dev` in a second terminal.
+Vite proxies dashboard API routes to the FastAPI process.
+Its default target is the documented HTTPS backend. For a plain-HTTP backend,
+run `MODELPORT_BACKEND_DEV_URL=http://127.0.0.1:13243 pnpm --dir dashboard dev`.
 
 ## 5. Send a test request
 

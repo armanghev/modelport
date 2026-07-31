@@ -1,21 +1,19 @@
 import type { ComponentType, ReactNode, SVGProps } from "react";
 
-import {
-  Anthropic,
-  Azure,
-  Cerebras,
-  DeepSeek,
-  Fireworks,
-  Gemini,
-  Groq,
-  Meta,
-  Mistral,
-  Ollama,
-  OpenAI,
-  OpenRouter,
-  Together,
-  XAI,
-} from "@lobehub/icons";
+import Anthropic from "@lobehub/icons/es/Anthropic/components/Mono";
+import Azure from "@lobehub/icons/es/Azure/components/Color";
+import Cerebras from "@lobehub/icons/es/Cerebras/components/Mono";
+import DeepSeek from "@lobehub/icons/es/DeepSeek/components/Mono";
+import Fireworks from "@lobehub/icons/es/Fireworks/components/Mono";
+import Gemini from "@lobehub/icons/es/Gemini/components/Color";
+import Groq from "@lobehub/icons/es/Groq/components/Mono";
+import Meta from "@lobehub/icons/es/Meta/components/Color";
+import Mistral from "@lobehub/icons/es/Mistral/components/Color";
+import Ollama from "@lobehub/icons/es/Ollama/components/Mono";
+import OpenAI from "@lobehub/icons/es/OpenAI/components/Mono";
+import OpenRouter from "@lobehub/icons/es/OpenRouter/components/Mono";
+import Together from "@lobehub/icons/es/Together/components/Mono";
+import XAI from "@lobehub/icons/es/XAI/components/Mono";
 
 import { cn } from "@/lib/utils";
 
@@ -23,15 +21,15 @@ type ProviderIconComponent = ComponentType<{ size?: number } & SVGProps<SVGSVGEl
 
 const PROVIDER_ICON_REGISTRY = {
   anthropic: Anthropic,
-  azure: Azure.Color,
+  azure: Azure,
   cerebras: Cerebras,
   deepseek: DeepSeek,
   fireworks: Fireworks,
-  gemini: Gemini.Color,
-  google: Gemini.Color,
+  gemini: Gemini,
+  google: Gemini,
   groq: Groq,
-  meta: Meta.Color,
-  mistral: Mistral.Color,
+  meta: Meta,
+  mistral: Mistral,
   ollama: Ollama,
   openai: OpenAI,
   openrouter: OpenRouter,

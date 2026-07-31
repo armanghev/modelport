@@ -530,8 +530,12 @@ def test_messages_route_stores_io_when_logging_enabled(
     analytics = client.get("/analytics/requests")
     assert analytics.status_code == 200
     row = analytics.json()["rows"][0]
-    assert row["io"]["input"] == record.request_body
-    assert row["io"]["output"] == record.response_body
+    assert "io" not in row
+
+    detail = client.get(f"/analytics/requests/{row['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["io"]["input"] == record.request_body
+    assert detail.json()["io"]["output"] == record.response_body
 
 
 def test_messages_route_does_not_store_io_when_logging_disabled(

@@ -3,7 +3,7 @@
 ModelPort has three separate authentication layers today:
 
 1. a bearer token for clients calling the proxy (`MODELPORT_TOKEN`)
-2. a separate bearer token for the dashboard-facing admin and analytics APIs (`MODELPORT_DASHBOARD_TOKEN`)
+2. a dashboard login/session and compatible bearer token (`MODELPORT_DASHBOARD_TOKEN`)
 3. per-provider credentials for upstream providers
 
 ## Proxy Authentication
@@ -31,25 +31,36 @@ If the header is missing or invalid, ModelPort returns `401`.
 
 ## Dashboard Authentication
 
-All `/admin/*` and `/analytics/*` endpoints require a second, dashboard-only token:
+Dashboard authentication is enabled by default:
+
+```bash
+MODELPORT_DASHBOARD_AUTH_ENABLED=true
+MODELPORT_DASHBOARD_TOKEN=dev-dashboard-token
+```
+
+The browser submits the token to `/dashboard/auth/login` and receives a
+session-only, HttpOnly, SameSite Strict cookie. HTTPS responses mark it Secure.
+Rotating `MODELPORT_DASHBOARD_TOKEN` invalidates existing sessions.
+
+External tools can continue to call `/admin/*` and `/analytics/*` with:
 
 ```text
 Authorization: Bearer <MODELPORT_DASHBOARD_TOKEN>
 ```
 
-The token name is configured in `config.yaml`:
+The environment-variable names are configured in `config.yaml`:
 
 ```yaml
 security:
   modelport_token: "MODELPORT_TOKEN"
   dashboard_token: "MODELPORT_DASHBOARD_TOKEN"
+  dashboard_auth_enabled_env: "MODELPORT_DASHBOARD_AUTH_ENABLED"
 ```
 
-The two tokens are not interchangeable: the proxy token is rejected on admin/analytics routes and vice versa. Set both in the root `.env`, and give the dashboard its copy in `dashboard/.env`:
-
-```bash
-NEXT_PUBLIC_MODELPORT_DASHBOARD_TOKEN=dev-dashboard-token
-```
+The proxy and dashboard tokens are not interchangeable. Setting
+`MODELPORT_DASHBOARD_AUTH_ENABLED=false` deliberately makes all `/admin/*` and
+`/analytics/*` routes unauthenticated; only use that behind another trusted
+access-control layer. Proxy authentication remains enforced either way.
 
 ## Provider Credentials
 

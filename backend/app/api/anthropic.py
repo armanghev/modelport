@@ -360,14 +360,18 @@ def cancel_message_batch_route(
     )
 
 
-@router.delete("/v1/messages/batches/{message_batch_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/v1/messages/batches/{message_batch_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
 def delete_message_batch_route(
     message_batch_id: str,
     request: Request,
     session: Session = Depends(get_session),
     _: None = Depends(require_proxy_token),
     _modelport_provider: ModelPortProviderHeader = None,
-) -> None:
+) -> Response:
     resolved_route, provider_secret = resolve_anthropic_compatible_route(
         session,
         request,
@@ -393,6 +397,7 @@ def delete_message_batch_route(
         call_upstream=call_upstream,
         build_response_payload=lambda _result: None,
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/v1/messages/batches/{message_batch_id}/results")

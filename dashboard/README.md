@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ModelPort Dashboard
 
-## Getting Started
+The dashboard is a React 19 SPA built with Vite. Production assets are emitted
+to `backend/app/static/dashboard/` and served by FastAPI at `/dashboard`.
+Generated assets are intentionally gitignored.
 
-First, run the development server:
+## Production build
+
+From the repository root:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm --dir dashboard install
+pnpm --dir dashboard build
+python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 13243
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://127.0.0.1:13243/dashboard`. With the recommended local TLS setup,
+open `https://127.0.0.1:13243/dashboard` instead.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+If the assets have not been built, dashboard routes return a focused `503`;
+proxy, health, admin, and analytics routes continue to operate.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Development
 
-## Learn More
+Start FastAPI with the documented local TLS configuration on port 13243, then
+run:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+pnpm --dir dashboard install
+pnpm --dir dashboard dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Vite serves the SPA under `/dashboard/` and proxies `/admin`, `/analytics`, and
+dashboard-auth requests to FastAPI. Browser requests use same-origin cookies and
+relative URLs, so no frontend backend-URL or token environment variables are
+needed. If FastAPI is running without TLS, start Vite with
+`MODELPORT_BACKEND_DEV_URL=http://127.0.0.1:13243 pnpm --dir dashboard dev`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Checks
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+pnpm --dir dashboard lint
+pnpm --dir dashboard test
+pnpm --dir dashboard build
+```

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CaretDownIcon,
@@ -9,7 +9,11 @@ import {
   CaretUpIcon,
   MagnifyingGlassIcon,
 } from "@phosphor-icons/react";
-import { ClaudeCode, GeminiCLI, Codex, Cursor, OpenAI } from "@lobehub/icons";
+import ClaudeCode from "@lobehub/icons/es/ClaudeCode/components/Color";
+import Codex from "@lobehub/icons/es/Codex/components/Color";
+import Cursor from "@lobehub/icons/es/Cursor/components/Mono";
+import GeminiCLI from "@lobehub/icons/es/GeminiCLI/components/Color";
+import OpenAI from "@lobehub/icons/es/OpenAI/components/Mono";
 
 import { ProviderIcon } from "@/components/brand/render-provider-icon";
 import { RequestDetailSheet } from "@/components/dashboard/requests/request-detail-sheet";
@@ -22,7 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { fetchRequestsAnalytics } from "@/lib/analytics-api";
+import { fetchRequestDetail, fetchRequestsAnalytics } from "@/lib/analytics-api";
 import { fetchAdminSettings, patchTrackingSettings } from "@/lib/admin-api";
 import { type RequestRow, type RequestStatus } from "@/lib/dashboard-types";
 import {
@@ -58,13 +62,6 @@ const requestOutcomeStyles: Record<RequestOutcome, string> = {
   cancelled: "bg-bg-card-muted text-text-muted",
 };
 
-const TIME_RANGE_IN_MS: Record<RequestTimeRange, number> = {
-  "1h": 60 * 60 * 1000,
-  "6h": 6 * 60 * 60 * 1000,
-  "24h": 24 * 60 * 60 * 1000,
-  "7d": 7 * 24 * 60 * 60 * 1000,
-};
-
 function formatDuration(latencyMs: number): string {
   if (latencyMs >= 1000) {
     return `${(latencyMs / 1000).toFixed(2)} s`;
@@ -80,13 +77,13 @@ function getOutcome(row: RequestRow): RequestOutcome {
 function renderClientIcon(client: RequestRow["client"]) {
   switch (client) {
     case "Claude Code":
-      return <ClaudeCode.Color size={20} />;
+      return <ClaudeCode size={20} />;
     case "OpenAI SDK":
       return <OpenAI size={20} />;
     case "Gemini CLI":
-      return <GeminiCLI.Color size={20} />;
+      return <GeminiCLI size={20} />;
     case "Codex":
-      return <Codex.Color size={20} />;
+      return <Codex size={20} />;
     case "Cursor":
       return <Cursor size={20} />;
     default:
@@ -132,6 +129,8 @@ function FilterSelect({
 }
 
 export default function RequestsPage() {
+  const hasLoadedRequests = useRef(false);
+  const activeDetailRequest = useRef<string | null>(null);
   const [payload, setPayload] = useState<Awaited<ReturnType<typeof fetchRequestsAnalytics>> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -142,67 +141,33 @@ export default function RequestsPage() {
   });
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const [selectedRow, setSelectedRow] = useState<RequestRow | null>(null);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [clientFilter, setClientFilter] = useState<RequestRow["client"] | "all">("all");
   const [providerFilter, setProviderFilter] = useState<string>("all");
   const [modelFilter, setModelFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("all");
   const [timeRangeFilter, setTimeRangeFilter] = useState<RequestTimeRange>("24h");
   const [ioLoggingEnabled, setIoLoggingEnabled] = useState(false);
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(30_000);
   const [isEnablingIoLogging, setIsEnablingIoLogging] = useState(false);
   const [ioEnableError, setIoEnableError] = useState<string | null>(null);
-  const [referenceNow] = useState(() => Date.now());
-  const allRows = useMemo(() => payload?.rows ?? [], [payload]);
+  const rows = payload?.rows ?? [];
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+      setCurrentPage(1);
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchQuery]);
 
   useEffect(() => {
     let active = true;
-    let intervalId: number | undefined;
-
-    const loadRequests = async (showLoading: boolean) => {
-      if (showLoading) {
-        setIsLoading(true);
-      }
-      try {
-        const nextPayload = await fetchRequestsAnalytics();
-        if (!active) {
-          return;
-        }
-        setPayload(nextPayload);
-        setSelectedRowId((currentId) =>
-          currentId && nextPayload.rows.some((row) => row.id === currentId) ? currentId : null,
-        );
-        setClientFilter((current) =>
-          current === "all" || nextPayload.filters.clients.includes(current) ? current : "all",
-        );
-        setProviderFilter((current) =>
-          current === "all" || nextPayload.filters.providers.includes(current) ? current : "all",
-        );
-        setModelFilter((current) =>
-          current === "all" || nextPayload.filters.models.includes(current) ? current : "all",
-        );
-        setStatusFilter((current) =>
-          current === "all" || nextPayload.filters.statuses.includes(current) ? current : "all",
-        );
-        setErrorMessage(null);
-      } catch {
-        if (!active) {
-          return;
-        }
-        setErrorMessage("Backend unreachable. Start the ModelPort proxy and refresh this page.");
-      } finally {
-        if (active && showLoading) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    const startPolling = (intervalMs: number) => {
-      void loadRequests(true);
-      intervalId = window.setInterval(() => {
-        void loadRequests(false);
-      }, intervalMs);
-    };
 
     void fetchAdminSettings()
       .then((settings) => {
@@ -211,23 +176,76 @@ export default function RequestsPage() {
         }
         setIoLoggingEnabled(settings.settings.tracking.io_logging ?? false);
         const seconds = settings.settings.appearance.refresh_interval_seconds ?? 30;
-        startPolling(seconds * 1000);
+        setRefreshIntervalMs(seconds * 1000);
       })
       .catch(() => {
         if (!active) {
           return;
         }
         setIoLoggingEnabled(false);
-        startPolling(30_000);
       });
 
     return () => {
       active = false;
-      if (intervalId !== undefined) {
-        window.clearInterval(intervalId);
-      }
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadRequests = async () => {
+      try {
+        const nextPayload = await fetchRequestsAnalytics({
+          page: currentPage,
+          pageSize: rowsPerPage,
+          search: debouncedSearch || undefined,
+          client: clientFilter === "all" ? undefined : clientFilter,
+          provider: providerFilter === "all" ? undefined : providerFilter,
+          model: modelFilter === "all" ? undefined : modelFilter,
+          status: statusFilter === "all" ? undefined : statusFilter,
+          timeRange: timeRangeFilter,
+          sort: sortConfig.key,
+          direction: sortConfig.direction,
+        });
+        if (!active) {
+          return;
+        }
+        setPayload(nextPayload);
+        setErrorMessage(null);
+        if (currentPage > Math.max(1, nextPayload.pagination.totalPages)) {
+          setCurrentPage(Math.max(1, nextPayload.pagination.totalPages));
+        }
+      } catch {
+        if (active) {
+          setErrorMessage("Backend unreachable. Start the ModelPort proxy and refresh this page.");
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+          hasLoadedRequests.current = true;
+        }
+      }
+    };
+
+    setIsLoading(!hasLoadedRequests.current);
+    void loadRequests();
+    const intervalId = window.setInterval(() => void loadRequests(), refreshIntervalMs);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    clientFilter,
+    currentPage,
+    debouncedSearch,
+    modelFilter,
+    providerFilter,
+    refreshIntervalMs,
+    sortConfig.direction,
+    sortConfig.key,
+    statusFilter,
+    timeRangeFilter,
+  ]);
 
   const handleEnableIoLogging = async () => {
     setIsEnablingIoLogging(true);
@@ -245,94 +263,32 @@ export default function RequestsPage() {
     }
   };
 
-  const filteredRows = useMemo(() => {
-    const cutoffTimestamp = referenceNow - TIME_RANGE_IN_MS[timeRangeFilter];
-    const normalizedSearch = searchQuery.trim().toLowerCase();
+  const totalRows = payload?.pagination.totalItems ?? 0;
+  const totalPages = Math.max(1, payload?.pagination.totalPages ?? 0);
 
-    return allRows.filter((row) => {
-      if (clientFilter !== "all" && row.client !== clientFilter) {
-        return false;
-      }
-      if (providerFilter !== "all" && row.provider !== providerFilter) {
-        return false;
-      }
-      if (modelFilter !== "all" && row.model !== modelFilter) {
-        return false;
-      }
-      if (statusFilter !== "all" && row.status !== statusFilter) {
-        return false;
-      }
-      if (new Date(row.timestamp).getTime() < cutoffTimestamp) {
-        return false;
-      }
-      if (!normalizedSearch) {
-        return true;
-      }
-
-      const searchableText = [
-        row.id,
-        row.client,
-        row.provider,
-        row.model,
-        row.endpoint,
-        row.status,
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      return searchableText.includes(normalizedSearch);
-    });
-  }, [allRows, clientFilter, modelFilter, providerFilter, referenceNow, searchQuery, statusFilter, timeRangeFilter]);
-
-  const sortedRows = useMemo(() => {
-    const rowsToSort = [...filteredRows];
-    const directionMultiplier = sortConfig.direction === "asc" ? 1 : -1;
-
-    rowsToSort.sort((left, right) => {
-      switch (sortConfig.key) {
-        case "timestamp":
-          return (new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()) * directionMultiplier;
-        case "client":
-          return left.client.localeCompare(right.client) * directionMultiplier;
-        case "provider":
-          return left.provider.localeCompare(right.provider) * directionMultiplier;
-        case "model":
-          return left.model.localeCompare(right.model) * directionMultiplier;
-        case "totalTokens":
-          return (left.totalTokens - right.totalTokens) * directionMultiplier;
-        case "latencyMs":
-          return (left.latencyMs - right.latencyMs) * directionMultiplier;
-        case "costUsd":
-          return (left.costUsd - right.costUsd) * directionMultiplier;
-        case "status":
-          return getOutcome(left).localeCompare(getOutcome(right)) * directionMultiplier;
-        default:
-          return 0;
-      }
-    });
-
-    return rowsToSort;
-  }, [filteredRows, sortConfig]);
-
-  const totalRows = sortedRows.length;
-  const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage));
-
-  const rows = useMemo(() => {
-    const startIndex = (currentPage - 1) * rowsPerPage;
-    return sortedRows.slice(startIndex, startIndex + rowsPerPage);
-  }, [currentPage, sortedRows]);
-
-  const selectedRow = useMemo(() => {
-    if (!selectedRowId) {
-      return null;
-    }
-
-    return sortedRows.find((row) => row.id === selectedRowId) ?? null;
-  }, [selectedRowId, sortedRows]);
-
-  const openRequestDetails = (rowId: string) => {
+  const openRequestDetails = async (rowId: string) => {
+    activeDetailRequest.current = rowId;
     setSelectedRowId(rowId);
+    setSelectedRow(null);
+    setDetailError(null);
+    setIsDetailLoading(true);
     setDetailOpen(true);
+    try {
+      const detail = await fetchRequestDetail(rowId);
+      if (activeDetailRequest.current === rowId) {
+        setSelectedRow(detail);
+      }
+    } catch (error) {
+      if (activeDetailRequest.current === rowId) {
+        setDetailError(
+          error instanceof Error ? error.message : "Failed to load request details.",
+        );
+      }
+    } finally {
+      if (activeDetailRequest.current === rowId) {
+        setIsDetailLoading(false);
+      }
+    }
   };
 
   const startRow = totalRows === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1;
@@ -423,7 +379,6 @@ export default function RequestsPage() {
             value={searchQuery}
             onChange={(event) => {
               setSearchQuery(event.target.value);
-              setCurrentPage(1);
             }}
             className="h-11 w-full rounded-lg border-border-default pr-3 pl-9 text-sm"
           />
@@ -540,7 +495,7 @@ export default function RequestsPage() {
               return (
                 <tr
                   key={row.id}
-                  onClick={() => openRequestDetails(row.id)}
+                  onClick={() => void openRequestDetails(row.id)}
                   className={cn(
                     "cursor-pointer border-b border-border-subtle text-sm text-text-secondary last:border-b-0 hover:bg-bg-card-muted",
                     selectedRowId === row.id && detailOpen && "bg-bg-card-muted",
@@ -641,11 +596,16 @@ export default function RequestsPage() {
 
       <RequestDetailSheet
         row={selectedRow}
-        open={detailOpen && selectedRow !== null}
+        open={detailOpen}
+        isLoading={isDetailLoading}
+        errorMessage={detailError}
         onOpenChange={(open) => {
           setDetailOpen(open);
           if (!open) {
+            activeDetailRequest.current = null;
             setSelectedRowId(null);
+            setSelectedRow(null);
+            setDetailError(null);
             setIoEnableError(null);
           }
         }}

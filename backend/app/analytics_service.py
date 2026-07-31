@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import String, and_, case, cast, func, or_, select
+from sqlalchemy.orm import Session, defer
 
 from app.database import ApiRequest, ModelMetadata, Provider
 
@@ -18,6 +19,33 @@ KNOWN_CLIENTS = (
 )
 
 REQUEST_ENDPOINTS = ("/v1/messages", "/v1/chat/completions")
+RequestTimeRange = Literal["1h", "6h", "24h", "7d", "all"]
+RequestSortKey = Literal[
+    "timestamp",
+    "client",
+    "provider",
+    "model",
+    "totalTokens",
+    "latencyMs",
+    "costUsd",
+    "status",
+]
+SortDirection = Literal["asc", "desc"]
+
+
+@dataclass(frozen=True)
+class RequestQuery:
+    page: int = 1
+    page_size: int = 25
+    search: str | None = None
+    client: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    status: str | None = None
+    endpoint: str | None = None
+    time_range: RequestTimeRange = "all"
+    sort: RequestSortKey = "timestamp"
+    direction: SortDirection = "desc"
 
 PROVIDER_METADATA_PREFIXES: dict[str, tuple[str, ...]] = {
     "anthropic": ("anthropic",),
@@ -93,10 +121,6 @@ def request_status(record: ApiRequest) -> str:
     return "success"
 
 
-def list_requests(session: Session) -> list[ApiRequest]:
-    return session.scalars(select(ApiRequest).order_by(ApiRequest.created_at.desc())).all()
-
-
 def list_providers(session: Session) -> dict[str, Provider]:
     providers = session.scalars(select(Provider).order_by(Provider.slug)).all()
     return {provider.slug: provider for provider in providers}
@@ -169,6 +193,8 @@ def strip_provider_display_prefix(provider_id: str | None, display_name: str) ->
 def serialize_request_rows(
     requests: list[ApiRequest],
     providers_by_id: dict[str, Provider],
+    *,
+    include_io: bool = False,
 ) -> list[dict]:
     rows: list[dict] = []
     for record in requests:
@@ -200,7 +226,7 @@ def serialize_request_rows(
                             "output": record.response_body,
                         }
                     }
-                    if record.request_body or record.response_body
+                    if include_io and (record.request_body or record.response_body)
                     else {}
                 ),
             }
@@ -208,111 +234,329 @@ def serialize_request_rows(
     return rows
 
 
+def request_model_expression():
+    return func.coalesce(
+        ApiRequest.resolved_model,
+        ApiRequest.requested_model,
+        "unknown",
+    )
+
+
+def request_client_expression():
+    lowered = func.lower(func.coalesce(ApiRequest.client_name, ""))
+    return case(
+        (or_(lowered.like("%claude code%"), lowered.like("%claude-code%"), lowered.like("%claude-cli%")), "Claude Code"),
+        (lowered.like("%openai%"), "OpenAI SDK"),
+        (lowered.like("%gemini%"), "Gemini CLI"),
+        (lowered.like("%codex%"), "Codex"),
+        (lowered.like("%cursor%"), "Cursor"),
+        else_="Custom App",
+    )
+
+
+def request_status_expression():
+    return case(
+        (
+            or_(
+                ApiRequest.status_code >= 400,
+                ApiRequest.error_message.is_not(None),
+            ),
+            "error",
+        ),
+        else_="success",
+    )
+
+
+def request_endpoint_expression():
+    return case(
+        (ApiRequest.endpoint.in_(REQUEST_ENDPOINTS), ApiRequest.endpoint),
+        else_="/v1/messages",
+    )
+
+
+def request_provider_expression():
+    return func.coalesce(Provider.display_name, ApiRequest.provider, "Unknown")
+
+
+def request_time_cutoff(time_range: RequestTimeRange, now: datetime) -> datetime | None:
+    hours_by_range = {
+        "1h": 1,
+        "6h": 6,
+        "24h": 24,
+        "7d": 24 * 7,
+    }
+    hours = hours_by_range.get(time_range)
+    return now - timedelta(hours=hours) if hours is not None else None
+
+
+def request_conditions(query: RequestQuery, now: datetime) -> list:
+    conditions: list = []
+    cutoff = request_time_cutoff(query.time_range, now)
+    if cutoff is not None:
+        conditions.append(ApiRequest.created_at >= cutoff)
+    if query.client:
+        conditions.append(request_client_expression() == query.client)
+    if query.provider:
+        conditions.append(request_provider_expression() == query.provider)
+    if query.model:
+        conditions.append(request_model_expression() == query.model)
+    if query.status:
+        conditions.append(request_status_expression() == query.status)
+    if query.endpoint:
+        conditions.append(request_endpoint_expression() == query.endpoint)
+    if query.search and (normalized_search := query.search.strip().lower()):
+        pattern = f"%{normalized_search}%"
+        conditions.append(
+            or_(
+                func.lower(cast(ApiRequest.id, String)).like(pattern),
+                func.lower(func.coalesce(ApiRequest.request_id, "")).like(pattern),
+                func.lower(request_client_expression()).like(pattern),
+                func.lower(request_provider_expression()).like(pattern),
+                func.lower(request_model_expression()).like(pattern),
+                func.lower(request_endpoint_expression()).like(pattern),
+                func.lower(request_status_expression()).like(pattern),
+            )
+        )
+    return conditions
+
+
+def request_order_expression(sort_key: RequestSortKey):
+    return {
+        "timestamp": ApiRequest.created_at,
+        "client": request_client_expression(),
+        "provider": request_provider_expression(),
+        "model": request_model_expression(),
+        "totalTokens": ApiRequest.total_tokens,
+        "latencyMs": func.coalesce(ApiRequest.duration_ms, 0),
+        "costUsd": func.coalesce(ApiRequest.estimated_cost_usd, 0.0),
+        "status": request_status_expression(),
+    }[sort_key]
+
+
+def build_request_totals(session: Session, now: datetime) -> dict:
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    error_condition = or_(
+        ApiRequest.status_code >= 400,
+        ApiRequest.error_message.is_not(None),
+    )
+    row = session.execute(
+        select(
+            func.count(ApiRequest.id),
+            func.sum(case((ApiRequest.created_at >= start_of_day, 1), else_=0)),
+            func.avg(func.coalesce(ApiRequest.duration_ms, 0)),
+            func.sum(case((error_condition, 1), else_=0)),
+            func.sum(case((ApiRequest.streamed.is_(True), 1), else_=0)),
+        )
+    ).one()
+    total_requests = int(row[0] or 0)
+    return {
+        "requestsToday": int(row[1] or 0),
+        "avgLatencyMs": round(float(row[2] or 0)),
+        "errorRate": round_percent((int(row[3] or 0) / max(1, total_requests)) * 100),
+        "streamingRate": round_percent((int(row[4] or 0) / max(1, total_requests)) * 100),
+    }
+
+
+def build_request_filters(
+    session: Session,
+    providers_by_id: dict[str, Provider],
+) -> dict:
+    provider_ids = session.scalars(
+        select(ApiRequest.provider).distinct()
+    ).all()
+    models = session.scalars(
+        select(request_model_expression()).distinct()
+    ).all()
+    clients = session.scalars(
+        select(request_client_expression()).distinct()
+    ).all()
+    statuses = session.scalars(
+        select(request_status_expression()).distinct()
+    ).all()
+    endpoints = session.scalars(
+        select(request_endpoint_expression()).distinct()
+    ).all()
+    return {
+        "providers": sorted(
+            {
+                provider_display_name(provider_id, providers_by_id)
+                for provider_id in provider_ids
+            }
+        ),
+        "models": sorted(str(model) for model in models),
+        "clients": sorted(
+            (str(client) for client in clients),
+            key=client_sort_key,
+        ),
+        "statuses": sorted(str(status_value) for status_value in statuses),
+        "endpoints": sorted(str(endpoint_value) for endpoint_value in endpoints),
+    }
+
+
 def build_time_range_usage(
-    requests: list[ApiRequest],
+    session: Session,
     hours: int,
     buckets: int,
     now: datetime,
 ) -> list[dict]:
     bucket_span = timedelta(hours=hours / buckets)
     start = now - timedelta(hours=hours)
-    points: list[dict] = []
+    expressions = []
+    boundaries: list[tuple[datetime, datetime]] = []
 
     for index in range(buckets):
         bucket_start = start + (bucket_span * index)
         bucket_end = bucket_start + bucket_span
-        tokens = sum(
-            record.total_tokens
-            for record in requests
-            if bucket_start <= coerce_utc(record.created_at) < bucket_end
+        boundaries.append((bucket_start, bucket_end))
+        expressions.append(
+            func.sum(
+                case(
+                    (
+                        and_(
+                            ApiRequest.created_at >= bucket_start,
+                            ApiRequest.created_at < bucket_end,
+                        ),
+                        ApiRequest.total_tokens,
+                    ),
+                    else_=0,
+                )
+            )
         )
+    values = session.execute(select(*expressions)).one()
+
+    points: list[dict] = []
+    for (bucket_start, bucket_end), tokens in zip(boundaries, values, strict=True):
         label = (
             bucket_end.strftime("%b %d")
             if hours >= 24
             else bucket_end.strftime("%H:%M")
         )
-        points.append({"label": label, "tokens": tokens})
+        points.append({"label": label, "tokens": int(tokens or 0)})
 
     return points
 
 
 def build_daily_cost_trend(
-    requests: list[ApiRequest],
+    session: Session,
     days: int,
     now: datetime,
 ) -> list[dict]:
     start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    buckets: list[dict] = []
+    expressions = []
+    day_starts: list[datetime] = []
 
     for index in range(days):
         day_start = start + timedelta(days=index)
         day_end = day_start + timedelta(days=1)
-        amount = sum(
-            record.estimated_cost_usd or 0.0
-            for record in requests
-            if day_start <= coerce_utc(record.created_at) < day_end
+        day_starts.append(day_start)
+        expressions.append(
+            func.sum(
+                case(
+                    (
+                        and_(
+                            ApiRequest.created_at >= day_start,
+                            ApiRequest.created_at < day_end,
+                        ),
+                        func.coalesce(ApiRequest.estimated_cost_usd, 0.0),
+                    ),
+                    else_=0.0,
+                )
+            )
         )
+    values = session.execute(select(*expressions)).one()
+
+    buckets: list[dict] = []
+    for day_start, amount in zip(day_starts, values, strict=True):
         buckets.append(
             {
                 "label": day_start.strftime("%b %d"),
-                "amountUsd": round_decimal(amount),
+                "amountUsd": round_decimal(float(amount or 0.0)),
             }
         )
 
     return buckets
 
 
-def requests_today_count(
-    requests: list[ApiRequest],
-    provider_id: str,
+def requests_today_counts(
+    session: Session,
     now: datetime,
-) -> int:
+) -> dict[str, int]:
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return sum(
-        1
-        for record in requests
-        if record.provider == provider_id and coerce_utc(record.created_at) >= start_of_day
-    )
+    return {
+        str(provider_id): int(request_count)
+        for provider_id, request_count in session.execute(
+            select(ApiRequest.provider, func.count(ApiRequest.id))
+            .where(
+                ApiRequest.provider.is_not(None),
+                ApiRequest.created_at >= start_of_day,
+            )
+            .group_by(ApiRequest.provider)
+        )
+    }
 
 
 def build_overview_payload(session: Session) -> dict:
     now = datetime.now(UTC)
-    requests = list_requests(session)
     providers_by_id = list_providers(session)
     display_names_by_key = load_model_display_names(session)
-    serialized_rows = serialize_request_rows(requests, providers_by_id)
-
-    total_tokens = sum(record.total_tokens for record in requests)
-    total_cost = sum(record.estimated_cost_usd or 0.0 for record in requests)
-    average_latency = round(
-        sum((record.duration_ms or 0) for record in requests) / max(1, len(requests))
-    )
-
-    model_totals: dict[tuple[str | None, str, str], int] = defaultdict(int)
-    for record in requests:
-        model_totals[(record.provider, provider_display_name(record.provider, providers_by_id), model_name(record))] += (
-            record.total_tokens
+    totals_row = session.execute(
+        select(
+            func.coalesce(func.sum(ApiRequest.total_tokens), 0),
+            func.coalesce(func.sum(ApiRequest.estimated_cost_usd), 0.0),
+            func.coalesce(func.avg(func.coalesce(ApiRequest.duration_ms, 0)), 0.0),
         )
+    ).one()
+    total_tokens = int(totals_row[0] or 0)
+    total_cost = float(totals_row[1] or 0.0)
+    average_latency = round(float(totals_row[2] or 0.0))
 
-    sorted_models = sorted(model_totals.items(), key=lambda item: item[1], reverse=True)
+    model_totals = session.execute(
+        select(
+            ApiRequest.provider,
+            request_provider_expression(),
+            request_model_expression(),
+            func.sum(ApiRequest.total_tokens),
+        )
+        .outerjoin(Provider, Provider.slug == ApiRequest.provider)
+        .group_by(
+            ApiRequest.provider,
+            request_provider_expression(),
+            request_model_expression(),
+        )
+        .order_by(func.sum(ApiRequest.total_tokens).desc())
+        .limit(5)
+    ).all()
     top_model_name = (
-        model_display_name(sorted_models[0][0][0], sorted_models[0][0][2], display_names_by_key)
-        if sorted_models
+        model_display_name(
+            model_totals[0][0],
+            str(model_totals[0][2]),
+            display_names_by_key,
+        )
+        if model_totals
         else "None"
     )
 
     top_models = []
-    for index, ((provider_id, provider_name, model), token_total) in enumerate(sorted_models[:5], start=1):
-        display_name = model_display_name(provider_id, model, display_names_by_key)
-        percent = round((token_total / max(1, total_tokens)) * 100)
+    for index, (provider_id, provider_name, model, token_total) in enumerate(
+        model_totals,
+        start=1,
+    ):
+        model_value = str(model)
+        token_value = int(token_total or 0)
+        display_name = model_display_name(
+            provider_id,
+            model_value,
+            display_names_by_key,
+        )
+        percent = round((token_value / max(1, total_tokens)) * 100)
         top_models.append(
             {
                 "id": f"top_model_{index}",
-                "model": model,
+                "model": model_value,
                 "displayName": display_name,
-                "provider": provider_name,
+                "provider": str(provider_name),
                 "percent": percent,
-                "tokenTotal": token_total,
+                "tokenTotal": token_value,
             }
         )
 
@@ -344,101 +588,146 @@ def build_overview_payload(session: Session) -> dict:
     ]
 
     token_usage = {
-        "1h": {"range": "1h", "points": build_time_range_usage(requests, hours=1, buckets=12, now=now)},
-        "6h": {"range": "6h", "points": build_time_range_usage(requests, hours=6, buckets=24, now=now)},
-        "24h": {"range": "24h", "points": build_time_range_usage(requests, hours=24, buckets=24, now=now)},
-        "7d": {"range": "7d", "points": build_time_range_usage(requests, hours=24 * 7, buckets=7, now=now)},
-        "30d": {"range": "30d", "points": build_time_range_usage(requests, hours=24 * 30, buckets=30, now=now)},
+        "1h": {"range": "1h", "points": build_time_range_usage(session, hours=1, buckets=12, now=now)},
+        "6h": {"range": "6h", "points": build_time_range_usage(session, hours=6, buckets=24, now=now)},
+        "24h": {"range": "24h", "points": build_time_range_usage(session, hours=24, buckets=24, now=now)},
+        "7d": {"range": "7d", "points": build_time_range_usage(session, hours=24 * 7, buckets=7, now=now)},
+        "30d": {"range": "30d", "points": build_time_range_usage(session, hours=24 * 30, buckets=30, now=now)},
     }
+    recent_requests = session.scalars(
+        select(ApiRequest)
+        .options(defer(ApiRequest.request_body), defer(ApiRequest.response_body))
+        .order_by(ApiRequest.created_at.desc(), ApiRequest.request_id.asc())
+        .limit(10)
+    ).all()
 
     return {
         "metrics": metrics,
         "tokenUsage": token_usage,
         "topModels": top_models,
-        "recentRequests": serialized_rows[:10],
+        "recentRequests": serialize_request_rows(recent_requests, providers_by_id),
     }
 
 
-def build_requests_payload(session: Session) -> dict:
+def build_requests_payload(
+    session: Session,
+    query: RequestQuery | None = None,
+) -> dict:
+    query = query or RequestQuery()
     now = datetime.now(UTC)
-    requests = list_requests(session)
     providers_by_id = list_providers(session)
+    conditions = request_conditions(query, now)
+    total_items = int(
+        session.scalar(
+            select(func.count(ApiRequest.id))
+            .outerjoin(Provider, Provider.slug == ApiRequest.provider)
+            .where(*conditions)
+        )
+        or 0
+    )
+    order_expression = request_order_expression(query.sort)
+    order_by = (
+        order_expression.asc()
+        if query.direction == "asc"
+        else order_expression.desc()
+    )
+    requests = session.scalars(
+        select(ApiRequest)
+        .options(defer(ApiRequest.request_body), defer(ApiRequest.response_body))
+        .outerjoin(Provider, Provider.slug == ApiRequest.provider)
+        .where(*conditions)
+        .order_by(order_by, ApiRequest.request_id.asc(), ApiRequest.id.asc())
+        .offset((query.page - 1) * query.page_size)
+        .limit(query.page_size)
+    ).all()
     serialized_rows = serialize_request_rows(requests, providers_by_id)
-
-    total_requests = len(requests)
-    requests_today = sum(
-        1
-        for record in requests
-        if coerce_utc(record.created_at) >= now.replace(hour=0, minute=0, second=0, microsecond=0)
+    total_pages = (
+        (total_items + query.page_size - 1) // query.page_size
+        if total_items
+        else 0
     )
-    average_latency = round(
-        sum((record.duration_ms or 0) for record in requests) / max(1, total_requests)
-    )
-    error_count = sum(1 for record in requests if request_status(record) == "error")
-    streaming_count = sum(1 for record in requests if record.streamed)
-
-    filters = {
-        "providers": sorted({row["provider"] for row in serialized_rows}),
-        "models": sorted({row["model"] for row in serialized_rows}),
-        "clients": sorted(
-            {row["client"] for row in serialized_rows},
-            key=client_sort_key,
-        ),
-        "statuses": sorted({row["status"] for row in serialized_rows}),
-        "endpoints": sorted({row["endpoint"] for row in serialized_rows}),
-    }
 
     return {
-        "totals": {
-            "requestsToday": requests_today,
-            "avgLatencyMs": average_latency,
-            "errorRate": round_percent((error_count / max(1, total_requests)) * 100),
-            "streamingRate": round_percent((streaming_count / max(1, total_requests)) * 100),
-        },
-        "filters": filters,
+        "totals": build_request_totals(session, now),
+        "filters": build_request_filters(session, providers_by_id),
         "rows": serialized_rows,
+        "pagination": {
+            "page": query.page,
+            "pageSize": query.page_size,
+            "totalItems": total_items,
+            "totalPages": total_pages,
+        },
     }
+
+
+def build_request_detail_payload(session: Session, request_id: str) -> dict | None:
+    record = session.get(ApiRequest, request_id)
+    if record is None:
+        return None
+    providers_by_id = list_providers(session)
+    return serialize_request_rows(
+        [record],
+        providers_by_id,
+        include_io=True,
+    )[0]
 
 
 def build_models_payload(session: Session) -> dict:
-    requests = list_requests(session)
-    providers_by_id = list_providers(session)
-    groups: dict[tuple[str, str], list[ApiRequest]] = defaultdict(list)
-
-    for record in requests:
-        groups[(provider_display_name(record.provider, providers_by_id), model_name(record))].append(record)
+    error_condition = or_(
+        ApiRequest.status_code >= 400,
+        ApiRequest.error_message.is_not(None),
+    )
+    groups = session.execute(
+        select(
+            request_provider_expression(),
+            request_model_expression(),
+            func.count(ApiRequest.id),
+            func.sum(ApiRequest.total_tokens),
+            func.sum(func.coalesce(ApiRequest.estimated_cost_usd, 0.0)),
+            func.avg(func.coalesce(ApiRequest.duration_ms, 0)),
+            func.sum(case((error_condition, 1), else_=0)),
+        )
+        .outerjoin(Provider, Provider.slug == ApiRequest.provider)
+        .group_by(request_provider_expression(), request_model_expression())
+        .order_by(func.sum(ApiRequest.total_tokens).desc())
+    ).all()
 
     models = []
-    for index, ((provider_name, model), records) in enumerate(groups.items(), start=1):
-        token_total = sum(record.total_tokens for record in records)
-        cost_total = sum(record.estimated_cost_usd or 0.0 for record in records)
-        average_latency = round(
-            sum((record.duration_ms or 0) for record in records) / max(1, len(records))
-        )
-        error_count = sum(1 for record in records if request_status(record) == "error")
+    for index, row in enumerate(groups, start=1):
+        provider_name, model = str(row[0]), str(row[1])
+        request_count = int(row[2] or 0)
+        token_total = int(row[3] or 0)
+        cost_total = float(row[4] or 0.0)
+        average_latency = round(float(row[5] or 0.0))
+        error_count = int(row[6] or 0)
         models.append(
             {
                 "id": f"model_{index}",
                 "provider": provider_name,
                 "model": model,
                 "displayName": model,
-                "requestCount": len(records),
+                "requestCount": request_count,
                 "tokenTotal": token_total,
                 "costUsd": round_decimal(cost_total),
                 "avgLatencyMs": average_latency,
-                "errorRate": round_percent((error_count / max(1, len(records))) * 100),
+                "errorRate": round_percent((error_count / max(1, request_count)) * 100),
             }
         )
 
-    models.sort(key=lambda entry: entry["tokenTotal"], reverse=True)
-
-    total_requests = len(requests)
-    total_tokens = sum(record.total_tokens for record in requests)
-    total_cost = sum(record.estimated_cost_usd or 0.0 for record in requests)
-    avg_latency = round(
-        sum((record.duration_ms or 0) for record in requests) / max(1, total_requests)
-    )
-    total_errors = sum(1 for record in requests if request_status(record) == "error")
+    totals = session.execute(
+        select(
+            func.count(ApiRequest.id),
+            func.coalesce(func.sum(ApiRequest.total_tokens), 0),
+            func.coalesce(func.sum(ApiRequest.estimated_cost_usd), 0.0),
+            func.coalesce(func.avg(func.coalesce(ApiRequest.duration_ms, 0)), 0.0),
+            func.coalesce(func.sum(case((error_condition, 1), else_=0)), 0),
+        )
+    ).one()
+    total_requests = int(totals[0] or 0)
+    total_tokens = int(totals[1] or 0)
+    total_cost = float(totals[2] or 0.0)
+    avg_latency = round(float(totals[3] or 0.0))
+    total_errors = int(totals[4] or 0)
 
     return {
         "totals": {
@@ -452,93 +741,197 @@ def build_models_payload(session: Session) -> dict:
     }
 
 
+def build_cost_usage(
+    session: Session,
+    *,
+    hours: int,
+    buckets: int,
+    now: datetime,
+) -> list[dict]:
+    bucket_span = timedelta(hours=hours / buckets)
+    start = now - timedelta(hours=hours)
+    expressions = []
+    starts: list[datetime] = []
+    for index in range(buckets):
+        bucket_start = start + bucket_span * index
+        bucket_end = bucket_start + bucket_span
+        starts.append(bucket_start)
+        expressions.append(
+            func.sum(
+                case(
+                    (
+                        and_(
+                            ApiRequest.created_at >= bucket_start,
+                            ApiRequest.created_at < bucket_end,
+                        ),
+                        func.coalesce(ApiRequest.estimated_cost_usd, 0.0),
+                    ),
+                    else_=0.0,
+                )
+            )
+        )
+    values = session.execute(select(*expressions)).one()
+    return [
+        {
+            "date": bucket_start.isoformat(),
+            "primary": round_decimal(float(amount or 0.0)),
+            "secondary": 0.0,
+        }
+        for bucket_start, amount in zip(starts, values, strict=True)
+    ]
+
+
 def build_costs_payload(session: Session) -> dict:
     now = datetime.now(UTC)
-    requests = list_requests(session)
     providers_by_id = list_providers(session)
-    serialized_rows = serialize_request_rows(requests, providers_by_id)
 
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = now - timedelta(days=7)
     month_ago = now - timedelta(days=30)
-
-    def sum_cost(records: list[ApiRequest]) -> float:
-        return round_decimal(sum(record.estimated_cost_usd or 0.0 for record in records))
-
-    by_provider_totals: dict[str, float] = defaultdict(float)
-    by_model_totals: dict[str, float] = defaultdict(float)
-
-    for record in requests:
-        by_provider_totals[provider_display_name(record.provider, providers_by_id)] += (
-            record.estimated_cost_usd or 0.0
+    cost_expression = func.coalesce(ApiRequest.estimated_cost_usd, 0.0)
+    totals = session.execute(
+        select(
+            func.sum(case((ApiRequest.created_at >= start_of_day, cost_expression), else_=0.0)),
+            func.sum(case((ApiRequest.created_at >= week_ago, cost_expression), else_=0.0)),
+            func.sum(case((ApiRequest.created_at >= month_ago, cost_expression), else_=0.0)),
+            func.count(ApiRequest.id),
+            func.sum(cost_expression),
         )
-        by_model_totals[model_name(record)] += record.estimated_cost_usd or 0.0
-
+    ).one()
+    provider_totals = session.execute(
+        select(request_provider_expression(), func.sum(cost_expression))
+        .outerjoin(Provider, Provider.slug == ApiRequest.provider)
+        .group_by(request_provider_expression())
+        .order_by(func.sum(cost_expression).desc())
+    ).all()
+    model_totals = session.execute(
+        select(request_model_expression(), func.sum(cost_expression))
+        .group_by(request_model_expression())
+        .order_by(func.sum(cost_expression).desc())
+    ).all()
     by_provider = [
-        {"label": label, "amountUsd": round_decimal(amount)}
-        for label, amount in sorted(by_provider_totals.items(), key=lambda item: item[1], reverse=True)
+        {"label": str(label), "amountUsd": round_decimal(float(amount or 0.0))}
+        for label, amount in provider_totals
     ]
     by_model = [
-        {"label": label, "amountUsd": round_decimal(amount)}
-        for label, amount in sorted(by_model_totals.items(), key=lambda item: item[1], reverse=True)
+        {"label": str(label), "amountUsd": round_decimal(float(amount or 0.0))}
+        for label, amount in model_totals
     ]
 
-    recent_high_cost_requests = sorted(
-        serialized_rows,
-        key=lambda row: row["costUsd"],
-        reverse=True,
-    )[:25]
+    high_cost_requests = session.scalars(
+        select(ApiRequest)
+        .options(defer(ApiRequest.request_body), defer(ApiRequest.response_body))
+        .order_by(func.coalesce(ApiRequest.estimated_cost_usd, 0.0).desc())
+        .limit(25)
+    ).all()
+    daily_trend = build_daily_cost_trend(session, days=30, now=now)
 
     return {
         "note": "Derived from tracked request logs and admin pricing overrides.",
         "totals": {
-            "todayUsd": sum_cost([record for record in requests if coerce_utc(record.created_at) >= start_of_day]),
-            "weekUsd": sum_cost([record for record in requests if coerce_utc(record.created_at) >= week_ago]),
-            "monthUsd": sum_cost([record for record in requests if coerce_utc(record.created_at) >= month_ago]),
+            "todayUsd": round_decimal(float(totals[0] or 0.0)),
+            "weekUsd": round_decimal(float(totals[1] or 0.0)),
+            "monthUsd": round_decimal(float(totals[2] or 0.0)),
         },
+        "averageCostPerRequest": round_decimal(
+            float(totals[4] or 0.0) / max(1, int(totals[3] or 0))
+        ),
         "byProvider": by_provider,
         "byModel": by_model,
-        "dailyTrend": build_daily_cost_trend(requests, days=30, now=now),
-        "recentHighCostRequests": recent_high_cost_requests,
+        "dailyTrend": daily_trend,
+        "costUsage": {
+            "1h": build_cost_usage(session, hours=1, buckets=12, now=now),
+            "6h": build_cost_usage(session, hours=6, buckets=24, now=now),
+            "1d": build_cost_usage(session, hours=24, buckets=24, now=now),
+            "7d": build_cost_usage(session, hours=24 * 7, buckets=7, now=now),
+            "30d": build_cost_usage(session, hours=24 * 30, buckets=30, now=now),
+        },
+        "recentHighCostRequests": serialize_request_rows(
+            high_cost_requests,
+            providers_by_id,
+        ),
     }
 
 
 def build_provider_details(
-    requests: list[ApiRequest],
+    session: Session,
     provider: Provider,
     now: datetime,
 ) -> dict:
-    provider_requests = [record for record in requests if record.provider == provider.slug]
     cycle_start = now - timedelta(days=29)
-
-    request_trend = []
+    success_condition = and_(
+        or_(ApiRequest.status_code.is_(None), ApiRequest.status_code < 400),
+        ApiRequest.error_message.is_(None),
+    )
+    trend_expressions = []
+    day_starts: list[datetime] = []
     for index in range(30):
         day_start = cycle_start.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=index)
         day_end = day_start + timedelta(days=1)
-        day_records = [
-            record
-            for record in provider_requests
-            if day_start <= coerce_utc(record.created_at) < day_end
-        ]
+        day_starts.append(day_start)
+        in_bucket = and_(
+            ApiRequest.created_at >= day_start,
+            ApiRequest.created_at < day_end,
+        )
+        trend_expressions.extend(
+            (
+                func.sum(case((in_bucket, 1), else_=0)),
+                func.sum(case((and_(in_bucket, success_condition), 1), else_=0)),
+                func.sum(
+                    case(
+                        (
+                            in_bucket,
+                            func.coalesce(ApiRequest.estimated_cost_usd, 0.0),
+                        ),
+                        else_=0.0,
+                    )
+                ),
+            )
+        )
+    trend_values = session.execute(
+        select(*trend_expressions).where(ApiRequest.provider == provider.slug)
+    ).one()
+    request_trend = []
+    for index, day_start in enumerate(day_starts):
         request_trend.append(
             {
                 "date": day_start.isoformat(),
-                "requests": len(day_records),
-                "successfulRequests": sum(1 for record in day_records if request_status(record) == "success"),
-                "costUsd": round_decimal(sum(record.estimated_cost_usd or 0.0 for record in day_records)),
+                "requests": int(trend_values[index * 3] or 0),
+                "successfulRequests": int(trend_values[index * 3 + 1] or 0),
+                "costUsd": round_decimal(float(trend_values[index * 3 + 2] or 0.0)),
             }
         )
 
-    successful_requests = [record for record in provider_requests if request_status(record) == "success"]
-    failed_requests = [record for record in provider_requests if request_status(record) == "error"]
+    cost_totals = session.execute(
+        select(
+            func.sum(
+                case(
+                    (
+                        success_condition,
+                        func.coalesce(ApiRequest.estimated_cost_usd, 0.0),
+                    ),
+                    else_=0.0,
+                )
+            ),
+            func.sum(
+                case(
+                    (
+                        ~success_condition,
+                        func.coalesce(ApiRequest.estimated_cost_usd, 0.0),
+                    ),
+                    else_=0.0,
+                )
+            ),
+        ).where(ApiRequest.provider == provider.slug)
+    ).one()
     cost_breakdown = [
         {
             "label": "Successful requests",
-            "amountUsd": round_decimal(sum(record.estimated_cost_usd or 0.0 for record in successful_requests)),
+            "amountUsd": round_decimal(float(cost_totals[0] or 0.0)),
         },
         {
             "label": "Failed requests",
-            "amountUsd": round_decimal(sum(record.estimated_cost_usd or 0.0 for record in failed_requests)),
+            "amountUsd": round_decimal(float(cost_totals[1] or 0.0)),
         },
     ]
 

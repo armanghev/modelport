@@ -5,7 +5,7 @@ ModelPort is already designed for local or self-hosted deployment.
 ## Default Runtime Paths
 
 - Backend proxy: `https://127.0.0.1:13243` (local TLS via mkcert)
-- Dashboard UI: `http://localhost:3000`
+- Dashboard UI: `https://127.0.0.1:13243/dashboard`
 - Database: `./data/modelport.db`
 - Config: `./config.yaml`
 - Provider credentials: `.env`
@@ -15,18 +15,23 @@ ModelPort is already designed for local or self-hosted deployment.
 
 Self-hosting currently means:
 
-- running the FastAPI backend yourself
-- running the Next.js dashboard yourself
+- building the Vite dashboard assets
+- running the single FastAPI process that serves both proxy APIs and dashboard
 - storing state in local SQLite
 - managing provider credentials in environment variables or the local database
 
 ## Startup Flow
 
 1. create `.env`
-2. create local TLS certificates with mkcert under `./local/.certs/` (see [Installation](../installation.md))
-3. start the backend from the repository root with `--ssl-certfile` and `--ssl-keyfile`
-4. start the dashboard and set `NEXT_PUBLIC_MODELPORT_BACKEND_URL=https://127.0.0.1:13243`
-5. point your clients at the HTTPS proxy
+2. run `pnpm --dir dashboard install`
+3. run `pnpm --dir dashboard build`
+4. create local TLS certificates with mkcert under `./local/.certs/` (see [Installation](../installation.md))
+5. start Uvicorn from the repository root with `--ssl-certfile` and `--ssl-keyfile`
+6. open `https://127.0.0.1:13243/dashboard` and point clients at the same HTTPS origin
+
+Node is needed only to develop or build frontend assets. The production runtime
+is FastAPI plus SQLite. Keep generated assets untracked and rebuild them as part
+of each release.
 
 ## Certificates
 
